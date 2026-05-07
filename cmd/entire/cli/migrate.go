@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/lockfile"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -60,15 +62,23 @@ func newMigrateCmd() *cobra.Command {
 				return NewSilentError(errors.New("not a git repository"))
 			}
 
+			release, err := acquireCommandLock(ctx, cmd, "entire-migrate.lock", "migrate")
+			if err != nil {
+				return err
+			}
+
 			logging.SetLogLevelGetter(GetLogLevel)
 			if initErr := logging.Init(ctx, ""); initErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not initialize logging: %v\n", initErr)
 			} else {
 				defer logging.Close()
 			}
+			defer release()
+
 			if dryRunFlag {
 				return runMigrateCheckpointsV2DryRun(ctx, cmd)
 			}
+
 			return runMigrateCheckpointsV2(ctx, cmd, forceFlag)
 		},
 	}
@@ -78,6 +88,45 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "List v1 checkpoints not yet in v2 without migrating")
 
 	return cmd
+}
+
+// acquireCommandLock takes <git-common-dir>/<lockFile> as a per-command
+// exclusive lock. On contention it prints a message to stderr and returns a
+// SilentError. Other setup failures return regular errors so main.go prints
+// them. Defer release() after logging.Init so a release error can still be
+// warned (LIFO defer order).
+func acquireCommandLock(ctx context.Context, cmd *cobra.Command, lockFile, opName string) (release func(), err error) {
+	commonDir, err := strategy.GetGitCommonDir(ctx)
+	if err != nil {
+		cmd.SilenceUsage = true
+		return nil, fmt.Errorf("resolve git common dir: %w", err)
+	}
+	lockPath := filepath.Join(commonDir, lockFile)
+
+	lk, err := lockfile.Acquire(lockPath)
+	if err != nil {
+		if errors.Is(err, lockfile.ErrLocked) {
+			cmd.SilenceUsage = true
+			pidStr := "unknown"
+			if holder := lockfile.ReadHolderPID(lockPath); holder > 0 {
+				pidStr = strconv.Itoa(holder)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"another `entire %s` is already running (PID %s, lock at %s); refusing to start a second instance\n",
+				opName, pidStr, lockPath)
+			return nil, NewSilentError(fmt.Errorf("%s already in progress", opName))
+		}
+		cmd.SilenceUsage = true
+		return nil, fmt.Errorf("acquire %s lock: %w", opName, err)
+	}
+
+	return func() {
+		if relErr := lk.Release(); relErr != nil {
+			logging.Warn(ctx, "failed to release command lock",
+				slog.String("op", opName),
+				slog.String("error", relErr.Error()))
+		}
+	}, nil
 }
 
 type migrateResult struct {

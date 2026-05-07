@@ -104,7 +104,7 @@ func (m recapTUIModel) fetch(requestID int) tea.Cmd {
 	}
 }
 
-func (m recapTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:ireturn // bubbletea interface
+func (m recapTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case recapDataMsg:
 		if msg.requestID != m.requestID {

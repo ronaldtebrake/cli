@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +15,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/lockfile"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/transcript/compact"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
@@ -1299,6 +1304,67 @@ func TestMigrateCmd_InvalidFlag(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported checkpoints version")
+}
+
+// TestMigrateCmd_FailsFastWhenLockHeld pre-acquires the migration lock
+// from the test process, then runs the command. The command must
+// observe contention via flock and fail fast with the expected message.
+func TestMigrateCmd_FailsFastWhenLockHeld(t *testing.T) {
+	repo := initMigrateTestRepo(t)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	t.Chdir(wt.Filesystem.Root())
+	paths.ClearWorktreeRootCache()
+
+	commonDir, err := strategy.GetGitCommonDir(t.Context())
+	require.NoError(t, err)
+	lockPath := filepath.Join(commonDir, "entire-migrate.lock")
+
+	held, err := lockfile.Acquire(lockPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = held.Release() }) //nolint:errcheck // test cleanup
+
+	cmd := newMigrateCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"--checkpoints", "v2"})
+
+	execErr := cmd.Execute()
+	require.Error(t, execErr)
+	assert.Contains(t, errBuf.String(), "another `entire migrate` is already running")
+	assert.Contains(t, errBuf.String(), fmt.Sprintf("PID %d", os.Getpid()))
+}
+
+func TestAcquireCommandLock_SetupFailuresReturnVisibleError(t *testing.T) {
+	t.Run("git common dir", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		cmd := newMigrateCmd()
+		release, err := acquireCommandLock(t.Context(), cmd, "entire-migrate.lock", "migrate")
+		require.Nil(t, release)
+		require.Error(t, err)
+		var silent *SilentError
+		assert.NotErrorAs(t, err, &silent)
+		assert.Contains(t, err.Error(), "resolve git common dir")
+		assert.True(t, cmd.SilenceUsage)
+	})
+
+	t.Run("lock file open", func(t *testing.T) {
+		repo := initMigrateTestRepo(t)
+		wt, err := repo.Worktree()
+		require.NoError(t, err)
+		t.Chdir(wt.Filesystem.Root())
+
+		cmd := newMigrateCmd()
+		release, err := acquireCommandLock(t.Context(), cmd, filepath.Join("missing-dir", "entire-migrate.lock"), "migrate")
+		require.Nil(t, release)
+		require.Error(t, err)
+		var silent *SilentError
+		assert.NotErrorAs(t, err, &silent)
+		assert.Contains(t, err.Error(), "acquire migrate lock")
+		assert.True(t, cmd.SilenceUsage)
+	})
 }
 
 func TestMigrateCheckpointsV2_CompactionSkipped(t *testing.T) {
