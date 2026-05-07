@@ -1940,3 +1940,80 @@ func TestSortMigratableCheckpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestDryRunCheckpointsV2_NoV1Checkpoints(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, pending)
+	assert.Equal(t, 0, total)
+	assert.Contains(t, out.String(), "No v1 checkpoints found")
+}
+
+func TestDryRunCheckpointsV2_AllAlreadyMigrated(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
+	writeV1Checkpoint(t, v1Store, cpID, "session-001",
+		[]byte("{\"type\":\"assistant\",\"message\":\"hi\"}\n"),
+		[]string{"prompt"},
+	)
+
+	// Migrate once so v2 has the entry, then dry-run should report nothing pending.
+	var migrateOut bytes.Buffer
+	_, _, err := migrateCheckpointsV2(context.Background(), repo, v1Store, v2Store, &migrateOut, false)
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, pending)
+	assert.Equal(t, 1, total)
+	assert.Contains(t, out.String(), "All 1 v1 checkpoints are already in v2")
+}
+
+func TestDryRunCheckpointsV2_PendingListed(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	migratedID := id.MustCheckpointID("aaaaaaaaaaaa")
+	pendingID := id.MustCheckpointID("bbbbbbbbbbbb")
+	writeV1Checkpoint(t, v1Store, migratedID, "session-migrated",
+		[]byte("{\"type\":\"assistant\",\"message\":\"a\"}\n"),
+		[]string{"a"},
+	)
+	writeV1Checkpoint(t, v1Store, pendingID, "session-pending",
+		[]byte("{\"type\":\"assistant\",\"message\":\"b\"}\n"),
+		[]string{"b"},
+	)
+
+	// Migrate only the first checkpoint into v2 by writing it directly.
+	require.NoError(t, v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID: migratedID,
+		SessionID:    "session-migrated",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("{\"type\":\"assistant\",\"message\":\"a\"}\n")),
+		Prompts:      []string{"a"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pending)
+	assert.Equal(t, 2, total)
+
+	rendered := out.String()
+	assert.Contains(t, rendered, "1 of 2 v1 checkpoints not yet in v2")
+	assert.Contains(t, rendered, pendingID.String())
+	assert.NotContains(t, rendered, migratedID.String())
+	assert.Contains(t, rendered, "Run 'entire migrate --checkpoints v2'")
+}
