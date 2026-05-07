@@ -142,8 +142,9 @@ func runMigrateCheckpointsV2(ctx context.Context, cmd *cobra.Command, force bool
 }
 
 // runMigrateCheckpointsV2DryRun reports v1 checkpoints that have no matching
-// entry on the v2 /main ref. It writes nothing and exits zero on success;
-// only setup or git failures produce a non-zero exit.
+// entry on the v2 /main ref. It performs no writes to either checkpoint store
+// (only stdout is touched) and exits zero on success; only setup or git
+// failures produce a non-zero exit.
 func runMigrateCheckpointsV2DryRun(ctx context.Context, cmd *cobra.Command) error {
 	repo, err := strategy.OpenRepository(ctx)
 	if err != nil {

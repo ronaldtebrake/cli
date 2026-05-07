@@ -29,6 +29,15 @@ import (
 // initMigrateTestRepo creates a repo with an initial commit.
 func initMigrateTestRepo(t *testing.T) *git.Repository {
 	t.Helper()
+	repo, _ := initMigrateTestRepoWithDir(t)
+	return repo
+}
+
+// initMigrateTestRepoWithDir is like initMigrateTestRepo but also returns the
+// working tree directory, for tests that need to invoke the real `git` binary
+// (e.g., to exercise lookupV1CommitInfo's `git log` shell-out).
+func initMigrateTestRepoWithDir(t *testing.T) (*git.Repository, string) {
+	t.Helper()
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	testutil.WriteFile(t, dir, "README.md", "init")
@@ -38,7 +47,7 @@ func initMigrateTestRepo(t *testing.T) *git.Repository {
 	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
 
-	return repo
+	return repo, dir
 }
 
 // writeV1Checkpoint writes a checkpoint to the v1 branch for testing.
@@ -1976,6 +1985,31 @@ func TestDryRunCheckpointsV2_AllAlreadyMigrated(t *testing.T) {
 	assert.Equal(t, 0, pending)
 	assert.Equal(t, 1, total)
 	assert.Contains(t, out.String(), "All 1 v1 checkpoints are already in v2")
+}
+
+func TestDryRunCheckpointsV2_RendersV1CommitFromGit(t *testing.T) {
+	t.Parallel()
+	repo, dir := initMigrateTestRepoWithDir(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	cpID := id.MustCheckpointID("abcdef012345")
+	writeV1Checkpoint(t, v1Store, cpID, "session-real",
+		[]byte("{\"type\":\"assistant\",\"message\":\"x\"}\n"),
+		[]string{"prompt"},
+	)
+
+	var out bytes.Buffer
+	pending, _, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, dir, &out)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pending)
+
+	rendered := out.String()
+	assert.Contains(t, rendered, cpID.String())
+	// The path-scoped `git log` should resolve a real short SHA, not the placeholder.
+	assert.NotContains(t, rendered, "-------",
+		"expected lookupV1CommitInfo to find a v1 commit short hash, got placeholder")
+	// Investigation hint references the same path layout.
+	assert.Contains(t, rendered, "git show entire/checkpoints/v1:ab/cdef012345")
 }
 
 func TestDryRunCheckpointsV2_PendingListed(t *testing.T) {
