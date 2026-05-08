@@ -350,6 +350,12 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 					return result, writtenRefs, fmt.Errorf("failed to pack migrated raw transcripts: %w", packErr)
 				}
 				if queueErr := queueMigratedFullGenerationPublication(ctx, repo, v2Store, refName); queueErr != nil {
+					// The archive ref and pending publication record must move together.
+					// If queueing fails, leave no archive ref behind so a retry can
+					// repack the generation and queue it again.
+					if removeErr := repo.Storer.RemoveReference(refName); removeErr != nil {
+						queueErr = fmt.Errorf("%w; failed to remove unqueued generation ref %s: %w", queueErr, refName, removeErr)
+					}
 					processSpan.RecordError(queueErr)
 					processSpan.End()
 					return result, writtenRefs, fmt.Errorf("failed to queue migrated raw transcript generation for push: %w", queueErr)
