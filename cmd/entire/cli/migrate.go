@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	agenttypes "github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/lockfile"
@@ -158,8 +160,8 @@ func runMigrateCheckpointsV2(ctx context.Context, cmd *cobra.Command, force bool
 	// Skip the generation-metadata repair pass on no-op reruns: it does a
 	// `git ls-remote` plus a transcript-blob walk per archived /full/<n>,
 	// minutes on big repos. When we did write archives, freshly-packed refs
-	// are excluded — their generation.json is already correct from
-	// AggregateTranscriptTimestamps in the packer.
+	// are excluded — their generation.json is already correct from the
+	// checkpoint metadata already loaded by the packer.
 	var repairResult *strategy.RepairV2GenerationMetadataResult
 	if len(freshlyPackedRefs) > 0 {
 		stopRepair := startSpinner(cmd.ErrOrStderr(), "Repairing archived generation metadata")
@@ -255,8 +257,9 @@ type migratedFullCheckpoint struct {
 }
 
 type migratedFullSession struct {
-	sessionIndex int
-	content      *checkpoint.SessionContent
+	sessionIndex            int
+	content                 *checkpoint.SessionContent
+	rawTranscriptBlobHashes []plumbing.Hash
 }
 
 // migrateCheckpointsV2 returns the /full/<n> refs migration wrote so callers
@@ -297,6 +300,16 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 		return nil, nil, fmt.Errorf("build v2 /full/* presence index: %w", err)
 	}
 
+	_, existingSpan := perf.Start(ctx, "list_v2_checkpoints")
+	existingV2, err := listExistingV2Checkpoints(ctx, repo, v2Store)
+	if err != nil {
+		existingSpan.RecordError(err)
+	}
+	existingSpan.End()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list v2 checkpoints: %w", err)
+	}
+
 	batchSize := migrateFullBatchSize()
 	state := newMigrateLoopState(batchSize)
 
@@ -311,8 +324,17 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 
 	for _, info := range v1List {
 		iterStart := time.Now()
-		fullCheckpoint, mainOpts, outcome, migrateErr := migrateOneCheckpoint(ctx, repo, v1Store, v2Store, info, force, fullArtifactsIndex)
+		existing, _, existingErr := readExistingV2Checkpoint(ctx, v2Store, existingV2, info.CheckpointID)
+		if existingErr != nil {
+			state.totalMigrateOne += time.Since(iterStart)
+			recordMigrationSkipOrFailure(ctx, result, info.CheckpointID, existingErr)
+			progress.Increment()
+			continue
+		}
+
+		fullCheckpoint, mainOpts, outcome, migrateErr := migrateOneCheckpointWithExisting(ctx, repo, v1Store, v2Store, info, existing, force, fullArtifactsIndex, state.compactOffsets)
 		state.totalMigrateOne += time.Since(iterStart)
+		state.addMigrateTimings(outcome.timings)
 		result.missingSessions += outcome.missingSessions
 		if outcome.compactTranscriptSkipped {
 			result.compactTranscriptSkipped++
@@ -342,13 +364,16 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 		progress.Increment()
 	}
 
+	progress.Finish()
+	if err := state.flushMain(ctx, loopCtx, v2Store); err != nil {
+		processSpan.RecordError(err)
+		state.annotateTotals(loopCtx)
+		processSpan.End()
+		return result, state.writtenRefs, err
+	}
 	state.annotateTotals(loopCtx)
 	processSpan.End()
 
-	progress.Finish()
-	if err := state.flushMain(ctx, loopCtx, v2Store); err != nil {
-		return result, state.writtenRefs, err
-	}
 	stopFinalize := startSpinner(progressOut, "Packing migrated raw transcripts")
 	_, partialSpan := perf.Start(ctx, "pack_partial_generation")
 	if len(state.pendingFull) > 0 {
@@ -397,13 +422,32 @@ type migrateLoopState struct {
 	totalMigrateOne time.Duration
 	totalFlushMain  time.Duration
 	totalPackFull   time.Duration
+
+	totalReadV1Summary         time.Duration
+	totalReadV1Sessions        time.Duration
+	totalCompactTranscript     time.Duration
+	totalCompactOffsetFallback time.Duration
+	totalCollectTaskMetadata   time.Duration
+	totalPruneV2Checkpoint     time.Duration
+	totalResumeMissingFull     time.Duration
+	totalBackfillCompact       time.Duration
+
+	totalPackBuildEntries         time.Duration
+	totalPackBuildTree            time.Duration
+	totalPackGenerationTimestamps time.Duration
+	totalPackGenerationJSON       time.Duration
+	totalPackCommit               time.Duration
+	totalPackUpdateRef            time.Duration
+
+	compactOffsets *migrateCompactOffsetCache
 }
 
 func newMigrateLoopState(batchSize int) *migrateLoopState {
 	return &migrateLoopState{
-		pendingFull: make([]migratedFullCheckpoint, 0, batchSize),
-		pendingMain: make([]checkpoint.WriteCommittedOptions, 0, batchSize),
-		batchSize:   batchSize,
+		pendingFull:    make([]migratedFullCheckpoint, 0, batchSize),
+		pendingMain:    make([]checkpoint.WriteCommittedOptions, 0, batchSize),
+		batchSize:      batchSize,
+		compactOffsets: newMigrateCompactOffsetCache(),
 	}
 }
 
@@ -448,8 +492,9 @@ func (s *migrateLoopState) packCurrentBatch(ctx, loopCtx context.Context, repo *
 	refName := checkpoint.ArchivedGenerationRefName(s.nextGeneration)
 	_, packSpan := perf.Start(loopCtx, "pack_full_generation")
 	packStart := time.Now()
-	packErr := writeMigratedFullGeneration(ctx, repo, refName, s.pendingFull)
+	packTimings, packErr := writeMigratedFullGeneration(ctx, repo, refName, s.pendingFull)
 	s.totalPackFull += time.Since(packStart)
+	s.addPackTimings(packTimings)
 	if packErr != nil {
 		packSpan.RecordError(packErr)
 		packSpan.End()
@@ -466,8 +511,42 @@ func (s *migrateLoopState) packCurrentBatch(ctx, loopCtx context.Context, repo *
 // span as synthetic child spans so they show up in `doctor trace` output.
 func (s *migrateLoopState) annotateTotals(loopCtx context.Context) {
 	perf.Annotate(loopCtx, "migrate_one_checkpoint_total", s.totalMigrateOne)
+	perf.Annotate(loopCtx, "migrate_one.read_v1_summary_total", s.totalReadV1Summary)
+	perf.Annotate(loopCtx, "migrate_one.read_v1_sessions_total", s.totalReadV1Sessions)
+	perf.Annotate(loopCtx, "migrate_one.compact_transcript_total", s.totalCompactTranscript)
+	perf.Annotate(loopCtx, "migrate_one.compact_offset_fallback_total", s.totalCompactOffsetFallback)
+	perf.Annotate(loopCtx, "migrate_one.collect_task_metadata_total", s.totalCollectTaskMetadata)
+	perf.Annotate(loopCtx, "migrate_one.prune_v2_checkpoint_total", s.totalPruneV2Checkpoint)
+	perf.Annotate(loopCtx, "migrate_one.resume_missing_full_total", s.totalResumeMissingFull)
+	perf.Annotate(loopCtx, "migrate_one.backfill_compact_total", s.totalBackfillCompact)
 	perf.Annotate(loopCtx, "flush_main_total", s.totalFlushMain)
 	perf.Annotate(loopCtx, "pack_full_generation_total", s.totalPackFull)
+	perf.Annotate(loopCtx, "pack_full.build_entries_total", s.totalPackBuildEntries)
+	perf.Annotate(loopCtx, "pack_full.build_tree_total", s.totalPackBuildTree)
+	perf.Annotate(loopCtx, "pack_full.generation_timestamps_total", s.totalPackGenerationTimestamps)
+	perf.Annotate(loopCtx, "pack_full.generation_json_total", s.totalPackGenerationJSON)
+	perf.Annotate(loopCtx, "pack_full.commit_total", s.totalPackCommit)
+	perf.Annotate(loopCtx, "pack_full.update_ref_total", s.totalPackUpdateRef)
+}
+
+func (s *migrateLoopState) addMigrateTimings(t migrateCheckpointTimings) {
+	s.totalReadV1Summary += t.readV1Summary
+	s.totalReadV1Sessions += t.readV1Sessions
+	s.totalCompactTranscript += t.compactTranscript
+	s.totalCompactOffsetFallback += t.compactOffsetFallback
+	s.totalCollectTaskMetadata += t.collectTaskMetadata
+	s.totalPruneV2Checkpoint += t.pruneV2Checkpoint
+	s.totalResumeMissingFull += t.resumeMissingFull
+	s.totalBackfillCompact += t.backfillCompact
+}
+
+func (s *migrateLoopState) addPackTimings(t migratePackTimings) {
+	s.totalPackBuildEntries += t.buildEntries
+	s.totalPackBuildTree += t.buildTree
+	s.totalPackGenerationTimestamps += t.generationTimestamps
+	s.totalPackGenerationJSON += t.generationJSON
+	s.totalPackCommit += t.commit
+	s.totalPackUpdateRef += t.updateRef
 }
 
 // recordMigrationSkipOrFailure classifies a failing migrateOneCheckpoint
@@ -522,6 +601,27 @@ func sortMigratableCheckpoints(checkpoints []checkpoint.CommittedInfo) {
 type migrateCheckpointOutcome struct {
 	missingSessions          int
 	compactTranscriptSkipped bool
+	timings                  migrateCheckpointTimings
+}
+
+type migrateCheckpointTimings struct {
+	readV1Summary         time.Duration
+	readV1Sessions        time.Duration
+	compactTranscript     time.Duration
+	compactOffsetFallback time.Duration
+	collectTaskMetadata   time.Duration
+	pruneV2Checkpoint     time.Duration
+	resumeMissingFull     time.Duration
+	backfillCompact       time.Duration
+}
+
+type migratePackTimings struct {
+	buildEntries         time.Duration
+	buildTree            time.Duration
+	generationTimestamps time.Duration
+	generationJSON       time.Duration
+	commit               time.Duration
+	updateRef            time.Duration
 }
 
 // migrateOneCheckpoint returns the prepared /main WriteCommittedOptions
@@ -537,17 +637,26 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 	if err != nil {
 		return nil, nil, outcome, fmt.Errorf("failed to check v2 for checkpoint %s: %w", info.CheckpointID, err)
 	}
+	return migrateOneCheckpointWithExisting(ctx, repo, v1Store, v2Store, info, existing, force, fullArtifacts, newMigrateCompactOffsetCache())
+}
+
+func migrateOneCheckpointWithExisting(ctx context.Context, repo *git.Repository, v1Store *checkpoint.GitStore, v2Store *checkpoint.V2GitStore, info checkpoint.CommittedInfo, existing *checkpoint.CheckpointSummary, force bool, fullArtifacts checkpoint.FullSessionArtifactsIndex, compactOffsets *migrateCompactOffsetCache) (*migratedFullCheckpoint, []checkpoint.WriteCommittedOptions, migrateCheckpointOutcome, error) {
+	var outcome migrateCheckpointOutcome
 
 	if existing != nil && !force {
 		// Already in v2. Pack sessions whose /full/* artifacts are missing
 		// (resume an interrupted run) and backfill transcript.jsonl on /main
 		// where it's missing. With nothing to do on either front, return
 		// errAlreadyMigrated so the caller counts it as skipped.
+		resumeStart := time.Now()
 		fullCheckpoint, err := collectMissingFullCheckpointForPacking(ctx, repo, v1Store, v2Store, info, existing, fullArtifacts)
+		outcome.timings.resumeMissingFull += time.Since(resumeStart)
 		if err != nil && !errors.Is(err, errAlreadyMigrated) {
 			return nil, nil, outcome, err
 		}
+		backfillStart := time.Now()
 		backfilled, backfillErr := backfillCompactTranscripts(ctx, v1Store, v2Store, info, existing)
+		outcome.timings.backfillCompact += time.Since(backfillStart)
 		if errors.Is(backfillErr, errTranscriptNotGeneratable) {
 			outcome.compactTranscriptSkipped = true
 		} else if backfillErr != nil && !errors.Is(backfillErr, errAlreadyMigrated) {
@@ -563,12 +672,17 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 	}
 
 	if existing != nil && force {
+		pruneStart := time.Now()
 		if pruneErr := pruneV2CheckpointForForce(ctx, repo, v2Store, info.CheckpointID); pruneErr != nil {
+			outcome.timings.pruneV2Checkpoint += time.Since(pruneStart)
 			return nil, nil, outcome, fmt.Errorf("failed to reset existing v2 checkpoint %s before force migration: %w", info.CheckpointID, pruneErr)
 		}
+		outcome.timings.pruneV2Checkpoint += time.Since(pruneStart)
 	}
 
+	summaryStart := time.Now()
 	summary, err := v1Store.ReadCommitted(ctx, info.CheckpointID)
+	outcome.timings.readV1Summary += time.Since(summaryStart)
 	if err != nil {
 		return nil, nil, outcome, fmt.Errorf("failed to read v1 summary: %w", err)
 	}
@@ -587,7 +701,9 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 	mainOptsBatch := make([]checkpoint.WriteCommittedOptions, 0, len(summary.Sessions))
 
 	for sessionIdx := range len(summary.Sessions) {
+		readSessionStart := time.Now()
 		content, skipped, readErr := readV1SessionForMigration(ctx, v1Store, info.CheckpointID, sessionIdx)
+		outcome.timings.readV1Sessions += time.Since(readSessionStart)
 		if skipped {
 			skippedMissingSessions++
 			outcome.missingSessions++
@@ -602,10 +718,13 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 
 		opts := buildMigrateWriteOpts(content, info, summary.CombinedAttribution)
 
-		compacted := tryCompactTranscript(ctx, content.Transcript, content.Metadata)
+		compactStart := time.Now()
+		compacted, offset, offsetFallback := tryCompactTranscriptAndOffset(ctx, content.Transcript, content.Metadata, compactOffsets)
+		outcome.timings.compactTranscript += time.Since(compactStart)
+		outcome.timings.compactOffsetFallback += offsetFallback
 		if compacted != nil {
 			opts.CompactTranscript = compacted
-			opts.CompactTranscriptStart = computeCompactOffset(ctx, content.Transcript, compacted, content.Metadata)
+			opts.CompactTranscriptStart = offset
 		} else if len(content.Transcript) > 0 {
 			compactFailed = true
 		}
@@ -623,8 +742,9 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 		v2SessionIdx := migratedSessions
 		v1ToV2SessionIdx[sessionIdx] = v2SessionIdx
 		fullCheckpoint.sessions = append(fullCheckpoint.sessions, migratedFullSession{
-			sessionIndex: v2SessionIdx,
-			content:      content,
+			sessionIndex:            v2SessionIdx,
+			content:                 content,
+			rawTranscriptBlobHashes: content.TranscriptBlobHashes,
 		})
 		migratedSessions++
 	}
@@ -634,7 +754,9 @@ func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *ch
 	}
 
 	if shouldCopyTaskMetadata {
+		taskStart := time.Now()
 		taskTrees, taskErr := collectTaskMetadataForMigratedFullGeneration(repo, info.CheckpointID, summary, v1ToV2SessionIdx)
+		outcome.timings.collectTaskMetadata += time.Since(taskStart)
 		if taskErr != nil {
 			logging.Warn(ctx, "failed to copy task metadata to v2",
 				slog.String("checkpoint_id", string(info.CheckpointID)),
@@ -668,6 +790,46 @@ func migrateFullBatchSize() int {
 		return checkpoint.DefaultMaxCheckpointsPerGeneration
 	}
 	return batchSize
+}
+
+func listExistingV2Checkpoints(ctx context.Context, repo *git.Repository, v2Store *checkpoint.V2GitStore) (map[id.CheckpointID]struct{}, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context canceled before listing v2 checkpoints: %w", err)
+	}
+
+	existing := make(map[id.CheckpointID]struct{})
+	_, rootTreeHash, err := v2Store.GetRefState(plumbing.ReferenceName(paths.V2MainRefName))
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("read v2 /main ref: %w", err)
+	}
+
+	rootTree, err := repo.TreeObject(rootTreeHash)
+	if err != nil {
+		return nil, fmt.Errorf("read v2 /main tree: %w", err)
+	}
+
+	if err := checkpoint.WalkCheckpointShards(repo, rootTree, func(cpID id.CheckpointID, _ plumbing.Hash) error {
+		existing[cpID] = struct{}{}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("walk v2 /main checkpoints: %w", err)
+	}
+
+	return existing, nil
+}
+
+func readExistingV2Checkpoint(ctx context.Context, v2Store *checkpoint.V2GitStore, existing map[id.CheckpointID]struct{}, cpID id.CheckpointID) (*checkpoint.CheckpointSummary, bool, error) {
+	if _, ok := existing[cpID]; !ok {
+		return nil, false, nil
+	}
+	existingSummary, err := v2Store.ReadCommitted(ctx, cpID)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to check v2 for checkpoint %s: %w", cpID, err)
+	}
+	return existingSummary, true, nil
 }
 
 func writeMigratedFinalFullCurrent(ctx context.Context, repo *git.Repository, v2Store *checkpoint.V2GitStore, checkpoints []migratedFullCheckpoint) error {
@@ -773,53 +935,68 @@ func repoWorktreeRoot(repo *git.Repository) (string, error) {
 	return root, nil
 }
 
-func writeMigratedFullGeneration(ctx context.Context, repo *git.Repository, refName plumbing.ReferenceName, checkpoints []migratedFullCheckpoint) error {
+func writeMigratedFullGeneration(ctx context.Context, repo *git.Repository, refName plumbing.ReferenceName, checkpoints []migratedFullCheckpoint) (migratePackTimings, error) {
+	var timings migratePackTimings
+
+	buildEntriesStart := time.Now()
 	fullEntries, err := buildMigratedFullEntrySet(ctx, repo, checkpoints)
+	timings.buildEntries += time.Since(buildEntriesStart)
 	if err != nil {
-		return fmt.Errorf("write migrated generation entries: %w", err)
+		return timings, fmt.Errorf("write migrated generation entries: %w", err)
 	}
 
 	entries := make(map[string]object.TreeEntry, len(fullEntries.rawEntries)+len(fullEntries.taskEntries))
 	fullEntries.mergeInto(entries)
+	buildTreeStart := time.Now()
 	treeHash, err := checkpoint.BuildTreeFromEntries(ctx, repo, entries)
+	timings.buildTree += time.Since(buildTreeStart)
 	if err != nil {
-		return fmt.Errorf("build migrated generation tree: %w", err)
+		return timings, fmt.Errorf("build migrated generation tree: %w", err)
 	}
 
-	v2Store := checkpoint.NewV2GitStore(repo, migrateRemoteName)
-	// Reuse the transcripts already in memory rather than walking the tree
-	// we just built — same first/last-event range, no redundant blob reads.
-	gen, found := checkpoint.AggregateTranscriptTimestamps(migratedTranscripts(checkpoints))
+	timestampsStart := time.Now()
+	gen, found := generationMetadataFromMigratedSessions(checkpoints)
 	if !found {
+		gen, found = checkpoint.AggregateTranscriptTimestamps(migratedTranscripts(checkpoints))
+	}
+	if !found {
+		v2Store := checkpoint.NewV2GitStore(repo, migrateRemoteName)
 		var err error
 		gen, found, err = v2Store.ComputeGenerationCheckpointTimestamps(treeHash)
 		if err != nil {
-			return fmt.Errorf("compute checkpoint timestamps: %w", err)
+			timings.generationTimestamps += time.Since(timestampsStart)
+			return timings, fmt.Errorf("compute checkpoint timestamps: %w", err)
 		}
 	}
+	timings.generationTimestamps += time.Since(timestampsStart)
 	if !found {
-		gen, found = generationMetadataFromMigratedSessions(checkpoints)
-	}
-	if !found {
-		return fmt.Errorf("no timestamps found for migrated generation %s", refName)
+		return timings, fmt.Errorf("no timestamps found for migrated generation %s", refName)
 	}
 
+	generationJSONStart := time.Now()
+	v2Store := checkpoint.NewV2GitStore(repo, migrateRemoteName)
 	treeHash, err = v2Store.AddGenerationJSONToTree(treeHash, gen)
+	timings.generationJSON += time.Since(generationJSONStart)
 	if err != nil {
-		return fmt.Errorf("add generation metadata: %w", err)
+		return timings, fmt.Errorf("add generation metadata: %w", err)
 	}
 
+	commitStart := time.Now()
 	commitHash, err := checkpoint.CreateCommit(ctx, repo, treeHash, plumbing.ZeroHash,
 		fmt.Sprintf("Archive migrated generation: %s\n", refName),
 		migrateAuthorName, migrateAuthorEmail)
+	timings.commit += time.Since(commitStart)
 	if err != nil {
-		return fmt.Errorf("create migrated generation commit: %w", err)
+		return timings, fmt.Errorf("create migrated generation commit: %w", err)
 	}
 
+	updateRefStart := time.Now()
 	if err := repo.Storer.SetReference(plumbing.NewHashReference(refName, commitHash)); err != nil {
-		return fmt.Errorf("update migrated generation ref %s: %w", refName, err)
+		timings.updateRef += time.Since(updateRefStart)
+		return timings, fmt.Errorf("update migrated generation ref %s: %w", refName, err)
 	}
-	return nil
+	timings.updateRef += time.Since(updateRefStart)
+	return timings, nil
 }
 
 func migratedTranscripts(checkpoints []migratedFullCheckpoint) [][]byte {
@@ -900,21 +1077,32 @@ func buildMigratedFullSessionEntrySet(ctx context.Context, repo *git.Repository,
 	rawHashPath := sessionPath + paths.V2RawTranscriptHashFileName
 	var entries migratedFullEntrySet
 
-	chunks, err := agent.ChunkTranscript(ctx, transcript, session.content.Metadata.Agent)
-	if err != nil {
-		return migratedFullEntrySet{}, fmt.Errorf("chunk transcript: %w", err)
-	}
-	for i, chunk := range chunks {
-		blobHash, blobErr := checkpoint.CreateBlobFromContent(repo, chunk)
-		if blobErr != nil {
-			return migratedFullEntrySet{}, fmt.Errorf("create transcript blob: %w", blobErr)
+	if len(session.rawTranscriptBlobHashes) > 0 {
+		for i, blobHash := range session.rawTranscriptBlobHashes {
+			path := sessionPath + agent.ChunkFileName(paths.V2RawTranscriptFileName, i)
+			entries.rawEntries = append(entries.rawEntries, object.TreeEntry{
+				Name: path,
+				Mode: filemode.Regular,
+				Hash: blobHash,
+			})
 		}
-		path := sessionPath + agent.ChunkFileName(paths.V2RawTranscriptFileName, i)
-		entries.rawEntries = append(entries.rawEntries, object.TreeEntry{
-			Name: path,
-			Mode: filemode.Regular,
-			Hash: blobHash,
-		})
+	} else {
+		chunks, err := agent.ChunkTranscript(ctx, transcript, session.content.Metadata.Agent)
+		if err != nil {
+			return migratedFullEntrySet{}, fmt.Errorf("chunk transcript: %w", err)
+		}
+		for i, chunk := range chunks {
+			blobHash, blobErr := checkpoint.CreateBlobFromContent(repo, chunk)
+			if blobErr != nil {
+				return migratedFullEntrySet{}, fmt.Errorf("create transcript blob: %w", blobErr)
+			}
+			path := sessionPath + agent.ChunkFileName(paths.V2RawTranscriptFileName, i)
+			entries.rawEntries = append(entries.rawEntries, object.TreeEntry{
+				Name: path,
+				Mode: filemode.Regular,
+				Hash: blobHash,
+			})
+		}
 	}
 
 	contentHash := fmt.Sprintf("sha256:%x", sha256.Sum256(transcript))
@@ -1212,6 +1400,92 @@ func tryCompactTranscript(ctx context.Context, transcript []byte, m checkpoint.C
 	return compactTranscriptForStartLine(ctx, transcript, m, 0)
 }
 
+type migrateCompactOffsetCache struct {
+	offsets map[migrateCompactOffsetKey]int
+}
+
+type migrateCompactOffsetKey struct {
+	sessionID          string
+	agent              string
+	transcriptPosition int
+}
+
+func newMigrateCompactOffsetCache() *migrateCompactOffsetCache {
+	return &migrateCompactOffsetCache{offsets: make(map[migrateCompactOffsetKey]int)}
+}
+
+func (c *migrateCompactOffsetCache) lookup(m checkpoint.CommittedMetadata, transcriptPosition int) (int, bool) {
+	if c == nil || m.SessionID == "" || transcriptPosition <= 0 {
+		return 0, false
+	}
+	offset, ok := c.offsets[migrateCompactOffsetKey{
+		sessionID:          m.SessionID,
+		agent:              string(m.Agent),
+		transcriptPosition: transcriptPosition,
+	}]
+	return offset, ok
+}
+
+func (c *migrateCompactOffsetCache) record(m checkpoint.CommittedMetadata, transcriptPosition, compactPosition int) {
+	if c == nil || m.SessionID == "" || transcriptPosition <= 0 || compactPosition < 0 {
+		return
+	}
+	c.offsets[migrateCompactOffsetKey{
+		sessionID:          m.SessionID,
+		agent:              string(m.Agent),
+		transcriptPosition: transcriptPosition,
+	}] = compactPosition
+}
+
+func tryCompactTranscriptAndOffset(ctx context.Context, transcript []byte, m checkpoint.CommittedMetadata, compactOffsets *migrateCompactOffsetCache) ([]byte, int, time.Duration) {
+	compacted := tryCompactTranscript(ctx, transcript, m)
+	if compacted == nil {
+		return nil, 0, 0
+	}
+	compactLines := bytes.Count(compacted, []byte{'\n'})
+
+	startLine := m.GetTranscriptStart()
+	offset := 0
+	var fallbackDuration time.Duration
+	if startLine > 0 {
+		var ok bool
+		offset, ok = compactOffsets.lookup(m, startLine)
+		if !ok {
+			fallbackStart := time.Now()
+			offset = computeCompactOffset(ctx, transcript, compacted, m)
+			fallbackDuration = time.Since(fallbackStart)
+		}
+	}
+
+	if position, ok := migrationTranscriptPosition(m.Agent, transcript); ok {
+		compactOffsets.record(m, position, compactLines)
+	}
+	return compacted, offset, fallbackDuration
+}
+
+func migrationTranscriptPosition(agentType agenttypes.AgentType, content []byte) (int, bool) {
+	if len(content) == 0 {
+		return 0, true
+	}
+
+	switch agentType {
+	case agent.AgentTypeGemini, agent.AgentTypeOpenCode:
+		var session struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(content), &session); err != nil {
+			return 0, false
+		}
+		return len(session.Messages), true
+	default:
+		lines := bytes.Split(content, []byte{'\n'})
+		for len(lines) > 0 && len(bytes.TrimSpace(lines[len(lines)-1])) == 0 {
+			lines = lines[:len(lines)-1]
+		}
+		return len(lines), true
+	}
+}
+
 func compactTranscriptForStartLine(ctx context.Context, transcript []byte, m checkpoint.CommittedMetadata, startLine int) []byte {
 	if len(transcript) == 0 {
 		return nil
@@ -1434,8 +1708,9 @@ func collectMissingFullCheckpointForPacking(
 		}
 
 		fullCheckpoint.sessions = append(fullCheckpoint.sessions, migratedFullSession{
-			sessionIndex: missingSession.sessionIndex,
-			content:      v1Session.content,
+			sessionIndex:            missingSession.sessionIndex,
+			content:                 v1Session.content,
+			rawTranscriptBlobHashes: v1Session.content.TranscriptBlobHashes,
 		})
 		v1ToV2SessionIdx[v1Session.sessionIndex] = missingSession.sessionIndex
 	}

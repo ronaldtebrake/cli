@@ -1082,31 +1082,43 @@ func TestV2GitStore_BuildFullSessionArtifactsIndex_NilSafe(t *testing.T) {
 // will perform. Sessions sharing a CheckpointID land in the same shard and
 // must be assigned distinct slot indexes when SessionIDs differ.
 type batchTestEntry struct {
-	cpID         id.CheckpointID
-	sessionID    string
-	transcript   string
-	prompts      []string
-	cpCount      int
-	filesTouched []string
+	cpID                id.CheckpointID
+	sessionID           string
+	transcript          string
+	prompts             []string
+	cpCount             int
+	filesTouched        []string
+	combinedAttribution *InitialAttribution
+	hasReview           bool
 }
 
 // fixedCreatedAt keeps batch-vs-sequential comparisons deterministic;
 // checkpointCreatedAt defaults to time.Now() when CreatedAt is zero, which
 // would cause unrelated tree-hash diffs between the two runs.
 var fixedCreatedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+var fixedBatchAttribution = &InitialAttribution{
+	CalculatedAt:      fixedCreatedAt,
+	AgentLines:        7,
+	TotalCommitted:    7,
+	TotalLinesChanged: 7,
+	AgentPercentage:   100,
+	MetricVersion:     2,
+}
 
 func (e batchTestEntry) toOpts() WriteCommittedOptions {
 	return WriteCommittedOptions{
-		CheckpointID:     e.cpID,
-		SessionID:        e.sessionID,
-		Strategy:         "manual-commit",
-		CreatedAt:        fixedCreatedAt,
-		Transcript:       redact.AlreadyRedacted([]byte(e.transcript)),
-		Prompts:          e.prompts,
-		CheckpointsCount: e.cpCount,
-		FilesTouched:     e.filesTouched,
-		AuthorName:       "Test",
-		AuthorEmail:      "test@test.com",
+		CheckpointID:        e.cpID,
+		SessionID:           e.sessionID,
+		Strategy:            "manual-commit",
+		CreatedAt:           fixedCreatedAt,
+		Transcript:          redact.AlreadyRedacted([]byte(e.transcript)),
+		Prompts:             e.prompts,
+		CheckpointsCount:    e.cpCount,
+		FilesTouched:        e.filesTouched,
+		CombinedAttribution: e.combinedAttribution,
+		HasReview:           e.hasReview,
+		AuthorName:          "Test",
+		AuthorEmail:         "test@test.com",
 	}
 }
 
@@ -1121,8 +1133,10 @@ func TestV2GitStore_WriteCommittedMainBatch_MatchesSequentialWrites(t *testing.T
 	cpB := id.MustCheckpointID("b2c3d4e5f6a1")
 	cpC := id.MustCheckpointID("c3d4e5f6a1b2")
 	entries := []batchTestEntry{
-		// cpA: two sessions
-		{cpID: cpA, sessionID: "sess-A0", transcript: `{"line":"a0"}`, prompts: []string{"prompt-a0"}, cpCount: 1, filesTouched: []string{"a.txt"}},
+		// cpA: two sessions. The first write carries checkpoint-level fields
+		// and the second omits them, pinning the sequential "preserve prior
+		// value" behavior in the fresh batch path.
+		{cpID: cpA, sessionID: "sess-A0", transcript: `{"line":"a0"}`, prompts: []string{"prompt-a0"}, cpCount: 1, filesTouched: []string{"a.txt"}, combinedAttribution: fixedBatchAttribution, hasReview: true},
 		{cpID: cpA, sessionID: "sess-A1", transcript: `{"line":"a1"}`, prompts: []string{"prompt-a1"}, cpCount: 2, filesTouched: []string{"a.txt", "b.txt"}},
 		// cpB: one session
 		{cpID: cpB, sessionID: "sess-B0", transcript: `{"line":"b0"}`, prompts: []string{"prompt-b0"}, cpCount: 4, filesTouched: []string{"c.txt"}},

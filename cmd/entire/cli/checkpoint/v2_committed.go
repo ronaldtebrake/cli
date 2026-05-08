@@ -65,8 +65,8 @@ func (s *V2GitStore) WriteCommittedWithSessionIndex(ctx context.Context, opts Wr
 // pack flow. Returns session indexes parallel to batch.
 //
 // Matches per-session writeCommittedMain semantics within each checkpoint
-// group: existing-SessionID dedupe, slot-0 refuse-overwrite, and last-write-
-// wins for the root CheckpointSummary's combinedAttribution / HasReview.
+// group: existing-SessionID dedupe, slot-0 refuse-overwrite, last non-nil
+// combinedAttribution, and sticky HasReview.
 func (s *V2GitStore) WriteCommittedMainBatch(ctx context.Context, batch []WriteCommittedOptions) ([]int, error) {
 	if len(batch) == 0 {
 		return nil, nil
@@ -103,12 +103,34 @@ func (s *V2GitStore) WriteCommittedMainBatch(ctx context.Context, batch []WriteC
 	}
 
 	sessionIndexes := make([]int, len(batch))
+	existingCheckpoints, err := s.existingMainCheckpointIDs(rootTreeHash)
+	if err != nil {
+		return nil, err
+	}
+	changes := make([]TreeChange, 0, len(groups))
 	for _, g := range groups {
-		newRoot, err := s.applyMainBatchGroup(ctx, rootTreeHash, g.cpID, g.ordinals, batch, sessionIndexes)
+		var checkpointTreeHash plumbing.Hash
+		if _, exists := existingCheckpoints[g.cpID]; exists {
+			checkpointTreeHash, err = s.buildMainBatchGroupTree(ctx, rootTreeHash, g.cpID, g.ordinals, batch, sessionIndexes)
+		} else {
+			checkpointTreeHash, err = s.buildFreshMainBatchGroupTree(ctx, g.cpID, g.ordinals, batch, sessionIndexes)
+		}
 		if err != nil {
 			return nil, err
 		}
-		rootTreeHash = newRoot
+		changes = append(changes, TreeChange{
+			Path: g.cpID.Path(),
+			Entry: &object.TreeEntry{
+				Mode: filemode.Dir,
+				Hash: checkpointTreeHash,
+			},
+		})
+	}
+	if len(changes) > 0 {
+		rootTreeHash, err = ApplyTreeChanges(ctx, s.repo, rootTreeHash, changes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply batched /main checkpoint trees: %w", err)
+		}
 	}
 
 	// One commit, one ref update for the entire batch.
@@ -130,11 +152,98 @@ func (s *V2GitStore) WriteCommittedMainBatch(ctx context.Context, batch []WriteC
 	return sessionIndexes, nil
 }
 
-// applyMainBatchGroup writes every session in one checkpoint group into the
-// running root tree and returns the new root hash. Mirrors per-session
-// writeCommittedMain logic (dedupe, slot-0 guard) while letting subsequent
-// sessions in the same group see freshly-written entries.
-func (s *V2GitStore) applyMainBatchGroup(ctx context.Context, rootTreeHash plumbing.Hash, cpID id.CheckpointID, ordinals []int, batch []WriteCommittedOptions, sessionIndexes []int) (plumbing.Hash, error) {
+func (s *V2GitStore) existingMainCheckpointIDs(rootTreeHash plumbing.Hash) (map[id.CheckpointID]struct{}, error) {
+	existing := make(map[id.CheckpointID]struct{})
+	if rootTreeHash == plumbing.ZeroHash {
+		return existing, nil
+	}
+	rootTree, err := s.repo.TreeObject(rootTreeHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read /main root tree: %w", err)
+	}
+	if err := WalkCheckpointShards(s.repo, rootTree, func(cpID id.CheckpointID, _ plumbing.Hash) error {
+		existing[cpID] = struct{}{}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to walk existing /main checkpoints: %w", err)
+	}
+	return existing, nil
+}
+
+func (s *V2GitStore) buildFreshMainBatchGroupTree(ctx context.Context, cpID id.CheckpointID, ordinals []int, batch []WriteCommittedOptions, sessionIndexes []int) (plumbing.Hash, error) {
+	basePath := cpID.Path() + "/"
+	entries := make(map[string]object.TreeEntry)
+	sessions := make([]SessionFilePaths, len(ordinals))
+
+	for sessionIndex, ordinal := range ordinals {
+		opts := batch[ordinal]
+		sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
+		filePaths, err := s.writeMainSessionToSubdirectory(opts, sessionPath, entries)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		sessions[sessionIndex] = filePaths
+		sessionIndexes[ordinal] = sessionIndex
+	}
+
+	lastOpts := batch[ordinals[len(ordinals)-1]]
+	if err := s.writeFreshMainBatchCheckpointSummary(lastOpts, basePath, entries, sessions, ordinals, batch); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return s.buildCheckpointSubtree(ctx, basePath, entries)
+}
+
+func (s *V2GitStore) writeFreshMainBatchCheckpointSummary(lastOpts WriteCommittedOptions, basePath string, entries map[string]object.TreeEntry, sessions []SessionFilePaths, ordinals []int, batch []WriteCommittedOptions) error {
+	var checkpointsCount int
+	var filesTouched []string
+	var tokenUsage *agent.TokenUsage
+	var combinedAttribution *InitialAttribution
+	var hasReview bool
+	for _, ordinal := range ordinals {
+		opts := batch[ordinal]
+		checkpointsCount += opts.CheckpointsCount
+		filesTouched = mergeFilesTouched(filesTouched, opts.FilesTouched)
+		tokenUsage = aggregateTokenUsage(tokenUsage, opts.TokenUsage)
+		if opts.CombinedAttribution != nil {
+			combinedAttribution = opts.CombinedAttribution
+		}
+		hasReview = hasReview || opts.HasReview
+	}
+
+	summary := CheckpointSummary{
+		CheckpointID:        lastOpts.CheckpointID,
+		CLIVersion:          versioninfo.Version,
+		Strategy:            lastOpts.Strategy,
+		Branch:              lastOpts.Branch,
+		CheckpointsCount:    checkpointsCount,
+		FilesTouched:        filesTouched,
+		Sessions:            sessions,
+		TokenUsage:          tokenUsage,
+		CombinedAttribution: combinedAttribution,
+		HasReview:           hasReview,
+	}
+
+	metadataJSON, err := jsonutil.MarshalIndentWithNewline(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal checkpoint summary: %w", err)
+	}
+	metadataHash, err := CreateBlobFromContent(s.repo, metadataJSON)
+	if err != nil {
+		return err
+	}
+	entries[basePath+paths.MetadataFileName] = object.TreeEntry{
+		Name: basePath + paths.MetadataFileName,
+		Mode: filemode.Regular,
+		Hash: metadataHash,
+	}
+	return nil
+}
+
+// buildMainBatchGroupTree writes every session in one checkpoint group into an
+// isolated checkpoint subtree. WriteCommittedMainBatch splices all returned
+// checkpoint trees into /main in one pass, instead of rewriting the root and
+// shard trees once per checkpoint.
+func (s *V2GitStore) buildMainBatchGroupTree(ctx context.Context, rootTreeHash plumbing.Hash, cpID id.CheckpointID, ordinals []int, batch []WriteCommittedOptions, sessionIndexes []int) (plumbing.Hash, error) {
 	basePath := cpID.Path() + "/"
 	checkpointPath := cpID.Path()
 
@@ -209,7 +318,24 @@ func (s *V2GitStore) applyMainBatchGroup(ctx context.Context, rootTreeHash plumb
 		return plumbing.ZeroHash, err
 	}
 
-	return s.gs.spliceCheckpointSubtree(ctx, rootTreeHash, cpID, basePath, entries)
+	return s.buildCheckpointSubtree(ctx, basePath, entries)
+}
+
+func (s *V2GitStore) buildCheckpointSubtree(ctx context.Context, basePath string, entries map[string]object.TreeEntry) (plumbing.Hash, error) {
+	relEntries := make(map[string]object.TreeEntry, len(entries))
+	for path, entry := range entries {
+		relPath := strings.TrimPrefix(path, basePath)
+		if relPath == path {
+			continue
+		}
+		relEntries[relPath] = entry
+	}
+
+	checkpointTreeHash, err := BuildTreeFromEntries(ctx, s.repo, relEntries)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("failed to build checkpoint subtree: %w", err)
+	}
+	return checkpointTreeHash, nil
 }
 
 // UpdateCommitted replaces the prompts and/or transcript for an existing v2
