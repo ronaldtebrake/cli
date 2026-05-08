@@ -425,6 +425,93 @@ func TestPushV2Refs_LocalRotationPublishesCurrentWorkAddedBeforePush(t *testing.
 	}
 }
 
+// TestPushV2Refs_RepeatedLocalRotationsBeforePushPublishesAllArchives verifies
+// that more than one local rotation can be queued and published in one pre-push.
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestPushV2Refs_RepeatedLocalRotationsBeforePushPublishesAllArchives(t *testing.T) {
+	ctx := context.Background()
+	fullCurrentRef := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	archive1Ref := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
+	archive2Ref := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000002")
+	gen1CPs := []id.CheckpointID{
+		id.MustCheckpointID("000000000001"),
+		id.MustCheckpointID("000000000002"),
+	}
+	gen2CPs := []id.CheckpointID{
+		id.MustCheckpointID("000000000003"),
+		id.MustCheckpointID("000000000004"),
+	}
+	currentCP := id.MustCheckpointID("000000000005")
+
+	localDir := setupRepoWithV2Ref(t)
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	localStore := checkpoint.NewV2GitStore(localRepo, "origin")
+
+	for i, cpID := range gen1CPs {
+		writeV2Checkpoint(t, localRepo, cpID, "session-gen-1-"+string(rune('a'+i)))
+	}
+
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "git init --bare failed: %s", out)
+
+	pushCurrent := exec.CommandContext(ctx, "git", "push", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef))
+	pushCurrent.Dir = localDir
+	out, err = pushCurrent.CombinedOutput()
+	require.NoError(t, err, "initial full/current push failed: %s", out)
+
+	refName, rotated, err := localStore.RotateCurrentGenerationIfNeeded(ctx, len(gen1CPs))
+	require.NoError(t, err)
+	require.True(t, rotated)
+	require.Equal(t, archive1Ref, refName)
+
+	for i, cpID := range gen2CPs {
+		writeV2Checkpoint(t, localRepo, cpID, "session-gen-2-"+string(rune('a'+i)))
+	}
+	refName, rotated, err = localStore.RotateCurrentGenerationIfNeeded(ctx, len(gen2CPs))
+	require.NoError(t, err)
+	require.True(t, rotated)
+	require.Equal(t, archive2Ref, refName)
+
+	writeV2Checkpoint(t, localRepo, currentCP, "session-current")
+
+	t.Chdir(localDir)
+	restore := captureStderr(t)
+	pushV2Refs(ctx, bareDir)
+	_ = restore()
+
+	bareRepo, err := git.PlainOpen(bareDir)
+	require.NoError(t, err)
+	for _, cpID := range gen1CPs {
+		assert.True(t, refContainsV2Checkpoint(t, bareRepo, archive1Ref, cpID),
+			"archive 1 should contain generation 1 checkpoint %s", cpID)
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, archive2Ref, cpID),
+			"archive 2 should not contain generation 1 checkpoint %s", cpID)
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, fullCurrentRef, cpID),
+			"current should not contain generation 1 checkpoint %s", cpID)
+	}
+	for _, cpID := range gen2CPs {
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, archive1Ref, cpID),
+			"archive 1 should not contain generation 2 checkpoint %s", cpID)
+		assert.True(t, refContainsV2Checkpoint(t, bareRepo, archive2Ref, cpID),
+			"archive 2 should contain generation 2 checkpoint %s", cpID)
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, fullCurrentRef, cpID),
+			"current should not contain generation 2 checkpoint %s", cpID)
+	}
+	assert.False(t, refContainsV2Checkpoint(t, bareRepo, archive1Ref, currentCP),
+		"archive 1 should not contain current checkpoint")
+	assert.False(t, refContainsV2Checkpoint(t, bareRepo, archive2Ref, currentCP),
+		"archive 2 should not contain current checkpoint")
+	assert.True(t, refContainsV2Checkpoint(t, bareRepo, fullCurrentRef, currentCP),
+		"current should contain current checkpoint")
+}
+
 func TestDetectRemoteRotationArchives_IncludesSameNameDifferentHash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
