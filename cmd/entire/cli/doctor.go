@@ -679,16 +679,20 @@ func checkV2RefExistence(cmd *cobra.Command, repo *git.Repository) error {
 	return nil
 }
 
-// checkCodexHookTrust warns when Codex hooks declared in
-// <repo>/.codex/hooks.json lack a `trusted_hash` entry in the user's
-// Codex config — either a fresh-clone first-run before the user has
-// opened /hooks, or a newer entire release that added a hook the user
-// trusted on an older version.
+// checkCodexHookTrust warns about two kinds of drift in the Codex hook
+// setup:
 //
-// Detection is structural (key presence in the user's config.toml).
-// Stays silent when this repo doesn't have codex hooks installed or
-// when we can't resolve the worktree root. There's no fix we can
-// apply: the user has to approve via Codex's /hooks UI. Warn-only.
+//  1. .codex/hooks.json is stale relative to what the CLI installs
+//     today (e.g. a release added PostToolUse after the user enabled
+//     Codex). Fix: re-run `entire enable`.
+//
+//  2. A declared hook lacks a `trusted_hash` entry in the user's Codex
+//     config — either a fresh clone or a newer hook on the file the
+//     user hasn't approved yet. Fix: open /hooks in Codex.
+//
+// Both checks are structural (file/key presence). Stays silent when
+// this repo doesn't have codex hooks installed or when we can't
+// resolve the worktree root. Warn-only.
 func checkCodexHookTrust(cmd *cobra.Command) {
 	repoRoot, err := paths.WorktreeRoot(cmd.Context())
 	if err != nil {
@@ -699,18 +703,31 @@ func checkCodexHookTrust(cmd *cobra.Command) {
 	}
 
 	w := cmd.OutOrStdout()
+	missing := codex.MissingEntireHooks(repoRoot)
 	gaps := codex.HookTrustGaps(repoRoot)
-	if len(gaps) == 0 {
+
+	if len(missing) == 0 && len(gaps) == 0 {
 		fmt.Fprintln(w, "✓ Codex hook trust: OK")
 		return
 	}
 
-	fmt.Fprintln(w, "Codex hook trust: REVIEW NEEDED")
-	fmt.Fprintf(w, "  %d hook(s) declared in .codex/hooks.json have no trusted_hash entry yet:\n", len(gaps))
-	for _, ev := range gaps {
-		fmt.Fprintf(w, "    - %s\n", ev)
+	if len(missing) > 0 {
+		fmt.Fprintln(w, "Codex hooks: OUT OF DATE")
+		fmt.Fprintf(w, "  %d hook(s) the CLI installs today aren't declared in .codex/hooks.json:\n", len(missing))
+		for _, ev := range missing {
+			fmt.Fprintf(w, "    - %s\n", ev)
+		}
+		fmt.Fprintln(w, "  Run `entire enable` to refresh the hooks file.")
 	}
-	fmt.Fprintln(w, "  Open /hooks inside Codex to approve them.")
+
+	if len(gaps) > 0 {
+		fmt.Fprintln(w, "Codex hook trust: REVIEW NEEDED")
+		fmt.Fprintf(w, "  %d hook(s) declared in .codex/hooks.json have no trusted_hash entry yet:\n", len(gaps))
+		for _, ev := range gaps {
+			fmt.Fprintf(w, "    - %s\n", ev)
+		}
+		fmt.Fprintln(w, "  Open /hooks inside Codex to approve them.")
+	}
 }
 
 // canDeleteShadowBranch checks if a shadow branch can be safely deleted.

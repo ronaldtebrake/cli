@@ -8,14 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeTrustFixture sets up the four files HookTrustGaps reads:
-//
-//	<repo>/.codex/hooks.json   – the project's hook declarations
-//	<codexHome>/config.toml    – the user's trust state
-//
-// and points CODEX_HOME at codexHome so HookTrustGaps resolves the user
-// config without touching ~/.codex on the dev machine.
-func writeTrustFixture(t *testing.T, hooksJSON, configTOML string) (repoRoot, hooksPath string) {
+// writeTrustFixture sets up the .codex/hooks.json fixture and points
+// CODEX_HOME at an isolated temp directory so HookTrustGaps resolves
+// the user config without touching ~/.codex on the dev machine. Tests
+// that need a config.toml write it themselves into CODEX_HOME after
+// the call.
+func writeTrustFixture(t *testing.T, hooksJSON string) (repoRoot, hooksPath string) {
 	t.Helper()
 	tmp := t.TempDir()
 	repoRoot = filepath.Join(tmp, "repo")
@@ -26,9 +24,6 @@ func writeTrustFixture(t *testing.T, hooksJSON, configTOML string) (repoRoot, ho
 	hooksPath = filepath.Join(repoRoot, ".codex", "hooks.json")
 	require.NoError(t, os.WriteFile(hooksPath, []byte(hooksJSON), 0o600))
 
-	if configTOML != "" {
-		require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(configTOML), 0o600))
-	}
 	t.Setenv("CODEX_HOME", codexHome)
 	return repoRoot, hooksPath
 }
@@ -47,7 +42,7 @@ func TestHookTrustGaps_FlagsMissingEvent(t *testing.T) {
     "PostToolUse": [{"matcher": null, "hooks": [{"type":"command","command":"x","timeout":30}]}]
   }
 }`
-	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON, "")
+	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON)
 
 	configTOML := `[hooks.state."` + hooksPath + `:session_start:0:0"]
 trusted_hash = "sha256:aaa"
@@ -73,7 +68,7 @@ func TestHookTrustGaps_NoGapsWhenAllTrusted(t *testing.T) {
     "PostToolUse": [{"matcher": null, "hooks": [{"type":"command","command":"x","timeout":30}]}]
   }
 }`
-	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON, "")
+	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON)
 
 	// Trust both, plus an unrelated entry from another repo to make sure
 	// readCodexTrustedKeys doesn't get confused by parallel installs.
@@ -116,13 +111,64 @@ func TestHookTrustGaps_NilWhenConfigUnreadable(t *testing.T) {
 	require.Nil(t, HookTrustGaps(filepath.Join(tmp, "repo")))
 }
 
+// TestMissingEntireHooks_FlagsStaleFile — user enabled Codex on an
+// older release that didn't include PostToolUse. Their hooks.json has
+// the three legacy events but the CLI now installs four. Detection
+// must surface the gap so doctor can prompt `entire enable`.
+func TestMissingEntireHooks_FlagsStaleFile(t *testing.T) {
+	hooksJSON := `{"hooks":{
+		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex session-start","timeout":30}]}],
+		"UserPromptSubmit":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex user-prompt-submit","timeout":30}]}],
+		"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex stop","timeout":30}]}]
+	}}`
+	repoRoot, _ := writeTrustFixture(t, hooksJSON)
+	require.Equal(t, []string{"post_tool_use"}, MissingEntireHooks(repoRoot))
+}
+
+// TestMissingEntireHooks_NilWhenAllPresent returns nil when every
+// canonical event has an Entire-managed hook command, even if the file
+// also contains unrelated user-defined entries.
+func TestMissingEntireHooks_NilWhenAllPresent(t *testing.T) {
+	hooksJSON := `{"hooks":{
+		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex session-start","timeout":30}]}],
+		"UserPromptSubmit":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex user-prompt-submit","timeout":30}]}],
+		"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex stop","timeout":30}]},
+		        {"matcher":null,"hooks":[{"type":"command","command":"my-custom-tool","timeout":30}]}],
+		"PostToolUse":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex post-tool-use","timeout":30}]}]
+	}}`
+	repoRoot, _ := writeTrustFixture(t, hooksJSON)
+	require.Empty(t, MissingEntireHooks(repoRoot))
+}
+
+// TestMissingEntireHooks_NilWhenFileMissing — Codex isn't enabled for
+// this repo. Stay silent so doctor doesn't tell users to refresh hooks
+// they never installed.
+func TestMissingEntireHooks_NilWhenFileMissing(t *testing.T) {
+	require.Nil(t, MissingEntireHooks(t.TempDir()))
+}
+
+// TestMissingEntireHooks_IgnoresNonEntireCommands — a hooks.json that
+// declares the right events but with non-Entire commands (e.g. user's
+// own scripts) should still flag those events as missing the
+// CLI-managed install.
+func TestMissingEntireHooks_IgnoresNonEntireCommands(t *testing.T) {
+	hooksJSON := `{"hooks":{
+		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"my-other-tool","timeout":30}]}],
+		"UserPromptSubmit":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex user-prompt-submit","timeout":30}]}],
+		"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex stop","timeout":30}]}],
+		"PostToolUse":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex post-tool-use","timeout":30}]}]
+	}}`
+	repoRoot, _ := writeTrustFixture(t, hooksJSON)
+	require.Equal(t, []string{"session_start"}, MissingEntireHooks(repoRoot))
+}
+
 // TestHookTrustGaps_HandlesNonzeroHandlerIndex — the state-key prefix
 // match uses "<path>:<event>:" so any group/handler index counts as
 // trust. Pin that explicitly: a non-default index of `0:1` (second
 // handler in first group) should still satisfy the gap check.
 func TestHookTrustGaps_HandlesNonzeroHandlerIndex(t *testing.T) {
 	hooksJSON := `{"hooks":{"PostToolUse":[{"matcher":null,"hooks":[{"type":"command","command":"x","timeout":30}]}]}}`
-	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON, "")
+	repoRoot, hooksPath := writeTrustFixture(t, hooksJSON)
 	configTOML := `[hooks.state."` + hooksPath + `:post_tool_use:0:1"]
 trusted_hash = "sha256:aaa"
 `

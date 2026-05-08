@@ -93,6 +93,37 @@ func declaredCodexEvents(hooksJSONPath string) ([]string, bool) {
 	return events, true
 }
 
+// MissingEntireHooks returns the snake_case event labels the CLI's
+// canonical install ships today (SessionStart, UserPromptSubmit, Stop,
+// PostToolUse) that aren't backed by an Entire-managed hook command in
+// <repoRoot>/.codex/hooks.json. Surfaces drift when the user enabled
+// Codex on an older release and the install set has since grown.
+//
+// Returns nil when hooks.json is missing or unreadable — those cases
+// are "Codex isn't enabled here", which is a different problem.
+func MissingEntireHooks(repoRoot string) []string {
+	hooksJSONPath := filepath.Join(repoRoot, ".codex", "hooks.json")
+	data, err := os.ReadFile(hooksJSONPath) //nolint:gosec // path constructed from caller-controlled repo root
+	if err != nil {
+		return nil
+	}
+	var file HooksFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil
+	}
+	var missing []string
+	check := func(label string, groups []MatcherGroup) {
+		if !hasEntireHook(groups) {
+			missing = append(missing, label)
+		}
+	}
+	check("session_start", file.Hooks.SessionStart)
+	check("user_prompt_submit", file.Hooks.UserPromptSubmit)
+	check("stop", file.Hooks.Stop)
+	check("post_tool_use", file.Hooks.PostToolUse)
+	return missing
+}
+
 // codexTrustStateHeaderRegex matches `[hooks.state."<key>"]` headers in
 // the user's Codex config.toml. Quote-only — Codex's own writer emits
 // quoted keys (codex-rs/tui/src/app/background_requests.rs:874), and

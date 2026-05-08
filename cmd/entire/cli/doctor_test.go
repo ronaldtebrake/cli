@@ -891,6 +891,18 @@ func resolvedHooksPath(t *testing.T, dir string) string {
 	return filepath.Join(resolved, ".codex", "hooks.json")
 }
 
+// canonicalCodexHooksJSON returns a hooks.json declaring all four
+// canonical Entire-managed events. Tests use this as the "current"
+// install baseline so the missing-hooks check passes.
+func canonicalCodexHooksJSON() string {
+	return `{"hooks":{
+		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex session-start","timeout":30}]}],
+		"UserPromptSubmit":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex user-prompt-submit","timeout":30}]}],
+		"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex stop","timeout":30}]}],
+		"PostToolUse":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex post-tool-use","timeout":30}]}]
+	}}`
+}
+
 // TestCheckCodexHookTrust_OKWhenAllTrusted prints "✓ Codex hook trust: OK"
 // when every event declared in hooks.json has a matching state entry.
 func TestCheckCodexHookTrust_OKWhenAllTrusted(t *testing.T) {
@@ -899,13 +911,22 @@ func TestCheckCodexHookTrust_OKWhenAllTrusted(t *testing.T) {
 
 	codexDir := filepath.Join(dir, ".codex")
 	require.NoError(t, os.MkdirAll(codexDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(`{"hooks":{"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"x","timeout":30}]}]}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(canonicalCodexHooksJSON()), 0o600))
 
 	hooksPath := resolvedHooksPath(t, dir)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
 	require.NoError(t, os.MkdirAll(codexHome, 0o750))
 	configTOML := `[hooks.state."` + hooksPath + `:session_start:0:0"]
 trusted_hash = "sha256:aaa"
+
+[hooks.state."` + hooksPath + `:user_prompt_submit:0:0"]
+trusted_hash = "sha256:bbb"
+
+[hooks.state."` + hooksPath + `:stop:0:0"]
+trusted_hash = "sha256:ccc"
+
+[hooks.state."` + hooksPath + `:post_tool_use:0:0"]
+trusted_hash = "sha256:ddd"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(configTOML), 0o600))
 	t.Setenv("CODEX_HOME", codexHome)
@@ -924,18 +945,20 @@ func TestCheckCodexHookTrust_ListsMissingEvents(t *testing.T) {
 
 	codexDir := filepath.Join(dir, ".codex")
 	require.NoError(t, os.MkdirAll(codexDir, 0o750))
-	hooksJSON := `{"hooks":{
-		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"x","timeout":30}]}],
-		"PostToolUse":[{"matcher":null,"hooks":[{"type":"command","command":"x","timeout":30}]}]
-	}}`
-	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(hooksJSON), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(canonicalCodexHooksJSON()), 0o600))
 
 	hooksPath := resolvedHooksPath(t, dir)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
 	require.NoError(t, os.MkdirAll(codexHome, 0o750))
-	// Trust SessionStart only — PostToolUse is the gap.
+	// Trust three of four — PostToolUse is the gap.
 	configTOML := `[hooks.state."` + hooksPath + `:session_start:0:0"]
 trusted_hash = "sha256:aaa"
+
+[hooks.state."` + hooksPath + `:user_prompt_submit:0:0"]
+trusted_hash = "sha256:bbb"
+
+[hooks.state."` + hooksPath + `:stop:0:0"]
+trusted_hash = "sha256:ccc"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(configTOML), 0o600))
 	t.Setenv("CODEX_HOME", codexHome)
@@ -948,4 +971,48 @@ trusted_hash = "sha256:aaa"
 	require.Contains(t, out, "1 hook(s) declared")
 	require.Contains(t, out, "- post_tool_use")
 	require.Contains(t, out, "Open /hooks inside Codex")
+}
+
+// TestCheckCodexHookTrust_FlagsStaleHooksFile — user enabled Codex on
+// an older release that didn't ship PostToolUse. Their hooks.json has
+// only the three legacy events. Doctor must surface the gap and tell
+// them to re-run `entire enable`.
+func TestCheckCodexHookTrust_FlagsStaleHooksFile(t *testing.T) {
+	dir := setupGitRepoForPhaseTest(t)
+	t.Chdir(dir)
+
+	codexDir := filepath.Join(dir, ".codex")
+	require.NoError(t, os.MkdirAll(codexDir, 0o750))
+	staleHooksJSON := `{"hooks":{
+		"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex session-start","timeout":30}]}],
+		"UserPromptSubmit":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex user-prompt-submit","timeout":30}]}],
+		"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"entire hooks codex stop","timeout":30}]}]
+	}}`
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(staleHooksJSON), 0o600))
+
+	hooksPath := resolvedHooksPath(t, dir)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	require.NoError(t, os.MkdirAll(codexHome, 0o750))
+	// Trust the three legacy events so the trust check itself stays quiet —
+	// only the stale-file finding should fire.
+	configTOML := `[hooks.state."` + hooksPath + `:session_start:0:0"]
+trusted_hash = "sha256:aaa"
+
+[hooks.state."` + hooksPath + `:user_prompt_submit:0:0"]
+trusted_hash = "sha256:bbb"
+
+[hooks.state."` + hooksPath + `:stop:0:0"]
+trusted_hash = "sha256:ccc"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(configTOML), 0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+
+	cmd, stdout, _ := newTestCmd(t)
+	checkCodexHookTrust(cmd)
+
+	out := stdout.String()
+	require.Contains(t, out, "Codex hooks: OUT OF DATE")
+	require.Contains(t, out, "- post_tool_use")
+	require.Contains(t, out, "entire enable")
+	require.NotContains(t, out, "Codex hook trust: REVIEW NEEDED")
 }
