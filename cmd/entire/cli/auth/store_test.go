@@ -2,6 +2,7 @@ package auth
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
@@ -146,5 +147,32 @@ func TestLookupCurrentToken(t *testing.T) {
 	}
 	if got != "local-token" {
 		t.Fatalf("LookupCurrentToken() = %q, want %q", got, "local-token")
+	}
+}
+
+func TestNewStore_UsesTestStoreFile(t *testing.T) {
+	storeFile := filepath.Join(t.TempDir(), "auth-store.json")
+	t.Setenv(testAuthStoreFileEnv, storeFile)
+
+	store := NewStore()
+	if err := store.SaveToken("http://localhost:8787", "  file-token  "); err != nil {
+		t.Fatalf("SaveToken() error = %v", err)
+	}
+
+	otherProcessStore := NewStore()
+	got, err := otherProcessStore.GetToken("http://localhost:8787")
+	if err != nil {
+		t.Fatalf("GetToken() error = %v", err)
+	}
+	if got != "file-token" {
+		t.Fatalf("GetToken() = %q, want %q", got, "file-token")
+	}
+
+	info, err := os.Stat(storeFile)
+	if err != nil {
+		t.Fatalf("stat store file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("store file mode = %v, want 0600", got)
 	}
 }

@@ -5,8 +5,35 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
+
+func finishAndDismissTUI(t *testing.T, sink *TUISink, summary reviewtypes.RunSummary) {
+	t.Helper()
+
+	done := make(chan struct{})
+	go func() {
+		sink.RunFinished(summary)
+		close(done)
+	}()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			sink.program.Send(tea.KeyPressMsg(tea.Key{Code: 'x', Text: "x"}))
+		case <-timeout:
+			t.Fatal("RunFinished() did not return within 10 seconds")
+		}
+	}
+}
 
 // TestTUISink_StartIsIdempotent verifies that calling Start multiple times
 // does not panic or spawn extra goroutines.
@@ -20,7 +47,7 @@ func TestTUISink_StartIsIdempotent(t *testing.T) {
 	sink.Start()
 
 	// Clean up: send RunFinished so the program exits, then Wait.
-	sink.RunFinished(reviewtypes.RunSummary{})
+	finishAndDismissTUI(t, sink, reviewtypes.RunSummary{})
 
 	// Wait with a timeout to avoid hanging the test suite on failure.
 	done := make(chan struct{})
@@ -93,22 +120,11 @@ func TestTUISink_RunFinished_EventuallyUnblocks(t *testing.T) {
 	sink.AgentEvent("agent-a", reviewtypes.AssistantText{Text: "reviewing…"})
 	sink.AgentEvent("agent-a", reviewtypes.Finished{Success: true})
 
-	done := make(chan struct{})
-	go func() {
-		sink.RunFinished(reviewtypes.RunSummary{
-			AgentRuns: []reviewtypes.AgentRun{
-				{Name: "agent-a", Status: reviewtypes.AgentStatusSucceeded},
-			},
-		})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// OK — RunFinished returned (program exited).
-	case <-time.After(10 * time.Second):
-		t.Fatal("RunFinished() did not return within 10 seconds")
-	}
+	finishAndDismissTUI(t, sink, reviewtypes.RunSummary{
+		AgentRuns: []reviewtypes.AgentRun{
+			{Name: "agent-a", Status: reviewtypes.AgentStatusSucceeded},
+		},
+	})
 }
 
 // TestTUISink_RunFinished_AfterSecondCall_IsNoOp verifies that calling
@@ -120,17 +136,7 @@ func TestTUISink_RunFinished_AfterSecondCall_IsNoOp(t *testing.T) {
 	sink.Start()
 
 	// First RunFinished should unblock the program.
-	done := make(chan struct{})
-	go func() {
-		sink.RunFinished(reviewtypes.RunSummary{})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("first RunFinished did not return in time")
-	}
+	finishAndDismissTUI(t, sink, reviewtypes.RunSummary{})
 
 	// Second call should return immediately (no-op after finished=true).
 	secondDone := make(chan struct{})
