@@ -127,8 +127,8 @@ github.com/go-git/go-billy/v6 v6.0.0-20260424211911-732291493fb8 h1:QRpwB1ans3fB
 github.com/go-git/go-billy/v6 v6.0.0-20260424211911-732291493fb8/go.mod h1:CdBVp7CXl9l3sOyNEog46cP1Pvx/hjCe9AD0mtaIUYU=
 github.com/go-git/go-git-fixtures/v6 v6.0.0-20260422085740-0c07409f52ec h1:FpCNUs50xfQyJJs31uO3mDnqU855OhzAzfkkTgE6/DI=
 github.com/go-git/go-git-fixtures/v6 v6.0.0-20260422085740-0c07409f52ec/go.mod h1:F1SpxOny2UYXu62DzjEH4UqBjk4AoGs27cA8I9buK+o=
-github.com/go-git/go-git/v6 v6.0.0-alpha.3 h1:lJGritJ5AcC0X7buV0lReZ4cEHqcKB3Ab2ZjD3Ku+Ss=
-github.com/go-git/go-git/v6 v6.0.0-alpha.3/go.mod h1:DGnqu+twdAgtDx/4tQTWFrVE1an+2ACph3W9yOfSJZM=
+github.com/go-git/go-git/v6 v6.0.0-alpha.3.0.20260507221227-c9084f20dee2 h1:WGQWikXciN5yYwTtPiJkbmrUqJX07tWbBVV6VeSo19A=
+github.com/go-git/go-git/v6 v6.0.0-alpha.3.0.20260507221227-c9084f20dee2/go.mod h1:DGnqu+twdAgtDx/4tQTWFrVE1an+2ACph3W9yOfSJZM=
 github.com/go-git/x/plugin/objectsigner/auto v0.1.0 h1:RcLW29RgwSCmqrNSs7QOxvWkRbM1vPu0Vp9TCECZjMs=
 github.com/go-git/x/plugin/objectsigner/auto v0.1.0/go.mod h1:iP2cXPyXc//9v9THS3y/MLi0jnt7vEqwUDj11qQfFPg=
 github.com/go-git/x/plugin/objectsigner/gpg v0.1.0 h1:NEGVSOD+LPnus6j4iNkAZaHVTc4DNY223y1/I2Jq2yI=

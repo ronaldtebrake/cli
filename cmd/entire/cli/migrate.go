@@ -794,7 +794,7 @@ func repoWorktreeRoot(repo *git.Repository) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open worktree: %w", err)
 	}
-	root := worktree.Filesystem.Root()
+	root := worktree.Filesystem().Root()
 	if root == "" {
 		return "", errors.New("repository worktree filesystem has no root path")
 	}

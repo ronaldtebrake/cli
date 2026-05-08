@@ -13,7 +13,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/go-git/go-billy/v6 v6.0.0-20260424211911-732291493fb8
-	github.com/go-git/go-git/v6 v6.0.0-alpha.3
+	github.com/go-git/go-git/v6 v6.0.0-alpha.3.0.20260507221227-c9084f20dee2
 	github.com/go-git/x/plugin/objectsigner/auto v0.1.0
 	github.com/go-git/x/plugin/objectsigner/program v0.0.0-20260506121155-e7fc238fcab6
 	github.com/google/uuid v1.6.0
