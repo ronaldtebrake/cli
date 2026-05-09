@@ -43,11 +43,10 @@ func (a *PiAgent) HookNames() []string {
 //   - session_start       → SessionStart
 //   - before_agent_start  → TurnStart
 //   - agent_end           → TurnEnd
-//   - session_shutdown    → SessionEnd
+//   - session_shutdown    → (cleanup-only, no lifecycle event — see ParseHookEvent)
 func (a *PiAgent) GetSupportedHooks() []agent.HookType {
 	return []agent.HookType{
 		agent.HookSessionStart,
-		agent.HookSessionEnd,
 		agent.HookUserPromptSubmit,
 		agent.HookStop,
 	}
@@ -131,19 +130,24 @@ func (a *PiAgent) ParseHookEvent(ctx context.Context, hookName string, stdin io.
 		}, nil
 
 	case HookNameSessionShutdown:
-		// The TS extension's session_shutdown payload carries no session_id /
-		// session_file, so recover the active session ID from the cache before
-		// clearing it. Without this the SessionEnd event would have empty
-		// SessionID and the strategy couldn't identify which session ended.
-		if sessionID == "" {
-			sessionID = readCachedSessionID(ctx)
-		}
+		// Cleanup-only: clear the cached session ID. We intentionally do NOT
+		// emit SessionEnd here.
+		//
+		// Pi fires session_shutdown and agent_end on session teardown, and the
+		// TypeScript extension dispatches both via separate `entire hooks pi …`
+		// child processes (execFile is non-blocking). Child-process startup
+		// ordering then decides which event reaches the lifecycle dispatcher
+		// first; if session_shutdown wins, an emitted SessionEnd transitions
+		// the session to "ended" before agent_end can save the linkable
+		// checkpoint, leaving prepare-commit-msg with no session to attach a
+		// trailer to and the user's commit unlinked.
+		//
+		// agent_end is the source of truth for "turn complete" (and, for Pi,
+		// effectively "session over" for any single-turn `pi -p` invocation).
+		// SessionEnd is left for the framework to derive from idle timeout or
+		// the next SessionStart's stale-state cleanup.
 		clearCachedSessionID(ctx)
-		return &agent.Event{
-			Type:      agent.SessionEnd,
-			SessionID: sessionID,
-			Timestamp: now,
-		}, nil
+		return nil, nil //nolint:nilnil // intentional: cleanup-only, no lifecycle event
 
 	default:
 		// Unknown / future hooks have no lifecycle significance.
@@ -161,7 +165,7 @@ func (a *PiAgent) ParseHookEvent(ctx context.Context, hookName string, stdin io.
 
 const activeSessionFile = "pi-active-session"
 
-// piHookCacheSubdir is the subdirectory under .entire/tmp/ where the hook
+// piHookCacheSubdir is the subdirectory under .entire/tmp/ where hook
 // flow caches the active-session ID file and the agent_end transcript
 // snapshot. Agent-specific (not just .entire/tmp/) so other agents'
 // integration tests and tooling don't shadow each other under the cache
@@ -226,7 +230,7 @@ func clearCachedSessionID(ctx context.Context) {
 // <repo>/.entire/tmp/pi/<id>.json so Entire has a stable transcript
 // reference. Returns the path to the cached file, or "" if either input is
 // missing. The pi/ namespace under .entire/tmp/ is intentional — see
-// piHookCacheSubdir for the rationale.
+// GetSessionDir / piHookCacheSubdir for the rationale.
 func captureTranscript(ctx context.Context, sessionID, piSessionFile string) string {
 	if sessionID == "" || piSessionFile == "" {
 		return ""

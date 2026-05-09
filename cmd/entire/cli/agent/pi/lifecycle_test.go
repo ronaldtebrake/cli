@@ -45,7 +45,7 @@ func TestParseHookEvent_BeforeAgentStart(t *testing.T) {
 	}
 }
 
-func TestParseHookEvent_SessionShutdown(t *testing.T) {
+func TestParseHookEvent_SessionShutdown_NoLifecycleEvent(t *testing.T) {
 	t.Parallel()
 	a := &PiAgent{}
 	stdin := strings.NewReader(`{"type":"session_shutdown","session_id":"explicit-id"}`)
@@ -53,18 +53,14 @@ func TestParseHookEvent_SessionShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent: %v", err)
 	}
-	if ev == nil || ev.Type != agent.SessionEnd {
-		t.Fatalf("Type = %v, want SessionEnd", ev)
-	}
-	if ev.SessionID != "explicit-id" {
-		t.Errorf("SessionID = %q, want explicit-id", ev.SessionID)
+	// session_shutdown is cleanup-only — see ParseHookEvent for the rationale.
+	if ev != nil {
+		t.Fatalf("expected nil event from session_shutdown, got %+v", ev)
 	}
 }
 
-func TestParseHookEvent_SessionShutdown_RecoversFromCache(t *testing.T) {
-	// The TS extension's session_shutdown payload carries no session_id.
-	// Make sure ParseHookEvent recovers it from the cache that
-	// session_start populated, then clears the cache.
+func TestParseHookEvent_SessionShutdown_ClearsCache(t *testing.T) {
+	// session_shutdown's only side effect is clearing the cached session ID.
 	// Cannot use t.Parallel — t.Chdir.
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -72,23 +68,23 @@ func TestParseHookEvent_SessionShutdown_RecoversFromCache(t *testing.T) {
 	ctx := context.Background()
 	a := &PiAgent{}
 
-	// Simulate session_start populating the cache.
-	_, err := a.ParseHookEvent(ctx, HookNameSessionStart, strings.NewReader(
-		`{"type":"session_start","session_file":"/tmp/2026-05-09T12-00-00-000Z_cached-id.jsonl"}`))
-	if err != nil {
+	// Populate the cache via session_start.
+	if _, err := a.ParseHookEvent(ctx, HookNameSessionStart, strings.NewReader(
+		`{"type":"session_start","session_file":"/tmp/2026-05-09T12-00-00-000Z_cached-id.jsonl"}`)); err != nil {
 		t.Fatalf("session_start setup: %v", err)
 	}
+	if got := readCachedSessionID(ctx); got != "cached-id" {
+		t.Fatalf("cache pre-shutdown = %q, want cached-id", got)
+	}
 
-	// Empty session_shutdown payload — must recover from cache.
+	// session_shutdown clears the cache and emits no event.
 	ev, err := a.ParseHookEvent(ctx, HookNameSessionShutdown, strings.NewReader(`{"type":"session_shutdown"}`))
 	if err != nil {
 		t.Fatalf("session_shutdown: %v", err)
 	}
-	if ev == nil || ev.SessionID != "cached-id" {
-		t.Errorf("SessionID = %v, want cached-id (recovered from cache)", ev)
+	if ev != nil {
+		t.Errorf("expected nil event, got %+v", ev)
 	}
-
-	// Cache should be cleared by now.
 	if got := readCachedSessionID(ctx); got != "" {
 		t.Errorf("cache should be cleared after session_shutdown, got %q", got)
 	}
@@ -192,9 +188,10 @@ func TestCaptureTranscript_MissingInputs(t *testing.T) {
 func TestGetSupportedHooks(t *testing.T) {
 	t.Parallel()
 	got := (&PiAgent{}).GetSupportedHooks()
+	// Note: session_shutdown is cleanup-only, not a HookSessionEnd source —
+	// see ParseHookEvent's session_shutdown case for why.
 	want := []agent.HookType{
 		agent.HookSessionStart,
-		agent.HookSessionEnd,
 		agent.HookUserPromptSubmit,
 		agent.HookStop,
 	}
