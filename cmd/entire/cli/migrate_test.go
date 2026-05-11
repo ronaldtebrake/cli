@@ -34,6 +34,15 @@ import (
 // initMigrateTestRepo creates a repo with an initial commit.
 func initMigrateTestRepo(t *testing.T) *git.Repository {
 	t.Helper()
+	repo, _ := initMigrateTestRepoWithDir(t)
+	return repo
+}
+
+// initMigrateTestRepoWithDir is like initMigrateTestRepo but also returns the
+// working tree directory, for tests that need to invoke the real `git` binary
+// (e.g., to exercise lookupV1CommitInfo's `git log` shell-out).
+func initMigrateTestRepoWithDir(t *testing.T) (*git.Repository, string) {
+	t.Helper()
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	testutil.WriteFile(t, dir, "README.md", "init")
@@ -43,7 +52,7 @@ func initMigrateTestRepo(t *testing.T) *git.Repository {
 	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
 
-	return repo
+	return repo, dir
 }
 
 // writeV1Checkpoint writes a checkpoint to the v1 branch for testing.
@@ -2048,4 +2057,106 @@ func TestSortMigratableCheckpoints(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDryRunCheckpointsV2_NoV1Checkpoints(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, pending)
+	assert.Equal(t, 0, total)
+	assert.Contains(t, out.String(), "No v1 checkpoints found")
+}
+
+func TestDryRunCheckpointsV2_AllAlreadyMigrated(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
+	writeV1Checkpoint(t, v1Store, cpID, "session-001",
+		[]byte("{\"type\":\"assistant\",\"message\":\"hi\"}\n"),
+		[]string{"prompt"},
+	)
+
+	// Migrate once so v2 has the entry, then dry-run should report nothing pending.
+	var migrateOut bytes.Buffer
+	_, _, err := migrateCheckpointsV2(context.Background(), repo, v1Store, v2Store, &migrateOut, false)
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, pending)
+	assert.Equal(t, 1, total)
+	assert.Contains(t, out.String(), "All 1 v1 checkpoints are already in v2")
+}
+
+func TestDryRunCheckpointsV2_RendersV1CommitFromGit(t *testing.T) {
+	t.Parallel()
+	repo, dir := initMigrateTestRepoWithDir(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	cpID := id.MustCheckpointID("abcdef012345")
+	writeV1Checkpoint(t, v1Store, cpID, "session-real",
+		[]byte("{\"type\":\"assistant\",\"message\":\"x\"}\n"),
+		[]string{"prompt"},
+	)
+
+	var out bytes.Buffer
+	pending, _, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, dir, &out)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pending)
+
+	rendered := out.String()
+	assert.Contains(t, rendered, cpID.String())
+	// The path-scoped `git log` should resolve a real short SHA, not the placeholder.
+	assert.NotContains(t, rendered, "-------",
+		"expected lookupV1CommitInfo to find a v1 commit short hash, got placeholder")
+	// Investigation hint references the same path layout.
+	assert.Contains(t, rendered, "git show entire/checkpoints/v1:ab/cdef012345")
+}
+
+func TestDryRunCheckpointsV2_PendingListed(t *testing.T) {
+	t.Parallel()
+	repo := initMigrateTestRepo(t)
+	v1Store, v2Store := newMigrateStores(repo)
+
+	migratedID := id.MustCheckpointID("aaaaaaaaaaaa")
+	pendingID := id.MustCheckpointID("bbbbbbbbbbbb")
+	writeV1Checkpoint(t, v1Store, migratedID, "session-migrated",
+		[]byte("{\"type\":\"assistant\",\"message\":\"a\"}\n"),
+		[]string{"a"},
+	)
+	writeV1Checkpoint(t, v1Store, pendingID, "session-pending",
+		[]byte("{\"type\":\"assistant\",\"message\":\"b\"}\n"),
+		[]string{"b"},
+	)
+
+	// Migrate only the first checkpoint into v2 by writing it directly.
+	require.NoError(t, v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID: migratedID,
+		SessionID:    "session-migrated",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("{\"type\":\"assistant\",\"message\":\"a\"}\n")),
+		Prompts:      []string{"a"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+
+	var out bytes.Buffer
+	pending, total, err := dryRunCheckpointsV2(context.Background(), v1Store, v2Store, "", &out)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pending)
+	assert.Equal(t, 2, total)
+
+	rendered := out.String()
+	assert.Contains(t, rendered, "1 of 2 v1 checkpoints not yet in v2")
+	assert.Contains(t, rendered, pendingID.String())
+	assert.NotContains(t, rendered, migratedID.String())
+	assert.Contains(t, rendered, "Run 'entire migrate --checkpoints v2'")
 }
