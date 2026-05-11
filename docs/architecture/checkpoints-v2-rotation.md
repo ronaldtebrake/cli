@@ -74,12 +74,12 @@ before returning.
 The pending marker is local-only metadata stored under the git common directory:
 
 ```text
-.git/entire-v2-rotations/pending.json
-.git/entire-v2-rotations/pending.lock
+<git-common-dir>/entire-v2-rotations/pending.json
+<git-common-dir>/entire-v2-rotations/pending.lock
 ```
 
-The file is guarded by the CLI's flock-based lock helper. It is not a git ref
-and is never pushed to the checkpoint remote.
+The file is guarded by the CLI's cross-process file lock helper. It is not a
+git ref and is never pushed to the checkpoint remote.
 
 Each pending publication records:
 
