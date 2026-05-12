@@ -38,10 +38,11 @@ func buildInvestigateDeps(attachCmd *cobra.Command) investigate.Deps {
 		NewSilentError: func(err error) error {
 			return NewSilentError(err)
 		},
-		SpawnerFor:           launchableSpawnerFor,
-		LaunchFix:            agentlaunch.LaunchFixAgent,
-		PriorEntireContextFn: nil,
-		AttachCmd:            attachCmd,
+		SpawnerFor:                   launchableSpawnerFor,
+		LaunchFix:                    agentlaunch.LaunchFixAgent,
+		PriorEntireContextFn:         nil,
+		AttachCmd:                    attachCmd,
+		HeadHasInvestigateCheckpoint: headHasInvestigateCheckpoint,
 	}
 }
 

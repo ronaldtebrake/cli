@@ -70,6 +70,12 @@ type Deps struct {
 	// PromptYN is the interactive y/N prompt used by the settings migration
 	// and the HEAD-soft-warn. Nil means "use the real huh-backed prompt".
 	PromptYN func(ctx context.Context, question string, def bool) (bool, error)
+
+	// HeadHasInvestigateCheckpoint returns (true, info) when the
+	// checkpoint at HEAD already has HasInvestigation set. Used to
+	// soft-warn against running a redundant investigation. Nil means
+	// "skip the check entirely".
+	HeadHasInvestigateCheckpoint func(ctx context.Context) (bool, string)
 }
 
 // runFlags collects the flag values the run path inspects. Captured into a
@@ -262,6 +268,32 @@ func runInvestigate(ctx context.Context, cmd *cobra.Command, args []string, f ru
 		cmd.SilenceUsage = true
 		fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Run `entire enable` first.")
 		return wrapSilent(silentErr, errors.New("not a git repository"))
+	}
+
+	// Soft warn: HEAD already has an investigation. Skip for sub-modes
+	// (edit / findings) and for non-interactive runs.
+	if !f.edit && !f.findings && deps.HeadHasInvestigateCheckpoint != nil {
+		has, info := deps.HeadHasInvestigateCheckpoint(ctx)
+		if has {
+			prompt := deps.PromptYN
+			canPrompt := prompt != nil
+			if prompt == nil {
+				prompt = realPromptYN
+				canPrompt = interactive.CanPromptInteractively()
+			}
+			if canPrompt {
+				msg := fmt.Sprintf("HEAD already has an investigation (%s). Run another?", info)
+				ok, promptErr := prompt(ctx, msg, true)
+				if promptErr != nil {
+					cmd.SilenceUsage = true
+					fmt.Fprintln(cmd.ErrOrStderr(), "prompt cancelled")
+					return wrapSilent(silentErr, promptErr)
+				}
+				if !ok {
+					return nil
+				}
+			}
+		}
 	}
 
 	if f.edit {
