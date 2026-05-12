@@ -171,7 +171,7 @@ func buildHookSpecs(cmdPrefix string) []hookSpec {
 	commitMsgCmd := gitHookCommand(cmdPrefix, `commit-msg "$1" || true`, true)
 	postCommitCmd := gitHookCommand(cmdPrefix, `post-commit 2>/dev/null || true`, false)
 	postRewriteCmd := gitHookCommand(cmdPrefix, `post-rewrite "$1" 2>/dev/null || true`, false)
-	prePushCmd := gitHookCommand(cmdPrefix, `pre-push "$1" || true`, true)
+	prePushCmd := gitHookCommand(cmdPrefix, `pre-push "$1" || true`, false)
 
 	return []hookSpec{
 		{

@@ -1036,6 +1036,29 @@ func TestGitHookCommitMsg_MissingEntireWarnsAndAllowsCommit(t *testing.T) {
 	}
 }
 
+func TestGitHookPrePush_MissingEntireSkipsSilentlyAndAllowsPush(t *testing.T) {
+	t.Parallel()
+
+	shPath := requireShell(t)
+	tempDir := t.TempDir()
+
+	hook := findHookSpec(t, buildHookSpecs("entire"), "pre-push")
+	hookPath := filepath.Join(tempDir, "pre-push")
+	if err := os.WriteFile(hookPath, []byte(hook.content), 0o755); err != nil {
+		t.Fatalf("failed to write hook: %v", err)
+	}
+
+	cmd := exec.CommandContext(context.Background(), shPath, hookPath, "origin")
+	cmd.Env = envWithPath(t.TempDir())
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pre-push hook should allow push when entire is missing: %v\n%s", err, output)
+	}
+	if strings.Contains(string(output), missingEntireGitHookWarning) {
+		t.Fatalf("pre-push hook should skip missing entire silently, got:\n%s", output)
+	}
+}
+
 func TestGitHookCommitMsg_EntireFailureAllowsCommit(t *testing.T) {
 	t.Parallel()
 
