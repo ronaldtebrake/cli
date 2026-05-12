@@ -81,9 +81,11 @@ func TestReviewer_ArgvShape(t *testing.T) {
 	}
 	cmd := buildReviewCmd(context.Background(), cfg)
 
-	// Expect: claude -p <prompt>
-	if len(cmd.Args) < 3 {
-		t.Fatalf("expected at least 3 args, got %d: %v", len(cmd.Args), cmd.Args)
+	// Expect: claude -p --permission-mode acceptEdits <prompt>
+	// (the shared spawner adds --permission-mode acceptEdits so writes
+	// don't silently fail in non-interactive mode; harmless for review).
+	if len(cmd.Args) < 5 {
+		t.Fatalf("expected at least 5 args, got %d: %v", len(cmd.Args), cmd.Args)
 	}
 	if cmd.Args[0] != "claude" {
 		t.Errorf("Args[0] = %q, want %q", cmd.Args[0], "claude")
@@ -91,9 +93,12 @@ func TestReviewer_ArgvShape(t *testing.T) {
 	if cmd.Args[1] != "-p" {
 		t.Errorf("Args[1] = %q, want %q", cmd.Args[1], "-p")
 	}
-	// Args[2] is the composed prompt — must be non-empty.
-	if cmd.Args[2] == "" {
-		t.Error("Args[2] (prompt) is empty")
+	if cmd.Args[2] != "--permission-mode" || cmd.Args[3] != "acceptEdits" {
+		t.Errorf("Args[2:4] = %v, want [--permission-mode acceptEdits]", cmd.Args[2:4])
+	}
+	// Args[4] is the composed prompt — must be non-empty.
+	if cmd.Args[4] == "" {
+		t.Error("Args[4] (prompt) is empty")
 	}
 	for _, arg := range cmd.Args {
 		if arg == "--continue" || arg == "-c" || arg == "--resume" || arg == "-r" {
