@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"regexp"
 	"sort"
@@ -348,11 +347,7 @@ func DeleteOrphanedCheckpoints(ctx context.Context, checkpointIDs []string) (del
 // ListEligibleV2Generations returns archived checkpoints v2 /full/* generations
 // eligible for deletion based on the configured retention window, along with
 // warnings for malformed generations that were skipped.
-//
-// When progress is non-nil, a one-line scanning status is written before each
-// generation is examined — useful because per-generation tree walks can be
-// slow on large repositories.
-func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings, progress io.Writer) ([]CleanupItem, []string, error) {
+func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) ([]CleanupItem, []string, error) {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open git repository: %w", err)
@@ -368,12 +363,9 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings, 
 	cutoff := time.Now().AddDate(0, 0, -s.GetFullTranscriptGenerationRetentionDays())
 	cleanupItems := make([]CleanupItem, 0, len(candidates))
 
-	for i, candidate := range candidates {
+	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
-			return nil, warnings, fmt.Errorf("listing v2 generations cancelled: %w", err)
-		}
-		if progress != nil {
-			fmt.Fprintf(progress, "  scanning archived generation %d/%d (%s)\n", i+1, len(candidates), candidate.Name)
+			return nil, warnings, err //nolint:wrapcheck // propagate context.Canceled unwrapped so callers can detect it
 		}
 		commitHash, treeHash, refErr := store.GetRefState(candidate.RefName)
 		if refErr != nil {

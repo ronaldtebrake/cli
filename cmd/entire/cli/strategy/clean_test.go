@@ -289,7 +289,7 @@ func TestListEligibleV2Generations_UsesProvidedSettings(t *testing.T) {
 		},
 	}
 
-	items, warnings, err := ListEligibleV2Generations(context.Background(), s, nil)
+	items, warnings, err := ListEligibleV2Generations(context.Background(), s)
 	if err != nil {
 		t.Fatalf("ListEligibleV2Generations() error = %v", err)
 	}

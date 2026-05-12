@@ -28,10 +28,6 @@ func main() {
 	go func() {
 		<-sigChan
 		cancel()
-		// Some long-running operations (e.g. go-git tree walks) don't honor
-		// context cancellation; a second signal forces exit.
-		<-sigChan
-		os.Exit(130)
 	}()
 
 	// Create and execute root command

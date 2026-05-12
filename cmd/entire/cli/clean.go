@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -278,9 +279,17 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 		s = &settings.EntireSettings{}
 	}
 
-	// V2 generation enumeration hits the network (git ls-remote + per-ref
-	// fetches). Print a status line first so the user knows the command isn't
-	// hung, then run it concurrently with the fast local enumeration below.
+	// Scoped escape hatch for the v2 enumeration path. The fast path is
+	// near-instantaneous, but a generation whose generation.json is missing
+	// falls back to a go-git tree walk that doesn't honor context
+	// cancellation, so a single Ctrl-C can leave the user stuck. A second
+	// Ctrl-C forces exit. Scoped to clean --all only.
+	stopEscape := installForceExitOnSecondSignal(ctx)
+	defer stopEscape()
+
+	v2Ctx, cancelV2 := context.WithCancel(ctx)
+	defer cancelV2()
+
 	var (
 		v2Items    []strategy.CleanupItem
 		v2Warnings []string
@@ -288,10 +297,9 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 	)
 	v2Done := make(chan struct{})
 	if s.IsCheckpointsV2Enabled() {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Checking remote for archived v2 generations...")
 		go func() {
 			defer close(v2Done)
-			v2Items, v2Warnings, v2Err = strategy.ListEligibleV2Generations(ctx, s, cmd.ErrOrStderr())
+			v2Items, v2Warnings, v2Err = strategy.ListEligibleV2Generations(v2Ctx, s)
 		}()
 	} else {
 		close(v2Done)
@@ -300,6 +308,7 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 	// List all items (sessions, shadow branches) — not just orphaned ones
 	items, err := strategy.ListAllItems(ctx)
 	if err != nil {
+		cancelV2()
 		<-v2Done
 		return fmt.Errorf("failed to list items: %w", err)
 	}
@@ -313,6 +322,9 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 
 	<-v2Done
 	if v2Err != nil {
+		if errors.Is(v2Err, context.Canceled) {
+			return NewSilentError(v2Err)
+		}
 		return fmt.Errorf("failed to list v2 generations: %w", v2Err)
 	}
 	items = append(items, v2Items...)
@@ -321,6 +333,31 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 	}
 
 	return runCleanAllWithItems(ctx, cmd, force, dryRun, items, tempFiles)
+}
+
+// installForceExitOnSecondSignal arms a goroutine that exits the process with
+// code 130 if the user presses Ctrl-C twice while this scope is active. The
+// first signal continues to be handled by the top-level cancel() in main.go.
+// Buffer size 2 so a fast second press isn't dropped by signal.Notify.
+// Returns a stop function that the caller MUST defer.
+func installForceExitOnSecondSignal(ctx context.Context) func() {
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt)
+	stopCtx, stop := context.WithCancel(ctx)
+	go func() {
+		for range 2 {
+			select {
+			case <-sigCh:
+			case <-stopCtx.Done():
+				return
+			}
+		}
+		os.Exit(130)
+	}()
+	return func() {
+		signal.Stop(sigCh)
+		stop()
+	}
 }
 
 // printSection prints a titled list of items if the slice is non-empty.
