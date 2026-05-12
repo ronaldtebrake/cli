@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -703,7 +702,7 @@ func TestShellQuote(t *testing.T) {
 func TestGitHookCommand_MissingWarningIsNonFatal(t *testing.T) {
 	t.Parallel()
 
-	command := gitHookCommand("entire", `commit-msg "$1" || exit 1`, true)
+	command := gitHookCommand("entire", `commit-msg "$1" || true`, true)
 	if !strings.Contains(command, ">&2 || :") {
 		t.Fatalf("missing-entire warning should be explicitly non-fatal, got:\n%s", command)
 	}
@@ -1037,7 +1036,7 @@ func TestGitHookCommitMsg_MissingEntireWarnsAndAllowsCommit(t *testing.T) {
 	}
 }
 
-func TestGitHookCommitMsg_EntireFailureStillBlocksCommit(t *testing.T) {
+func TestGitHookCommitMsg_EntireFailureAllowsCommit(t *testing.T) {
 	t.Parallel()
 
 	shPath := requireShell(t)
@@ -1062,16 +1061,8 @@ func TestGitHookCommitMsg_EntireFailureStillBlocksCommit(t *testing.T) {
 	cmd := exec.CommandContext(context.Background(), shPath, hookPath, msgFile)
 	cmd.Env = envWithPath(binDir)
 	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("commit-msg hook should fail when entire handler fails, output:\n%s", output)
-	}
-	exitErr := &exec.ExitError{}
-	ok := errors.As(err, &exitErr)
-	if !ok {
-		t.Fatalf("expected exit error, got %T: %v", err, err)
-	}
-	if exitErr.ExitCode() != 1 {
-		t.Fatalf("commit-msg hook exit code = %d, want 1\n%s", exitErr.ExitCode(), output)
+	if err != nil {
+		t.Fatalf("commit-msg hook should allow commit when entire handler fails: %v\n%s", err, output)
 	}
 	if strings.Contains(string(output), missingEntireGitHookWarning) {
 		t.Fatalf("missing-entire warning should not print when entire exists, got:\n%s", output)

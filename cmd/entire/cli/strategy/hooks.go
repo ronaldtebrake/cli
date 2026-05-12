@@ -168,7 +168,7 @@ func isGitHookInstalledInHooksDir(hooksDir string) bool {
 // buildHookSpecs returns the hook specifications for all managed hooks.
 func buildHookSpecs(cmdPrefix string) []hookSpec {
 	prepareCommitMsgCmd := gitHookCommand(cmdPrefix, `prepare-commit-msg "$1" "$2" 2>/dev/null || true`, false)
-	commitMsgCmd := gitHookCommand(cmdPrefix, `commit-msg "$1" || exit 1`, true)
+	commitMsgCmd := gitHookCommand(cmdPrefix, `commit-msg "$1" || true`, true)
 	postCommitCmd := gitHookCommand(cmdPrefix, `post-commit 2>/dev/null || true`, false)
 	postRewriteCmd := gitHookCommand(cmdPrefix, `post-rewrite "$1" 2>/dev/null || true`, false)
 	prePushCmd := gitHookCommand(cmdPrefix, `pre-push "$1" || true`, true)
