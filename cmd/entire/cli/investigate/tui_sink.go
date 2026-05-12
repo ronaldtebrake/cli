@@ -94,7 +94,7 @@ func (s *tuiProgressSink) TurnStarted(agent string, turn, _, _ int) {
 }
 
 // TurnFinished implements ProgressSink.
-func (s *tuiProgressSink) TurnFinished(agent string, turn int, stance string, duration time.Duration, failed bool, err error) {
+func (s *tuiProgressSink) TurnFinished(agent string, turn int, stance string, duration time.Duration, failed bool, err error, preview string) {
 	if !s.ready() {
 		return
 	}
@@ -105,6 +105,7 @@ func (s *tuiProgressSink) TurnFinished(agent string, turn int, stance string, du
 		duration: duration,
 		failed:   failed,
 		err:      err,
+		findings: preview,
 	})
 }
 

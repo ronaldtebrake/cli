@@ -37,7 +37,7 @@ type ProgressSink interface {
 	// is the wall-clock duration of the agent process. failed is true when
 	// the turn was treated as a failure by the loop (spawn error, missing
 	// heading, etc.); err is the underlying error or nil.
-	TurnFinished(agent string, turn int, stance string, duration time.Duration, failed bool, err error)
+	TurnFinished(agent string, turn int, stance string, duration time.Duration, failed bool, err error, preview string)
 
 	// RunFinished is called once when the loop terminates (any outcome).
 	// The TUI uses this to flip rows to a terminal status and freeze the
@@ -49,9 +49,9 @@ type ProgressSink interface {
 // Used when callers pass LoopDeps.Progress == nil (most tests).
 type nullProgressSink struct{}
 
-func (nullProgressSink) TurnStarted(string, int, int, int)                            {}
-func (nullProgressSink) TurnFinished(string, int, string, time.Duration, bool, error) {}
-func (nullProgressSink) RunFinished(LoopOutcome)                                      {}
+func (nullProgressSink) TurnStarted(string, int, int, int)                                    {}
+func (nullProgressSink) TurnFinished(string, int, string, time.Duration, bool, error, string) {}
+func (nullProgressSink) RunFinished(LoopOutcome)                                              {}
 
 // textProgressSink writes today's two-line shape to a plain io.Writer:
 //
@@ -81,7 +81,7 @@ func (s *textProgressSink) TurnStarted(agent string, turn, _, _ int) {
 	_, _ = fmt.Fprintf(s.w, "Turn %d · %s\n", turn, agent)
 }
 
-func (s *textProgressSink) TurnFinished(_ string, _ int, stance string, _ time.Duration, _ bool, _ error) {
+func (s *textProgressSink) TurnFinished(_ string, _ int, stance string, _ time.Duration, _ bool, _ error, _ string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.w == nil {

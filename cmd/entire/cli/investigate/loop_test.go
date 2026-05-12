@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent/spawn"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeSpawner is a minimal Spawner used by the loop tests. The constructor
@@ -822,4 +823,29 @@ func TestRunInvestigateLoop_RejectsInvalidInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseFindingsPreview_FirstNonEmptyLine(t *testing.T) {
+	t.Parallel()
+	body := "\n\n**Stance:** approve\n\nFound a missing nil check in pkg/foo.\nAnd more context.\n"
+	got := parseFindingsPreview(body)
+	require.Equal(t, "Found a missing nil check in pkg/foo.", got)
+}
+
+func TestParseFindingsPreview_EmptyBody(t *testing.T) {
+	t.Parallel()
+	require.Empty(t, parseFindingsPreview(""))
+}
+
+func TestParseFindingsPreview_OnlyStance(t *testing.T) {
+	t.Parallel()
+	require.Empty(t, parseFindingsPreview("**Stance:** approve\n"))
+}
+
+func TestParseFindingsPreview_TruncatesLongLine(t *testing.T) {
+	t.Parallel()
+	long := "lead " + strings.Repeat("x", 500)
+	got := parseFindingsPreview(long)
+	require.LessOrEqual(t, len(got), 200)
+	require.True(t, strings.HasPrefix(got, "lead "))
 }

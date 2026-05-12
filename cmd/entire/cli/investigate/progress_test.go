@@ -20,9 +20,9 @@ func TestTextProgressSink_TurnLines(t *testing.T) {
 	sink := newTextProgressSink(&buf)
 
 	sink.TurnStarted("claude-code", 1, 1, 3)
-	sink.TurnFinished("claude-code", 1, stanceApprove, 12*time.Second, false, nil)
+	sink.TurnFinished("claude-code", 1, stanceApprove, 12*time.Second, false, nil, "")
 	sink.TurnStarted("codex", 2, 1, 3)
-	sink.TurnFinished("codex", 2, stanceRequestChanges, 8*time.Second, false, nil)
+	sink.TurnFinished("codex", 2, stanceRequestChanges, 8*time.Second, false, nil, "")
 	sink.RunFinished(OutcomeQuorum)
 
 	want := "Turn 1 · claude-code\n  Stance: approve\nTurn 2 · codex\n  Stance: request-changes\n"
@@ -39,7 +39,7 @@ func TestTextProgressSink_NilWriter(t *testing.T) {
 	sink := newTextProgressSink(nil)
 	// Each method should be safe; no panic.
 	sink.TurnStarted("a", 1, 1, 1)
-	sink.TurnFinished("a", 1, stanceApprove, time.Second, false, nil)
+	sink.TurnFinished("a", 1, stanceApprove, time.Second, false, nil, "")
 	sink.RunFinished(OutcomeQuorum)
 }
 
@@ -51,7 +51,7 @@ func TestNullProgressSink_ImplementsInterface(t *testing.T) {
 
 	var s ProgressSink = nullProgressSink{}
 	s.TurnStarted("a", 1, 1, 1)
-	s.TurnFinished("a", 1, stanceAbstain, 0, true, errors.New("x"))
+	s.TurnFinished("a", 1, stanceAbstain, 0, true, errors.New("x"), "")
 	s.RunFinished(OutcomeStalled)
 	if !strings.HasPrefix(string(OutcomeQuorum), "qu") {
 		t.Errorf("sanity check on OutcomeQuorum failed")

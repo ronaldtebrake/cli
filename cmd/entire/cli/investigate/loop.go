@@ -289,7 +289,7 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 	if spawner == nil {
 		err := fmt.Errorf("no spawner for agent %q", agentName)
 		recordFailureStance(state, round, agentName, err, cfg.now)
-		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, 0, true, err)
+		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, 0, true, err, "")
 		return turnOutcome{round: round, failed: true, err: err}
 	}
 
@@ -319,7 +319,7 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 	logFile, err := openTurnLog(logPath)
 	if err != nil {
 		recordFailureStance(state, round, agentName, err, cfg.now)
-		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, 0, true, err)
+		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, 0, true, err, "")
 		return turnOutcome{round: round, failed: true, err: err}
 	}
 
@@ -365,7 +365,7 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 			sRun(in.RunID), sAgent(agentName),
 			sTurn(state.Turn), sRound(round),
 			slogString("err", runErr.Error()))
-		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, turnDuration, true, runErr)
+		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, turnDuration, true, runErr, "")
 		return turnOutcome{round: round, failed: true, err: runErr}
 	}
 
@@ -388,10 +388,12 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 			sRun(in.RunID), sAgent(agentName),
 			sTurn(state.Turn), sRound(round))
 		missingHeading := errors.New("agent did not write a turn heading")
-		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, turnDuration, true, missingHeading)
+		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, turnDuration, true, missingHeading, "")
 		return turnOutcome{round: round, failed: true, err: missingHeading}
 	}
-	deps.Progress.TurnFinished(agentName, state.Turn, stance, turnDuration, false, nil)
+	body, _ := findTurnBlock(readTimelineFile(in.TimelineDoc), agentName, state.Turn)
+	preview := parseFindingsPreview(body)
+	deps.Progress.TurnFinished(agentName, state.Turn, stance, turnDuration, false, nil, preview)
 	return turnOutcome{round: round, failed: false}
 }
 
@@ -717,6 +719,42 @@ func normaliseStance(raw string) string {
 	default:
 		return stanceUnknown
 	}
+}
+
+// parseFindingsPreview returns the first non-empty non-stance line from
+// the body of a turn block. Used to feed the drill-in TUI a one-line
+// preview of what the agent wrote. Returns "" when the body has only
+// blank lines or only the stance line. Lines longer than 200 cells are
+// truncated.
+func parseFindingsPreview(body string) string {
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if stanceLinePattern.MatchString(line) {
+			continue
+		}
+		if len(line) > 200 {
+			return line[:200]
+		}
+		return line
+	}
+	return ""
+}
+
+// readTimelineFile returns the contents of the timeline doc or "" on
+// error. Used by the success path's preview parsing — a missing file
+// just means no preview, which is fine.
+func readTimelineFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path is the configured timeline doc
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // --- small slog helpers ---------------------------------------------------
