@@ -377,6 +377,71 @@ func TestPushV2Refs_PushesPendingArchivePublications(t *testing.T) {
 	assert.Empty(t, remaining, "pending archive publications should be cleared after push")
 }
 
+// TestPushV2Refs_PendingPublicationFailureLabelsSkippedActiveRefs verifies that
+// when pending v2 full archive publication fails, the warning output explicitly
+// names the active refs (v2/main, v2/full/current) that were not pushed.
+// Otherwise the user sees only the pending archive ref in the failure and is
+// left wondering whether the active refs that were announced earlier also
+// failed (they did — they were skipped).
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestPushV2Refs_PendingPublicationFailureLabelsSkippedActiveRefs(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDir := setupRepoWithV2Ref(t)
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+	store := checkpoint.NewV2GitStore(repo, "origin")
+
+	// Create /full/current via a checkpoint.
+	writeV2Checkpoint(t, repo, id.MustCheckpointID("aabbccddeeff"), "test-session")
+
+	archiveRef := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000099")
+	localArchiveCommitHash := writeV2ArchiveRef(t, repo, archiveRef, "local archive")
+	require.NoError(t, store.AppendPendingFullGenerationPublication(ctx, checkpoint.PendingV2FullGenerationPublication{
+		ArchiveRefName:    archiveRef.String(),
+		ArchiveCommitHash: localArchiveCommitHash.String(),
+	}))
+
+	t.Chdir(tmpDir)
+
+	// Create bare remote and seed it with a divergent archive commit at the
+	// same ref so the local push is non-fast-forward.
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, initCmd.Run())
+
+	otherDir := setupRepoWithV2Ref(t)
+	otherRepo, err := git.PlainOpen(otherDir)
+	require.NoError(t, err)
+	writeV2ArchiveRef(t, otherRepo, archiveRef, "remote archive")
+	seedCmd := exec.CommandContext(ctx, "git", "push", bareDir,
+		string(archiveRef)+":"+string(archiveRef))
+	seedCmd.Dir = otherDir
+	seedOut, err := seedCmd.CombinedOutput()
+	require.NoError(t, err, "seed push to bare failed: %s", seedOut)
+
+	restore := captureStderr(t)
+	pushV2Refs(ctx, bareDir)
+	output := restore()
+
+	assert.Contains(t, output, "[entire] Warning: v2/full/0000000000099, v2/main, v2/full/current were not pushed",
+		"failure output should name the pending archive and active refs together in one line")
+	assert.NotContains(t, output, "non-fast-forward",
+		"low-level git error detail should not be shown to the user; it belongs in debug logs")
+	assert.NotContains(t, output, "couldn't publish pending v2 full generation refs",
+		"redundant wrapper error should be replaced by the consolidated 'were not pushed' line")
+
+	bareRepo, err := git.PlainOpen(bareDir)
+	require.NoError(t, err)
+	_, err = bareRepo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
+	require.Error(t, err, "/main should not be pushed when pending publication fails")
+	_, err = bareRepo.Reference(plumbing.ReferenceName(paths.V2FullCurrentRefName), true)
+	require.Error(t, err, "/full/current should not be pushed when pending publication fails")
+}
+
 // TestPushV2Refs_PushesPendingArchivePublicationsWithoutActiveRefs verifies a
 // pending archive publication is still honored when there is no /main or
 // /full/current ref to include in the normal active-ref push set.

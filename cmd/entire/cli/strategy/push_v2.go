@@ -48,6 +48,7 @@ type v2RefPushResult struct {
 
 type pendingV2FullGenerationPublicationResult struct {
 	successfulRefs          []plumbing.ReferenceName
+	failedRefs              []plumbing.ReferenceName
 	fullCurrentResetHandled bool
 }
 
@@ -153,6 +154,7 @@ func publishPendingV2FullGenerationPublications(
 		var archivePushErr error
 		for _, pushResult := range tryPushV2Refs(ctx, target, archiveRefs) {
 			if pushResult.err != nil {
+				result.failedRefs = append(result.failedRefs, pushResult.refName)
 				if archivePushErr == nil {
 					archivePushErr = fmt.Errorf("push pending archive %s: %w", shortRefName(pushResult.refName), pushResult.err)
 				}
@@ -195,6 +197,7 @@ func publishPendingV2FullGenerationPublications(
 	}
 	currentRefSpec := fmt.Sprintf("%s:%s", currentRefName, currentRefName)
 	if err := pushWithLease(ctx, target, currentRefSpec, currentRefName.String(), expectedRemoteHash, "push rotated "+shortRefName(currentRefName)); err != nil {
+		result.failedRefs = append(result.failedRefs, currentRefName)
 		return result, fmt.Errorf("push rotated %s: %w", shortRefName(currentRefName), err)
 	}
 	result.successfulRefs = append(result.successfulRefs, currentRefName)
@@ -847,7 +850,20 @@ func pushV2Refs(ctx context.Context, target string) {
 		pushedContent = true
 	}
 	if pendingPublishErr != nil {
-		failures = append(failures, fmt.Errorf("couldn't publish pending v2 full generation refs: %w", pendingPublishErr))
+		logging.Debug(ctx, "push-v2: pending publication failed",
+			slog.String("error", pendingPublishErr.Error()),
+		)
+		skipped := append([]plumbing.ReferenceName{}, pendingPublicationResult.failedRefs...)
+		skipped = append(skipped, refs...)
+		if len(skipped) > 0 {
+			verb := "were"
+			if len(skipped) == 1 {
+				verb = "was"
+			}
+			failures = append(failures, fmt.Errorf("%s %s not pushed", strings.Join(shortRefNames(skipped), ", "), verb))
+		} else {
+			failures = append(failures, fmt.Errorf("couldn't publish pending v2 full generation refs: %w", pendingPublishErr))
+		}
 		printV2PushFailures(ctx, target, successfulRefs, failures, pushedContent)
 		return
 	}
