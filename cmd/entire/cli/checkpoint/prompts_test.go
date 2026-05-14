@@ -2,7 +2,6 @@ package checkpoint
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
