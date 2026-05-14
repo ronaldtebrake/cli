@@ -15,6 +15,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 
 	"github.com/go-git/go-git/v6"
@@ -158,56 +159,28 @@ func printSettingsCommitHint(ctx context.Context, target string) {
 	})
 }
 
-// printCheckpointsV2MigrationHint prints a hint when the committed project
-// settings enable checkpoints_version: 2 AND there are v1 checkpoints that have
-// not yet been mirrored into v2. Suppressed when v2 already has every v1
-// checkpoint (nothing to migrate) so the hint does not become noise once the
-// migration is done.
+// printCheckpointsV2MigrationHint nudges users who committed checkpoints_version: 2
+// but never ran the migration. Partial migrations are not flagged.
 func printCheckpointsV2MigrationHint(ctx context.Context) {
 	checkpointsV2MigrationHintOnce.Do(func() {
 		if !isCheckpointsVersion2Committed(ctx) {
 			return
 		}
-		if !hasUnmigratedV1Checkpoints(ctx) {
+		if v2MainRefExists(ctx) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "[entire] Note: .entire/settings.json sets checkpoints_version: 2, but there are some v1 checkpoints that have not been migrated to v2.")
+		fmt.Fprintln(os.Stderr, "[entire] Note: .entire/settings.json sets checkpoints_version: 2, but no v2 /main ref was found in this repo.")
 		fmt.Fprintln(os.Stderr, "[entire] Run 'entire migrate --checkpoints v2' to migrate missing checkpoints to v2.")
 	})
 }
 
-// hasUnmigratedV1Checkpoints reports whether any v1 checkpoint has no matching
-// entry in v2. Any failure opening the repo or listing either store is treated
-// as "no migration needed" so we stay silent instead of printing a speculative
-// hint — the hint is advisory and should never be the reason a push gets noisy.
-func hasUnmigratedV1Checkpoints(ctx context.Context) bool {
+func v2MainRefExists(ctx context.Context) bool {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		return false
 	}
-	v1Store := checkpoint.NewGitStore(repo)
-	v1List, err := v1Store.ListCommitted(ctx)
-	if err != nil || len(v1List) == 0 {
-		return false
-	}
-	v2List, err := checkpoint.NewV2GitStore(repo, "").ListCommitted(ctx)
-	if err != nil {
-		return false
-	}
-	v2Set := make(map[string]struct{}, len(v2List))
-	for _, info := range v2List {
-		v2Set[info.CheckpointID.String()] = struct{}{}
-	}
-	for _, info := range v1List {
-		if _, ok := v2Set[info.CheckpointID.String()]; !ok {
-			summary, readErr := v1Store.ReadCommitted(ctx, info.CheckpointID)
-			if readErr != nil || summary == nil {
-				continue
-			}
-			return true
-		}
-	}
-	return false
+	_, err = repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
+	return err == nil
 }
 
 // isCheckpointRemoteCommitted returns true if the committed .entire/settings.json

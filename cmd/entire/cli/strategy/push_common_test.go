@@ -15,11 +15,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
-	"github.com/entireio/cli/redact"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
-	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/stretchr/testify/assert"
@@ -1269,74 +1267,22 @@ func setupCheckpointsV2CommittedRepo(t *testing.T) *git.Repository {
 	return repo
 }
 
-// writeV1Checkpoint writes a minimal checkpoint to the v1 metadata branch.
-func writeV1Checkpoint(t *testing.T, repo *git.Repository, cpID id.CheckpointID, sessionID string) {
-	t.Helper()
-	err := checkpoint.NewGitStore(repo).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    sessionID,
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"from":"` + sessionID + `"}`)),
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
-	require.NoError(t, err)
-}
-
-func writeMalformedV1CheckpointWithoutSummary(t *testing.T, repo *git.Repository, cpID id.CheckpointID) {
-	t.Helper()
-	ctx := context.Background()
-
-	blobHash, err := checkpoint.CreateBlobFromContent(repo, []byte("transcript without root metadata"))
-	require.NoError(t, err)
-
-	treeHash, err := checkpoint.BuildTreeFromEntries(ctx, repo, map[string]object.TreeEntry{
-		cpID.Path() + "/0/" + paths.TranscriptFileName: {
-			Mode: filemode.Regular,
-			Hash: blobHash,
-		},
-	})
-	require.NoError(t, err)
-
-	commitHash, err := checkpoint.CreateCommit(ctx, repo, treeHash, plumbing.ZeroHash, "malformed v1 checkpoint", "Test", "test@test.com")
-	require.NoError(t, err)
-
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
-	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refName, commitHash)))
-}
-
 func TestPrintCheckpointsV2MigrationHint(t *testing.T) {
-	t.Run("suppressed when no v1 checkpoints exist", func(t *testing.T) {
+	t.Run("suppressed when v2 /main exists", func(t *testing.T) {
+		checkpointsV2MigrationHintOnce = sync.Once{}
+		repo := setupCheckpointsV2CommittedRepo(t)
+		writeV2Checkpoint(t, repo, id.MustCheckpointID("aabbccddeeff"), "session-1")
+
+		restore := captureStderr(t)
+		printCheckpointsV2MigrationHint(context.Background())
+		output := restore()
+
+		assert.Empty(t, output, "hint should not print once v2 /main has been populated")
+	})
+
+	t.Run("prints when v2 /main is missing", func(t *testing.T) {
 		checkpointsV2MigrationHintOnce = sync.Once{}
 		setupCheckpointsV2CommittedRepo(t)
-
-		restore := captureStderr(t)
-		printCheckpointsV2MigrationHint(context.Background())
-		output := restore()
-
-		assert.Empty(t, output, "hint should not print when there are no v1 checkpoints to migrate")
-	})
-
-	t.Run("suppressed when every v1 checkpoint is already in v2", func(t *testing.T) {
-		checkpointsV2MigrationHintOnce = sync.Once{}
-		repo := setupCheckpointsV2CommittedRepo(t)
-
-		cpID := id.MustCheckpointID("aabbccddeeff")
-		writeV1Checkpoint(t, repo, cpID, "session-1")
-		writeV2Checkpoint(t, repo, cpID, "session-1")
-
-		restore := captureStderr(t)
-		printCheckpointsV2MigrationHint(context.Background())
-		output := restore()
-
-		assert.Empty(t, output, "hint should not print once v2 already mirrors every v1 checkpoint")
-	})
-
-	t.Run("prints when v1 has checkpoints not in v2", func(t *testing.T) {
-		checkpointsV2MigrationHintOnce = sync.Once{}
-		repo := setupCheckpointsV2CommittedRepo(t)
-
-		writeV1Checkpoint(t, repo, id.MustCheckpointID("111111111111"), "session-1")
 
 		restore := captureStderr(t)
 		printCheckpointsV2MigrationHint(context.Background())
@@ -1347,9 +1293,7 @@ func TestPrintCheckpointsV2MigrationHint(t *testing.T) {
 
 	t.Run("prints only once per process", func(t *testing.T) {
 		checkpointsV2MigrationHintOnce = sync.Once{}
-		repo := setupCheckpointsV2CommittedRepo(t)
-
-		writeV1Checkpoint(t, repo, id.MustCheckpointID("222222222222"), "session-2")
+		setupCheckpointsV2CommittedRepo(t)
 
 		restore := captureStderr(t)
 		printCheckpointsV2MigrationHint(context.Background())
@@ -1358,40 +1302,6 @@ func TestPrintCheckpointsV2MigrationHint(t *testing.T) {
 
 		outputCount := strings.Count(output, "entire migrate --checkpoints v2")
 		assert.Equal(t, 1, outputCount, "hint should print exactly once per process")
-	})
-}
-
-func TestHasUnmigratedV1Checkpoints(t *testing.T) {
-	t.Run("false when no v1 checkpoints exist", func(t *testing.T) {
-		setupCheckpointsV2CommittedRepo(t)
-		assert.False(t, hasUnmigratedV1Checkpoints(context.Background()))
-	})
-
-	t.Run("false when every v1 checkpoint is in v2", func(t *testing.T) {
-		repo := setupCheckpointsV2CommittedRepo(t)
-		cpID := id.MustCheckpointID("333333333333")
-		writeV1Checkpoint(t, repo, cpID, "session-a")
-		writeV2Checkpoint(t, repo, cpID, "session-a")
-
-		assert.False(t, hasUnmigratedV1Checkpoints(context.Background()))
-	})
-
-	t.Run("true when at least one v1 checkpoint is missing from v2", func(t *testing.T) {
-		repo := setupCheckpointsV2CommittedRepo(t)
-		mirrored := id.MustCheckpointID("444444444444")
-		missing := id.MustCheckpointID("555555555555")
-		writeV1Checkpoint(t, repo, mirrored, "session-b")
-		writeV2Checkpoint(t, repo, mirrored, "session-b")
-		writeV1Checkpoint(t, repo, missing, "session-c")
-
-		assert.True(t, hasUnmigratedV1Checkpoints(context.Background()))
-	})
-
-	t.Run("false when only malformed v1 checkpoint entries are missing from v2", func(t *testing.T) {
-		repo := setupCheckpointsV2CommittedRepo(t)
-		writeMalformedV1CheckpointWithoutSummary(t, repo, id.MustCheckpointID("666666666666"))
-
-		assert.False(t, hasUnmigratedV1Checkpoints(context.Background()))
 	})
 }
 
