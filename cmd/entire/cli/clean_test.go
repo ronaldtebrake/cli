@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
@@ -140,12 +141,13 @@ func runCleanGit(t *testing.T, dir string, args ...string) string {
 	return string(output)
 }
 
-func addCleanBareOrigin(t *testing.T, repoRoot string) {
+func addCleanBareOrigin(t *testing.T, repoRoot string) string {
 	t.Helper()
 
 	remoteDir := filepath.Join(t.TempDir(), "origin.git")
 	runCleanGit(t, "", "init", "--bare", remoteDir)
 	runCleanGit(t, repoRoot, "remote", "add", "origin", remoteDir)
+	return remoteDir
 }
 
 func TestCleanLongDescription_DefaultIsGeneric(t *testing.T) {
@@ -155,7 +157,7 @@ func TestCleanLongDescription_DefaultIsGeneric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {}}`)
 
@@ -175,7 +177,7 @@ func TestCleanLongDescription_IncludesV2CleanupWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 
@@ -342,6 +344,47 @@ func createRemoteOnlyArchivedGenerationRef(
 	return ref.Hash().String()
 }
 
+func createRemoteOnlyArchivedGenerationRefFromSeparateRepo(
+	t *testing.T,
+	remoteDir string,
+	generation string,
+	oldest time.Time,
+	newest time.Time,
+) {
+	t.Helper()
+
+	gen := checkpoint.GenerationMetadata{
+		OldestCheckpointAt: oldest.UTC(),
+		NewestCheckpointAt: newest.UTC(),
+	}
+	genJSON, err := json.Marshal(gen)
+	if err != nil {
+		t.Fatalf("failed to marshal generation metadata: %v", err)
+	}
+
+	createRemoteOnlyArchivedGenerationRefFromSeparateRepoWithMetadata(t, remoteDir, generation, genJSON)
+}
+
+func createRemoteOnlyArchivedGenerationRefFromSeparateRepoWithMetadata(
+	t *testing.T,
+	remoteDir string,
+	generation string,
+	generationJSON []byte,
+) {
+	t.Helper()
+
+	producerDir := filepath.Join(t.TempDir(), "producer")
+	testutil.InitRepo(t, producerDir)
+	testutil.WriteFile(t, producerDir, paths.GenerationFileName, string(generationJSON))
+	testutil.WriteFile(t, producerDir, "aa/bbccddeeff/0/"+paths.TranscriptFileName, `{"transcript":"data"}`)
+
+	runCleanGit(t, producerDir, "add", ".")
+	runCleanGit(t, producerDir, "commit", "--no-gpg-sign", "-m", "archived generation")
+
+	refName := paths.V2FullRefPrefix + generation
+	runCleanGit(t, producerDir, "push", remoteDir, "HEAD:"+refName)
+}
+
 func createV2MainMetadataRef(t *testing.T, repo *git.Repository, cpID id.CheckpointID, createdAt time.Time) {
 	t.Helper()
 
@@ -460,7 +503,7 @@ func TestCleanCmd_DefaultMode_WithForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	worktreePath := wt.Filesystem.Root()
+	worktreePath := wt.Filesystem().Root()
 	worktreeID, err := paths.GetWorktreeID(worktreePath)
 	if err != nil {
 		t.Fatalf("failed to get worktree ID: %v", err)
@@ -506,7 +549,7 @@ func TestCleanCmd_DefaultMode_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	worktreePath := wt.Filesystem.Root()
+	worktreePath := wt.Filesystem().Root()
 	worktreeID, err := paths.GetWorktreeID(worktreePath)
 	if err != nil {
 		t.Fatalf("failed to get worktree ID: %v", err)
@@ -581,7 +624,7 @@ func TestCleanCmd_DefaultMode_SessionsWithoutShadowBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	worktreePath := wt.Filesystem.Root()
+	worktreePath := wt.Filesystem().Root()
 
 	// Create session state files WITHOUT a shadow branch
 	sessionFile := createSessionStateFile(t, worktreePath, "2026-02-02-orphaned", commitHash)
@@ -610,7 +653,7 @@ func TestCleanCmd_DefaultMode_MultipleSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	worktreePath := wt.Filesystem.Root()
+	worktreePath := wt.Filesystem().Root()
 	worktreeID, err := paths.GetWorktreeID(worktreePath)
 	if err != nil {
 		t.Fatalf("failed to get worktree ID: %v", err)
@@ -881,7 +924,7 @@ func TestCleanCmd_All_InvalidSettingsWarnsAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true,`)
 
@@ -915,9 +958,9 @@ func TestCleanCmd_All_Subdirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 	subDir := filepath.Join(repoRoot, "subdir")
-	if err := wt.Filesystem.MkdirAll("subdir", 0o755); err != nil {
+	if err := wt.Filesystem().MkdirAll("subdir", 0o755); err != nil {
 		t.Fatalf("failed to create subdir: %v", err)
 	}
 
@@ -950,7 +993,7 @@ func TestCleanCmd_All_FindsSessionWithShadowBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	worktreePath := wt.Filesystem.Root()
+	worktreePath := wt.Filesystem().Root()
 	worktreeID, err := paths.GetWorktreeID(worktreePath)
 	if err != nil {
 		t.Fatalf("failed to get worktree ID: %v", err)
@@ -1002,7 +1045,7 @@ func TestCleanCmd_All_DryRunListsEligibleV2Generations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	createArchivedGenerationRef(t, repo, "0000000000001", time.Now().AddDate(0, 0, -20), time.Now().AddDate(0, 0, -15))
@@ -1033,7 +1076,7 @@ func TestCleanCmd_All_DryRunListsRemoteOnlyEligibleV2Generations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	addCleanBareOrigin(t, repoRoot)
@@ -1064,14 +1107,125 @@ func TestCleanCmd_All_DryRunListsRemoteOnlyEligibleV2Generations(t *testing.T) {
 	}
 }
 
-func TestCleanCmd_All_UsesRawTranscriptTimeForV2GenerationRetention(t *testing.T) {
+func TestCleanCmd_All_DryRunReadsGitMaterializedRemoteGenerationMetadata(t *testing.T) {
 	repo, _ := setupCleanTestRepo(t)
 
 	wt, err := repo.Worktree()
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
+
+	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
+	remoteDir := addCleanBareOrigin(t, repoRoot)
+	runCleanGit(t, remoteDir, "config", "uploadpack.allowFilter", "true")
+	runCleanGit(t, repoRoot, "config", "protocol.file.allow", "always")
+	for _, generation := range []string{"0000000000007", "0000000000008"} {
+		refName := paths.V2FullRefPrefix + generation
+		createRemoteOnlyArchivedGenerationRefFromSeparateRepo(
+			t,
+			remoteDir,
+			generation,
+			time.Now().AddDate(0, 0, -20),
+			time.Now().AddDate(0, 0, -15),
+		)
+		runCleanGit(t, repoRoot, "-c", "protocol.file.allow=always", "fetch", "--filter=blob:none", "--depth=1", "--no-tags", "file://"+remoteDir, refName+":"+refName)
+	}
+
+	cmd := newCleanCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--all", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("clean --all --dry-run error = %v", err)
+	}
+
+	if strings.Contains(stderr.String(), "missing generation.json") {
+		t.Fatalf("did not expect missing generation warning for Git-readable remote generation, got stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Archived v2 generations (2):") {
+		t.Fatalf("expected archived v2 generation section, got stdout=%q stderr=%q", output, stderr.String())
+	}
+	for _, generation := range []string{"0000000000007", "0000000000008"} {
+		if !strings.Contains(output, generation) {
+			t.Fatalf("expected remote generation %s to be eligible, got stdout=%q stderr=%q", generation, output, stderr.String())
+		}
+	}
+}
+
+func TestCleanCmd_All_DryRunContinuesAfterInvalidGitMaterializedGenerationMetadata(t *testing.T) {
+	repo, _ := setupCleanTestRepo(t)
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+	repoRoot := wt.Filesystem().Root()
+
+	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
+	remoteDir := addCleanBareOrigin(t, repoRoot)
+	runCleanGit(t, remoteDir, "config", "uploadpack.allowFilter", "true")
+	runCleanGit(t, repoRoot, "config", "protocol.file.allow", "always")
+
+	invalidRefName := paths.V2FullRefPrefix + "0000000000007"
+	createRemoteOnlyArchivedGenerationRefFromSeparateRepoWithMetadata(
+		t,
+		remoteDir,
+		"0000000000007",
+		[]byte(`{"oldest_checkpoint_at":`),
+	)
+	runCleanGit(t, repoRoot, "-c", "protocol.file.allow=always", "fetch", "--filter=blob:none", "--depth=1", "--no-tags", "file://"+remoteDir, invalidRefName+":"+invalidRefName)
+
+	validRefName := paths.V2FullRefPrefix + "0000000000008"
+	createRemoteOnlyArchivedGenerationRefFromSeparateRepo(
+		t,
+		remoteDir,
+		"0000000000008",
+		time.Now().AddDate(0, 0, -20),
+		time.Now().AddDate(0, 0, -15),
+	)
+	runCleanGit(t, repoRoot, "-c", "protocol.file.allow=always", "fetch", "--filter=blob:none", "--depth=1", "--no-tags", "file://"+remoteDir, validRefName+":"+validRefName)
+
+	cmd := newCleanCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--all", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("clean --all --dry-run error = %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "generation 0000000000007: failed to read generation.json: parse git-readable generation.json") {
+		t.Fatalf("expected invalid generation parse warning, got stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Archived v2 generations (1):") {
+		t.Fatalf("expected one eligible archived v2 generation, got stdout=%q stderr=%q", output, stderr.String())
+	}
+	if !strings.Contains(output, "0000000000008") {
+		t.Fatalf("expected valid remote generation to remain eligible after invalid batch entry, got stdout=%q stderr=%q", output, stderr.String())
+	}
+	if strings.Contains(output, "0000000000007") {
+		t.Fatalf("invalid remote generation should not be eligible, got stdout=%q stderr=%q", output, stderr.String())
+	}
+}
+
+func TestCleanCmd_All_PrefersGenerationJSONOverRawTranscript(t *testing.T) {
+	// generation.json says "now"; raw transcripts say 15–20 days ago. The
+	// generation must not be eligible for cleanup.
+	repo, _ := setupCleanTestRepo(t)
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 
@@ -1092,11 +1246,8 @@ func TestCleanCmd_All_UsesRawTranscriptTimeForV2GenerationRetention(t *testing.T
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "Archived v2 generations (1):") {
-		t.Fatalf("expected archived v2 generation section, got: %s", output)
-	}
-	if !strings.Contains(output, "0000000000005") {
-		t.Fatalf("expected generation to be eligible by raw transcript timestamps, got: %s", output)
+	if strings.Contains(output, "0000000000005") {
+		t.Fatalf("expected generation to be skipped because generation.json is within retention, got: %s", output)
 	}
 }
 
@@ -1107,7 +1258,7 @@ func TestCleanCmd_All_ForceDeletesRemoteOnlyEligibleV2Generations(t *testing.T) 
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	addCleanBareOrigin(t, repoRoot)
@@ -1142,7 +1293,7 @@ func TestCleanCmd_All_ForceDeletesEligibleV2Generations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	createCleanV2Ref(t, repo, plumbing.ReferenceName(paths.V2MainRefName))
@@ -1177,7 +1328,7 @@ func TestCleanCmd_All_DryRunSkipsV2GenerationsWithinRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	createArchivedGenerationRef(t, repo, "0000000000003", time.Now().AddDate(0, 0, -5), time.Now().AddDate(0, 0, -1))
@@ -1208,7 +1359,7 @@ func TestCleanCmd_All_ForceSkipsV2GenerationMissingMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	createArchivedGenerationRefWithoutMetadata(t, repo, "0000000000001")
@@ -1238,7 +1389,7 @@ func TestCleanCmd_All_ForceSkipsV2GenerationWithInvalidTimestamps(t *testing.T) 
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 	createArchivedGenerationRef(t, repo, "0000000000004", time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, -20))
@@ -1268,7 +1419,7 @@ func TestCleanCmd_All_ForceWarnsWithErrorDetailsForUnreadableV2Ref(t *testing.T)
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true, "full_transcript_generation_retention_days": 14}}`)
 

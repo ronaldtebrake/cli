@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
@@ -959,14 +960,14 @@ func TestWriteCommitted_TriggersRotationAtThreshold(t *testing.T) {
 	// Verify /full/current is now a fresh generation (empty tree, no generation.json)
 	_, freshTreeHash, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullCurrentRefName))
 	require.NoError(t, err)
-	freshCount, err := store.CountCheckpointsInTree(freshTreeHash)
+	freshCount, err := store.CountCheckpointsInTree(t.Context(), freshTreeHash)
 	require.NoError(t, err)
 	assert.Equal(t, 0, freshCount, "fresh /full/current should have no checkpoints")
 
 	// Verify the archived generation has 3 checkpoints
 	_, archiveTreeHash, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullRefPrefix + archived[0]))
 	require.NoError(t, err)
-	archiveCount, err := store.CountCheckpointsInTree(archiveTreeHash)
+	archiveCount, err := store.CountCheckpointsInTree(t.Context(), archiveTreeHash)
 	require.NoError(t, err)
 	assert.Equal(t, 3, archiveCount)
 
@@ -985,7 +986,7 @@ func TestWriteCommitted_TriggersRotationAtThreshold(t *testing.T) {
 
 	_, newTreeHash, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullCurrentRefName))
 	require.NoError(t, err)
-	newCount, err := store.CountCheckpointsInTree(newTreeHash)
+	newCount, err := store.CountCheckpointsInTree(t.Context(), newTreeHash)
 	require.NoError(t, err)
 	assert.Equal(t, 1, newCount, "new checkpoint should be on fresh generation")
 }
@@ -1019,154 +1020,195 @@ func TestWriteCommitted_NoRotationBelowThreshold(t *testing.T) {
 
 	_, noRotTreeHash, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullCurrentRefName))
 	require.NoError(t, err)
-	noRotCount, err := store.CountCheckpointsInTree(noRotTreeHash)
+	noRotCount, err := store.CountCheckpointsInTree(t.Context(), noRotTreeHash)
 	require.NoError(t, err)
 	assert.Equal(t, 3, noRotCount)
 }
 
-// TestV2GitStore_CleanupV1TranscriptFiles verifies that CleanupV1TranscriptFiles
-// removes legacy v1-named files (full.jsonl, full.jsonl.*, content_hash.txt)
-// from /full/current while preserving v2-named files.
-func TestV2GitStore_CleanupV1TranscriptFiles(t *testing.T) {
+// The index must agree with the per-call HasFullSessionArtifacts predicate
+// for every (checkpoint, session) pair — the migration loop relies on them
+// being interchangeable.
+func TestV2GitStore_BuildFullSessionArtifactsIndex_AgreesWithHasFullSessionArtifacts(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
 	store := NewV2GitStore(repo, "origin")
 	ctx := context.Background()
 
-	cpID := id.MustCheckpointID("851fcec4a874")
-
-	// Write initial checkpoint (sets up both /main and /full/current with v2 naming).
-	err := store.WriteCommitted(ctx, WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    "test-session-v1-cleanup",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"human","message":"initial"}` + "\n")),
-		Agent:        agent.AgentTypeClaudeCode,
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
-	require.NoError(t, err)
-
-	// Inject v1-named files (full.jsonl, full.jsonl.001, content_hash.txt)
-	// directly into the /full/current tree to simulate legacy data.
-	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
-	parentHash, rootTreeHash, err := store.GetRefState(refName)
-	require.NoError(t, err)
-
-	basePath := cpID.Path() + "/"
-	sessionPath := basePath + "0/"
-
-	entries, err := store.gs.flattenCheckpointEntries(rootTreeHash, cpID.Path())
-	require.NoError(t, err)
-
-	v1Blob, err := CreateBlobFromContent(repo, []byte(`{"type":"human","message":"v1 data"}`+"\n"))
-	require.NoError(t, err)
-	v1HashBlob, err := CreateBlobFromContent(repo, []byte("sha256:v1hash"))
-	require.NoError(t, err)
-	v1ChunkBlob, err := CreateBlobFromContent(repo, []byte(`{"type":"assistant","message":"v1 chunk"}`+"\n"))
-	require.NoError(t, err)
-
-	entries[sessionPath+paths.TranscriptFileName] = object.TreeEntry{
-		Name: sessionPath + paths.TranscriptFileName,
-		Mode: filemode.Regular,
-		Hash: v1Blob,
+	cpIDs := []id.CheckpointID{
+		id.MustCheckpointID("aa11bb22cc33"),
+		id.MustCheckpointID("dd44ee55ff66"),
+		id.MustCheckpointID("11223344aabb"),
 	}
-	entries[sessionPath+paths.TranscriptFileName+".001"] = object.TreeEntry{
-		Name: sessionPath + paths.TranscriptFileName + ".001",
-		Mode: filemode.Regular,
-		Hash: v1ChunkBlob,
-	}
-	entries[sessionPath+paths.ContentHashFileName] = object.TreeEntry{
-		Name: sessionPath + paths.ContentHashFileName,
-		Mode: filemode.Regular,
-		Hash: v1HashBlob,
+	for i, cpID := range cpIDs {
+		require.NoError(t, store.WriteCommitted(ctx, WriteCommittedOptions{
+			CheckpointID: cpID,
+			SessionID:    fmt.Sprintf("session-index-%d", i),
+			Strategy:     "manual-commit",
+			Agent:        agent.AgentTypeClaudeCode,
+			Transcript:   redact.AlreadyRedacted([]byte(fmt.Sprintf(`{"cp":%d}`, i))),
+			AuthorName:   "Test",
+			AuthorEmail:  "test@test.com",
+		}))
 	}
 
-	newTreeHash, err := store.gs.spliceCheckpointSubtree(ctx, rootTreeHash, cpID, basePath, entries)
-	require.NoError(t, err)
-	err = store.updateRef(ctx, refName, newTreeHash, parentHash, "Inject v1 files", "Test", "test@test.com")
+	index, err := store.BuildFullSessionArtifactsIndex()
 	require.NoError(t, err)
 
-	// Verify v1-named files exist before cleanup.
-	tree := v2FullTree(t, repo)
-	cpPath := cpID.Path()
-	sessionTree, err := tree.Tree(cpPath + "/0")
-	require.NoError(t, err)
-	preCleanup := make(map[string]bool)
-	for _, entry := range sessionTree.Entries {
-		preCleanup[entry.Name] = true
-	}
-	assert.True(t, preCleanup[paths.TranscriptFileName], "full.jsonl should exist before cleanup")
-	assert.True(t, preCleanup[paths.TranscriptFileName+".001"], "full.jsonl.001 should exist before cleanup")
-	assert.True(t, preCleanup[paths.ContentHashFileName], "content_hash.txt should exist before cleanup")
-	assert.True(t, preCleanup[paths.V2RawTranscriptFileName], "raw_transcript should exist before cleanup")
-
-	// Run cleanup.
-	err = store.CleanupV1TranscriptFiles(ctx, cpID, 1)
-	require.NoError(t, err)
-
-	// Verify v1-named files are gone, v2-named files are preserved.
-	tree = v2FullTree(t, repo)
-	sessionTree, err = tree.Tree(cpPath + "/0")
-	require.NoError(t, err)
-
-	postCleanup := make(map[string]bool)
-	for _, entry := range sessionTree.Entries {
-		postCleanup[entry.Name] = true
+	for _, cpID := range cpIDs {
+		// All three writes hit session 0; sessions ≥1 must be absent from
+		// both predicate and index.
+		for sessionIdx := range 3 {
+			fromCall, err := store.HasFullSessionArtifacts(cpID, sessionIdx)
+			require.NoError(t, err)
+			fromIndex := index.Has(cpID, sessionIdx)
+			assert.Equal(t, fromCall, fromIndex,
+				"index disagreement for %s/%d (call=%v, index=%v)", cpID, sessionIdx, fromCall, fromIndex)
+		}
 	}
 
-	assert.True(t, postCleanup[paths.V2RawTranscriptFileName], "raw_transcript should exist after cleanup")
-	assert.True(t, postCleanup[paths.V2RawTranscriptHashFileName], "raw_transcript_hash.txt should exist after cleanup")
-	assert.False(t, postCleanup[paths.TranscriptFileName], "full.jsonl should be removed after cleanup")
-	assert.False(t, postCleanup[paths.TranscriptFileName+".001"], "full.jsonl.001 should be removed after cleanup")
-	assert.False(t, postCleanup[paths.ContentHashFileName], "content_hash.txt should be removed after cleanup")
+	// Unknown checkpoints must not be in the index.
+	missing := id.MustCheckpointID("999999999999")
+	assert.False(t, index.Has(missing, 0))
 }
 
-// TestV2GitStore_CleanupV1TranscriptFiles_NoopWhenClean verifies that
-// CleanupV1TranscriptFiles is a no-op when no v1 files exist.
-func TestV2GitStore_CleanupV1TranscriptFiles_NoopWhenClean(t *testing.T) {
+// A nil index — the documented test-only fallback — must not panic on Has.
+func TestV2GitStore_BuildFullSessionArtifactsIndex_NilSafe(t *testing.T) {
+	t.Parallel()
+	var index FullSessionArtifactsIndex
+	assert.False(t, index.Has(id.MustCheckpointID("abc123def456"), 0))
+}
+
+// batchTestEntry describes one (checkpoint, session) write the batch tests
+// will perform. Sessions sharing a CheckpointID land in the same shard and
+// must be assigned distinct slot indexes when SessionIDs differ.
+type batchTestEntry struct {
+	cpID                id.CheckpointID
+	sessionID           string
+	transcript          string
+	prompts             []string
+	cpCount             int
+	filesTouched        []string
+	combinedAttribution *InitialAttribution
+	hasReview           bool
+}
+
+// fixedCreatedAt keeps batch-vs-sequential comparisons deterministic;
+// checkpointCreatedAt defaults to time.Now() when CreatedAt is zero, which
+// would cause unrelated tree-hash diffs between the two runs.
+var fixedCreatedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+var fixedBatchAttribution = &InitialAttribution{
+	CalculatedAt:      fixedCreatedAt,
+	AgentLines:        7,
+	TotalCommitted:    7,
+	TotalLinesChanged: 7,
+	AgentPercentage:   100,
+	MetricVersion:     2,
+}
+
+func (e batchTestEntry) toOpts() WriteCommittedOptions {
+	return WriteCommittedOptions{
+		CheckpointID:        e.cpID,
+		SessionID:           e.sessionID,
+		Strategy:            "manual-commit",
+		CreatedAt:           fixedCreatedAt,
+		Transcript:          redact.AlreadyRedacted([]byte(e.transcript)),
+		Prompts:             e.prompts,
+		CheckpointsCount:    e.cpCount,
+		FilesTouched:        e.filesTouched,
+		CombinedAttribution: e.combinedAttribution,
+		HasReview:           e.hasReview,
+		AuthorName:          "Test",
+		AuthorEmail:         "test@test.com",
+	}
+}
+
+// TestV2GitStore_WriteCommittedMainBatch_MatchesSequentialWrites is the core
+// correctness invariant for the batch path: writing N (checkpoint, session)
+// pairs in one batch must produce the same /main root tree as writing them
+// one-by-one. Same blobs, same metadata aggregation, same session slots.
+func TestV2GitStore_WriteCommittedMainBatch_MatchesSequentialWrites(t *testing.T) {
+	t.Parallel()
+
+	cpA := id.MustCheckpointID("a1b2c3d4e5f6")
+	cpB := id.MustCheckpointID("b2c3d4e5f6a1")
+	cpC := id.MustCheckpointID("c3d4e5f6a1b2")
+	entries := []batchTestEntry{
+		// cpA: two sessions. The first write carries checkpoint-level fields
+		// and the second omits them, pinning the sequential "preserve prior
+		// value" behavior in the fresh batch path.
+		{cpID: cpA, sessionID: "sess-A0", transcript: `{"line":"a0"}`, prompts: []string{"prompt-a0"}, cpCount: 1, filesTouched: []string{"a.txt"}, combinedAttribution: fixedBatchAttribution, hasReview: true},
+		{cpID: cpA, sessionID: "sess-A1", transcript: `{"line":"a1"}`, prompts: []string{"prompt-a1"}, cpCount: 2, filesTouched: []string{"a.txt", "b.txt"}},
+		// cpB: one session
+		{cpID: cpB, sessionID: "sess-B0", transcript: `{"line":"b0"}`, prompts: []string{"prompt-b0"}, cpCount: 4, filesTouched: []string{"c.txt"}},
+		// cpC: three sessions
+		{cpID: cpC, sessionID: "sess-C0", transcript: `{"line":"c0"}`, prompts: []string{"prompt-c0"}, cpCount: 1, filesTouched: nil},
+		{cpID: cpC, sessionID: "sess-C1", transcript: `{"line":"c1"}`, prompts: []string{"prompt-c1"}, cpCount: 2, filesTouched: []string{"d.txt"}},
+		{cpID: cpC, sessionID: "sess-C2", transcript: `{"line":"c2"}`, prompts: []string{"prompt-c2"}, cpCount: 3, filesTouched: []string{"d.txt", "e.txt"}},
+	}
+
+	ctx := context.Background()
+
+	// Sequential repo: today's per-session path.
+	repoSeq := initTestRepo(t)
+	storeSeq := NewV2GitStore(repoSeq, "origin")
+	for _, e := range entries {
+		_, err := storeSeq.writeCommittedMain(ctx, e.toOpts())
+		require.NoError(t, err)
+	}
+
+	// Batch repo: one call.
+	repoBatch := initTestRepo(t)
+	storeBatch := NewV2GitStore(repoBatch, "origin")
+	batchOpts := make([]WriteCommittedOptions, len(entries))
+	for i, e := range entries {
+		batchOpts[i] = e.toOpts()
+	}
+	require.NoError(t, storeBatch.WriteCommittedMainBatch(ctx, batchOpts))
+
+	// Tree equality is the strong invariant: blobs, metadata, summary
+	// aggregation, and session-slot assignment all roll up into the root
+	// tree hash. If batch session indexes diverged from sequential, the
+	// trees would differ.
+	treeSeq := v2MainTree(t, repoSeq).Hash
+	treeBatch := v2MainTree(t, repoBatch).Hash
+	require.Equal(t, treeSeq, treeBatch, "batch /main tree must match sequential /main tree")
+}
+
+// TestV2GitStore_WriteCommittedMainBatch_SingleCommit pins the perf invariant:
+// regardless of how many session writes are batched, /main grows by exactly
+// one commit per call.
+func TestV2GitStore_WriteCommittedMainBatch_SingleCommit(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
 	store := NewV2GitStore(repo, "origin")
 	ctx := context.Background()
 
-	cpID := id.MustCheckpointID("962fcec4a874")
+	cpID := id.MustCheckpointID("d4e5f6a1b2c3")
+	batch := []WriteCommittedOptions{
+		batchTestEntry{cpID: cpID, sessionID: "s0", transcript: `{"l":0}`, cpCount: 1}.toOpts(),
+		batchTestEntry{cpID: cpID, sessionID: "s1", transcript: `{"l":1}`, cpCount: 1}.toOpts(),
+		batchTestEntry{cpID: id.MustCheckpointID("e5f6a1b2c3d4"), sessionID: "s2", transcript: `{"l":2}`, cpCount: 1}.toOpts(),
+	}
 
-	err := store.WriteCommitted(ctx, WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    "test-session-noop",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"human","message":"clean"}` + "\n")),
-		Agent:        agent.AgentTypeClaudeCode,
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
+	refName := plumbing.ReferenceName(paths.V2MainRefName)
+	require.NoError(t, store.ensureRef(ctx, refName))
+	beforeRef, err := repo.Reference(refName, true)
 	require.NoError(t, err)
 
-	// Get tree hash before cleanup.
-	_, treeBefore, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullCurrentRefName))
+	require.NoError(t, store.WriteCommittedMainBatch(ctx, batch))
+
+	// Walk the commit chain from the new tip until we hit the previous tip
+	// and count how many commits were added.
+	afterRef, err := repo.Reference(refName, true)
 	require.NoError(t, err)
-
-	// Cleanup should be a no-op (no v1 files to remove).
-	err = store.CleanupV1TranscriptFiles(ctx, cpID, 1)
-	require.NoError(t, err)
-
-	// Tree hash should be unchanged (no commit created).
-	_, treeAfter, err := store.GetRefState(plumbing.ReferenceName(paths.V2FullCurrentRefName))
-	require.NoError(t, err)
-	assert.Equal(t, treeBefore, treeAfter, "tree should be unchanged when no v1 files exist")
-}
-
-func TestV2GitStore_CleanupV1TranscriptFiles_ReturnsCorruptRefError(t *testing.T) {
-	t.Parallel()
-	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
-
-	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
-	missingCommit := plumbing.NewHash("1111111111111111111111111111111111111111")
-	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refName, missingCommit)))
-
-	err := store.CleanupV1TranscriptFiles(context.Background(), id.MustCheckpointID("962fcec4a874"), 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get commit")
+	added := 0
+	cur := afterRef.Hash()
+	for cur != beforeRef.Hash() {
+		commit, err := repo.CommitObject(cur)
+		require.NoError(t, err)
+		added++
+		require.NotEmpty(t, commit.ParentHashes, "commit chain should reach previous tip")
+		cur = commit.ParentHashes[0]
+	}
+	assert.Equal(t, 1, added, "batch must add exactly one /main commit")
 }

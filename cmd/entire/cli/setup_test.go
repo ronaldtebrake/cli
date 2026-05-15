@@ -288,6 +288,43 @@ func TestRunEnable_DefaultFlag_ClearsLocalDisable(t *testing.T) {
 	}
 }
 
+func TestSetupAgentHooksNonInteractive_ClearsLocalDisable(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+	writeClaudeHooksFixture(t)
+
+	var buf bytes.Buffer
+	if err := runDisable(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runDisable() error = %v", err)
+	}
+
+	enabled, err := IsEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if enabled {
+		t.Fatal("expected disabled after runDisable")
+	}
+
+	ag, err := agent.Get(types.AgentName("claude-code"))
+	if err != nil {
+		t.Fatalf("agent.Get(claude-code) error = %v", err)
+	}
+
+	buf.Reset()
+	if err := setupAgentHooksNonInteractive(context.Background(), &buf, ag, EnableOptions{}); err != nil {
+		t.Fatalf("setupAgentHooksNonInteractive() error = %v", err)
+	}
+
+	enabled, err = IsEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("expected enabled after setupAgentHooksNonInteractive")
+	}
+}
+
 func TestRunDisable(t *testing.T) {
 	setupTestDir(t)
 	writeSettings(t, testSettingsEnabled)
@@ -2238,6 +2275,111 @@ func TestConfigureCmd_CheckpointRemote_LocalOnlyRepo(t *testing.T) {
 	}
 	if localS.GetCheckpointRemote() == nil {
 		t.Error("expected checkpoint_remote in local settings")
+	}
+}
+
+// Tests for configure --summarize-timeout-seconds (issue #1198)
+
+func TestConfigureCmd_SummarizeTimeoutSeconds_WritesProjectSettings(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-timeout-seconds", "300"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --summarize-timeout-seconds failed: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "Settings updated") {
+		t.Errorf("expected 'Settings updated' output, got: %s", stdout.String())
+	}
+
+	s, err := settings.LoadFromFile(EntireSettingsFile)
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if s.SummaryTimeoutSeconds != 300 {
+		t.Errorf("SummaryTimeoutSeconds = %d, want 300", s.SummaryTimeoutSeconds)
+	}
+}
+
+func TestConfigureCmd_SummarizeTimeoutSeconds_WritesLocalSettings(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--local", "--summarize-timeout-seconds", "600"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --local --summarize-timeout-seconds failed: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "settings.local.json") {
+		t.Errorf("expected output to reference settings.local.json, got: %s", stdout.String())
+	}
+
+	localS, err := settings.LoadFromFile(EntireSettingsLocalFile)
+	if err != nil {
+		t.Fatalf("failed to load local settings: %v", err)
+	}
+	if localS.SummaryTimeoutSeconds != 600 {
+		t.Errorf("local SummaryTimeoutSeconds = %d, want 600", localS.SummaryTimeoutSeconds)
+	}
+
+	// Project settings must not have been mutated.
+	projectS, err := settings.LoadFromFile(EntireSettingsFile)
+	if err != nil {
+		t.Fatalf("failed to load project settings: %v", err)
+	}
+	if projectS.SummaryTimeoutSeconds != 0 {
+		t.Errorf("project SummaryTimeoutSeconds = %d, want 0 (unchanged)", projectS.SummaryTimeoutSeconds)
+	}
+}
+
+func TestConfigureCmd_SummarizeTimeoutSeconds_ClearsValue(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, `{"enabled":true,"summary_timeout_seconds":300}`)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-timeout-seconds", "0"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --summarize-timeout-seconds 0 failed: %v", err)
+	}
+
+	s, err := settings.LoadFromFile(EntireSettingsFile)
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if s.SummaryTimeoutSeconds != 0 {
+		t.Errorf("SummaryTimeoutSeconds = %d, want 0 (cleared)", s.SummaryTimeoutSeconds)
+	}
+}
+
+func TestConfigureCmd_SummarizeTimeoutSeconds_RejectsNegative(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-timeout-seconds", "-5"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for negative --summarize-timeout-seconds")
+	}
+	if !strings.Contains(err.Error(), "non-negative") {
+		t.Errorf("expected 'non-negative' in error, got: %v", err)
 	}
 }
 
