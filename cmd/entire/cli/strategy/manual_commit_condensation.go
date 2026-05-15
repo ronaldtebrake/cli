@@ -230,11 +230,9 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	// Pre-redact joined prompts once so v1 and v2 writers (plus any
 	// subsequent UpdateCommitted within the same finalize) reuse the same
 	// result instead of each running the 8-layer pipeline over identical
-	// input.
-	var redactedJoinedPromptContent string
-	if len(sessionData.Prompts) > 0 {
-		redactedJoinedPromptContent = redact.StringWithPrivacyFilter(ctx, cpkg.JoinPrompts(sessionData.Prompts))
-	}
+	// input. The typed return value carries a compile-time claim that the
+	// content has been through the pipeline.
+	redactedPrompts := redact.JoinedPrompts(ctx, sessionData.Prompts, cpkg.PromptSeparator)
 
 	// Build write options (shared by v1 and v2)
 	writeOpts := cpkg.WriteCommittedOptions{
@@ -244,7 +242,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		Branch:                      branchName,
 		Transcript:                  redactedTranscript,
 		Prompts:                     sessionData.Prompts,
-		PromptsRedactedContent:      redactedJoinedPromptContent,
+		PromptsRedacted:             redactedPrompts,
 		FilesTouched:                sessionData.FilesTouched,
 		CheckpointsCount:            state.StepCount,
 		EphemeralBranch:             shadowBranchName,

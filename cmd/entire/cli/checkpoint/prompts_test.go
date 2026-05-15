@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/entireio/cli/redact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,7 @@ func TestSplitPromptContent_EmptyContent(t *testing.T) {
 }
 
 // TestRedactedJoinedPrompts_PreRedactedIsTrustedVerbatim verifies that when
-// the caller supplies a non-empty preRedacted string the helper returns it
+// the caller supplies a set RedactedJoinedPrompts the helper unwraps it
 // untouched and never re-invokes the redaction pipeline. The pre-redacted
 // path is what finalizeAllTurnCheckpoints relies on to avoid running OPF
 // once per checkpoint over identical joined-prompt strings.
@@ -38,17 +39,21 @@ func TestRedactedJoinedPrompts_PreRedactedIsTrustedVerbatim(t *testing.T) {
 	t.Parallel()
 
 	const preRedacted = "[REDACTED_PERSON] asked about [REDACTED_EMAIL]"
-	got := redactedJoinedPrompts(context.Background(), []string{"raw prompt text"}, preRedacted)
+	got := redactedJoinedPrompts(
+		context.Background(),
+		[]string{"raw prompt text"},
+		redact.AlreadyRedactedJoinedPrompts(preRedacted),
+	)
 	assert.Equal(t, preRedacted, got, "preRedacted should pass through verbatim")
 }
 
-// TestRedactedJoinedPrompts_EmptyFallsBackToRedaction verifies that when
-// preRedacted is empty the helper joins the prompts and runs the full
-// pipeline as a safety net.
-func TestRedactedJoinedPrompts_EmptyFallsBackToRedaction(t *testing.T) {
+// TestRedactedJoinedPrompts_ZeroValueFallsBackToRedaction verifies that
+// when the typed preRedacted is the zero value the helper joins the
+// prompts and runs the full pipeline as a safety net.
+func TestRedactedJoinedPrompts_ZeroValueFallsBackToRedaction(t *testing.T) {
 	t.Parallel()
 
-	got := redactedJoinedPrompts(context.Background(), []string{"hello", "world"}, "")
-	assert.NotEmpty(t, got, "empty preRedacted should fall back to running the redaction pipeline")
+	got := redactedJoinedPrompts(context.Background(), []string{"hello", "world"}, redact.RedactedJoinedPrompts{})
+	assert.NotEmpty(t, got, "zero-value preRedacted should fall back to running the redaction pipeline")
 	assert.Contains(t, got, PromptSeparator, "fallback output should preserve the prompt separator")
 }

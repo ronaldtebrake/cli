@@ -609,7 +609,7 @@ func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommitt
 	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
 
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return 0, fmt.Errorf("failed to create prompt blob: %w", err)
@@ -903,7 +903,7 @@ func (s *V2GitStore) writeMainSessionToSubdirectory(ctx context.Context, opts Wr
 
 	// Write prompts
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err

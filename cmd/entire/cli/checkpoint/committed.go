@@ -418,11 +418,11 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 	}
 
 	// Write prompts. Uses the full 8-layer pipeline (including OPF) via
-	// redactedJoinedPrompts; the helper trusts opts.PromptsRedactedContent
-	// when present so callers (finalizeAllTurnCheckpoints) that pre-redact
-	// once across multiple checkpoint writes don't pay OPF per checkpoint.
+	// redactedJoinedPrompts; the helper unwraps opts.PromptsRedacted when
+	// set so callers (finalizeAllTurnCheckpoints) that pre-redact once
+	// across multiple checkpoint writes don't pay OPF per checkpoint.
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err
@@ -1403,10 +1403,10 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 		}
 	}
 
-	// Replace prompts (apply redaction as safety net; trusts
-	// opts.PromptsRedactedContent verbatim when set).
+	// Replace prompts (apply redaction as safety net; unwraps
+	// opts.PromptsRedacted when set).
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return fmt.Errorf("failed to create prompt blob: %w", err)

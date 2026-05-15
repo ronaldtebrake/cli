@@ -86,19 +86,6 @@ func getOPFConfig() *OPFConfig {
 	return opfConfig
 }
 
-// GetOPFConfigForTest returns the current OPF configuration, or nil if
-// never configured. The "ForTest" suffix signals test-only intent — callers
-// must be limited to test files in other packages.
-func GetOPFConfigForTest() *OPFConfig {
-	return getOPFConfig()
-}
-
-// ResetOPFConfigForTest clears configuration and the circuit breaker. Used
-// by tests in other packages to return to a "never configured" state.
-func ResetOPFConfigForTest() {
-	resetOPFConfig()
-}
-
 func resetOPFConfig() {
 	opfConfigMu.Lock()
 	opfConfig = nil

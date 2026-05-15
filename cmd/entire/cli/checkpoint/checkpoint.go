@@ -222,16 +222,21 @@ type WriteCommittedOptions struct {
 	// Must be pre-redacted (via redact.JSONLBytes or redact.AlreadyRedacted for trusted sources).
 	Transcript redact.RedactedBytes
 
-	// Prompts contains user prompts from the session
+	// Prompts contains the raw user prompts from the session. These are NOT
+	// guaranteed to be redacted on entry — the writer always emits the typed
+	// PromptsRedacted blob below (running the safety-net pipeline if it is
+	// the zero value). Do not read Prompts independently for persistence; go
+	// through redactJoinedPrompts so the redaction guarantee is preserved.
 	Prompts []string
 
-	// PromptsRedactedContent, if non-empty, is the pre-redacted joined-prompts
-	// blob content (output of JoinPrompts(Prompts) after running the full
-	// 8-layer pipeline). When set, the writer skips its safety-net redaction
-	// and uses this content directly. Used by finalizeAllTurnCheckpoints to
-	// avoid running the OpenAI Privacy Filter once per checkpoint over
-	// identical joined-prompt strings.
-	PromptsRedactedContent string
+	// PromptsRedacted, when set, is the pre-redacted joined-prompts blob the
+	// writer uses verbatim instead of re-running the safety-net pipeline.
+	// Used by finalizeAllTurnCheckpoints to avoid running the OpenAI
+	// Privacy Filter once per checkpoint over identical joined-prompt
+	// strings. The typed wrapper makes the "this content was produced by
+	// the redaction pipeline" claim a compile-time invariant — callers
+	// cannot assign an arbitrary string.
+	PromptsRedacted redact.RedactedJoinedPrompts
 
 	// FilesTouched are files modified during the session
 	FilesTouched []string
@@ -361,13 +366,15 @@ type UpdateCommittedOptions struct {
 	// Must be pre-redacted (via redact.JSONLBytes or redact.AlreadyRedacted for trusted sources).
 	Transcript redact.RedactedBytes
 
-	// Prompts contains all user prompts (replaces existing)
+	// Prompts contains the raw user prompts (replaces existing). NOT
+	// guaranteed to be redacted on entry — see WriteCommittedOptions.Prompts
+	// for the relationship to PromptsRedacted.
 	Prompts []string
 
-	// PromptsRedactedContent, if non-empty, is the pre-redacted joined-prompts
-	// blob content. When set, the writer skips its safety-net redaction.
-	// See WriteCommittedOptions.PromptsRedactedContent for rationale.
-	PromptsRedactedContent string
+	// PromptsRedacted, when set, is the pre-redacted joined-prompts blob
+	// the writer uses verbatim instead of re-running the safety-net
+	// pipeline. See WriteCommittedOptions.PromptsRedacted for rationale.
+	PromptsRedacted redact.RedactedJoinedPrompts
 
 	// Agent identifies the agent type (needed for transcript chunking)
 	Agent types.AgentType

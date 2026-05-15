@@ -2764,11 +2764,10 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (including OPF shell-out) over identical input. The original code
 	// here ran redact.String per prompt, which produced a per-prompt
 	// OPF call once OPF was wired up; pre-joining + one call collapses
-	// that to a single OPF invocation per finalize.
-	var redactedJoinedPromptContent string
-	if len(prompts) > 0 {
-		redactedJoinedPromptContent = redact.StringWithPrivacyFilter(logCtx, checkpoint.JoinPrompts(prompts))
-	}
+	// that to a single OPF invocation per finalize. The typed return
+	// value carries a compile-time claim that the content has been
+	// through the pipeline.
+	redactedPrompts := redact.JoinedPrompts(logCtx, prompts, checkpoint.PromptSeparator)
 
 	store := checkpoint.NewGitStore(repo)
 	v2 := settings.CheckpointsVersion(logCtx) == 2
@@ -2821,13 +2820,13 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		}
 
 		updateOpts := checkpoint.UpdateCommittedOptions{
-			CheckpointID:           cpID,
-			SessionID:              state.SessionID,
-			Transcript:             redactedTranscript,
-			Prompts:                prompts,
-			PromptsRedactedContent: redactedJoinedPromptContent,
-			Agent:                  state.AgentType,
-			PrecomputedBlobs:       precomputed,
+			CheckpointID:     cpID,
+			SessionID:        state.SessionID,
+			Transcript:       redactedTranscript,
+			Prompts:          prompts,
+			PromptsRedacted:  redactedPrompts,
+			Agent:            state.AgentType,
+			PrecomputedBlobs: precomputed,
 		}
 
 		// Generate compact transcript for v2 /main

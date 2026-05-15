@@ -30,15 +30,15 @@ func SplitPromptContent(content string) []string {
 }
 
 // redactedJoinedPrompts returns the redacted prompt-blob content for the
-// supplied prompts. When preRedacted is non-empty it is trusted and returned
-// verbatim; otherwise the prompts are joined and run through the full
-// 8-layer pipeline as a safety net. Callers that share the same prompts
-// across multiple checkpoint writes (finalizeAllTurnCheckpoints) should
-// compute the redacted content once and pass it via preRedacted to avoid
-// running OPF repeatedly over identical input.
-func redactedJoinedPrompts(ctx context.Context, prompts []string, preRedacted string) string {
-	if preRedacted != "" {
-		return preRedacted
+// supplied prompts. When preRedacted is set it is unwrapped verbatim;
+// otherwise the prompts are joined and run through the full 8-layer
+// pipeline as a safety net. Callers that share the same prompts across
+// multiple checkpoint writes (finalizeAllTurnCheckpoints) should compute
+// the redacted blob once via redact.JoinedPrompts and pass it through to
+// avoid running OPF repeatedly over identical input.
+func redactedJoinedPrompts(ctx context.Context, prompts []string, preRedacted redact.RedactedJoinedPrompts) string {
+	if preRedacted.IsSet() {
+		return preRedacted.String()
 	}
-	return redact.StringWithPrivacyFilter(ctx, JoinPrompts(prompts))
+	return redact.JoinedPrompts(ctx, prompts, PromptSeparator).String()
 }
