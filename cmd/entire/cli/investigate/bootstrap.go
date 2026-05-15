@@ -65,13 +65,16 @@ func DeriveTopicFromSeed(body []byte, fallbackFilename string) string {
 // doc on disk.
 //
 // Exactly one of SeedDoc / Topic / IssueLinkSeed must be set:
-//   - SeedDoc:       the user passed a positional [seed-doc] path; copy
-//     its bytes verbatim into the findings doc and derive
-//     the topic from the body (or filename).
-//   - Topic only:    the user passed --topic; render the scaffold.
+//   - SeedDoc:       the user passed a positional [seed-doc] path; render
+//     the scaffold and embed the seed bytes under the
+//     `## Question` section. Topic is derived from the
+//     body (or filename).
+//   - Topic only:    the user passed --topic; render the scaffold with
+//     the topic printed under `## Question`.
 //   - IssueLinkSeed: the user passed --issue-link; ResolveIssueLink
-//     already produced a markdown body — use it as the
-//     seed and use IssueLinkTopic as the topic.
+//     already produced a markdown body — render the
+//     scaffold and embed those bytes under `## Question`,
+//     using IssueLinkTopic as the topic.
 type BootstrapInput struct {
 	// SeedDoc is the absolute path to a user-provided seed file. Empty
 	// when no seed was passed.
@@ -137,19 +140,34 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 		if err != nil {
 			return BootstrapResult{}, fmt.Errorf("read seed doc: %w", err)
 		}
-		body = seedBytes
 		topic = DeriveTopicFromSeed(seedBytes, in.SeedDoc)
+		body = []byte(renderInvestigationScaffold(
+			topic,
+			time.Now().UTC().Format("2006-01-02"),
+			in.PriorEntireContext,
+			string(seedBytes),
+		))
 
 	case len(in.IssueLinkSeed) > 0:
-		body = in.IssueLinkSeed
 		topic = in.IssueLinkTopic
 		if topic == "" {
 			topic = DeriveTopicFromSeed(in.IssueLinkSeed, in.FindingsDoc)
 		}
+		body = []byte(renderInvestigationScaffold(
+			topic,
+			time.Now().UTC().Format("2006-01-02"),
+			in.PriorEntireContext,
+			string(in.IssueLinkSeed),
+		))
 
 	case in.Topic != "":
 		topic = in.Topic
-		body = []byte(renderInvestigationScaffold(in.Topic, time.Now().UTC().Format("2006-01-02"), in.PriorEntireContext))
+		body = []byte(renderInvestigationScaffold(
+			in.Topic,
+			time.Now().UTC().Format("2006-01-02"),
+			in.PriorEntireContext,
+			"",
+		))
 
 	default:
 		return BootstrapResult{}, errors.New("Bootstrap: one of SeedDoc, Topic, or IssueLinkSeed is required")
@@ -158,7 +176,7 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 	if err := os.MkdirAll(filepath.Dir(in.FindingsDoc), 0o750); err != nil {
 		return BootstrapResult{}, fmt.Errorf("create findings dir: %w", err)
 	}
-	//nolint:gosec // FindingsDoc is a caller-provided path; the loop driver controls it.
+
 	if err := os.WriteFile(in.FindingsDoc, body, 0o600); err != nil {
 		return BootstrapResult{}, fmt.Errorf("write findings doc: %w", err)
 	}
@@ -169,16 +187,25 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 	}, nil
 }
 
-// renderInvestigationScaffold returns the topic-only scaffold body.
+// renderInvestigationScaffold returns the investigation scaffold body.
 //
 // The doc is a richer multi-section investigation template — TLDR (current
 // best answer), Question, Prior work, System under investigation, Approach,
 // Findings, Unknowns / Assumptions, Conclusion. Agents append findings and
 // evidence each turn until they converge on the Conclusion.
-func renderInvestigationScaffold(topic, createdISODate, priorEntireContext string) string {
+//
+// When questionBody is non-empty (seed-doc or issue-link paths), it is
+// printed verbatim under `## Question`. When empty (topic-only path), the
+// topic itself is printed under `## Question`. Trailing whitespace on
+// questionBody is trimmed to keep section spacing consistent.
+func renderInvestigationScaffold(topic, createdISODate, priorEntireContext, questionBody string) string {
 	priorSection := ""
 	if strings.TrimSpace(priorEntireContext) != "" {
 		priorSection = "## Prior Entire Context\n\n" + strings.TrimSpace(priorEntireContext) + "\n\n"
+	}
+	question := strings.TrimRight(questionBody, " \t\r\n")
+	if question == "" {
+		question = topic
 	}
 	return fmt.Sprintf(`# Investigation: %s
 
@@ -230,5 +257,5 @@ test output, or direct quotes. -->
 
 <!-- Filled in once consensus is reached. Stop here. Recommendations and
 action items belong in a plan, not an investigation. -->
-`, topic, createdISODate, topic, priorSection)
+`, topic, createdISODate, question, priorSection)
 }

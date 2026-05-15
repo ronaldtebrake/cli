@@ -8,12 +8,62 @@ import (
 	"testing"
 )
 
-func TestBootstrap_SeedDocPassthrough(t *testing.T) {
+func TestBootstrap_SeedDocEmbedsQuestionBody(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	seedPath := filepath.Join(dir, "seed.md")
-	seed := "# Investigation: Why does checkout retry forever?\n\n## Question\n\nDetails…\n"
+	seed := "Q: why is X broken?\n"
+	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	findings := filepath.Join(dir, "out", "findings.md")
+
+	res, err := Bootstrap(context.Background(), BootstrapInput{
+		SeedDoc:     seedPath,
+		FindingsDoc: findings,
+	})
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	if res.Topic != "seed" {
+		t.Errorf("Topic = %q, want derived from filename", res.Topic)
+	}
+
+	gotFindings, err := os.ReadFile(findings)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	got := string(gotFindings)
+	for _, want := range []string{
+		"# Investigation: seed",
+		"## TLDR",
+		"## Question",
+		"Q: why is X broken?",
+		"## Findings",
+		"## Conclusion",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scaffold missing %q\nGOT:\n%s", want, got)
+		}
+	}
+
+	// The seed body should land under `## Question`, before `## Prior work`.
+	idxQuestion := strings.Index(got, "## Question")
+	idxSeed := strings.Index(got, "Q: why is X broken?")
+	idxPriorWork := strings.Index(got, "## Prior work")
+	if idxQuestion >= idxSeed || idxSeed >= idxPriorWork {
+		t.Errorf("expected Question < seed-body < Prior work, got %d < %d < %d", idxQuestion, idxSeed, idxPriorWork)
+	}
+}
+
+func TestBootstrap_SeedDocDerivesTopicFromInvestigationHeading(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "seed.md")
+	seed := "# Investigation: Why does checkout retry forever?\n\nbody text\n"
 	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
@@ -35,8 +85,12 @@ func TestBootstrap_SeedDocPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}
-	if string(gotFindings) != seed {
-		t.Errorf("findings doc not verbatim copy of seed:\nGOT:\n%s\nWANT:\n%s", gotFindings, seed)
+	got := string(gotFindings)
+	if !strings.Contains(got, "# Investigation: Why does checkout retry forever?") {
+		t.Errorf("findings missing scaffold title with derived topic\nGOT:\n%s", got)
+	}
+	if !strings.Contains(got, "body text") {
+		t.Errorf("findings missing seed body content\nGOT:\n%s", got)
 	}
 }
 
@@ -120,13 +174,13 @@ func TestBootstrap_TopicScaffoldWithPriorEntireContext(t *testing.T) {
 	}
 }
 
-func TestBootstrap_IssueLinkSeed(t *testing.T) {
+func TestBootstrap_IssueLinkSeedEmbedsQuestionBody(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	findings := filepath.Join(dir, "findings.md")
 
-	seedBytes := []byte("# Investigation: gh#42 — checkout times out\n\n**Source:** https://github.com/o/r/issues/42\n\n## Question\n\nbody…\n")
+	seedBytes := []byte("**Source:** https://github.com/o/r/issues/42\n\nIssue body: checkout times out under load.\n")
 	res, err := Bootstrap(context.Background(), BootstrapInput{
 		IssueLinkSeed:  seedBytes,
 		IssueLinkTopic: "checkout times out",
@@ -143,8 +197,83 @@ func TestBootstrap_IssueLinkSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}
-	if string(body) != string(seedBytes) {
-		t.Errorf("findings doc not verbatim copy of issue-link bytes")
+	got := string(body)
+	for _, want := range []string{
+		"# Investigation: checkout times out",
+		"## TLDR",
+		"## Question",
+		"**Source:** https://github.com/o/r/issues/42",
+		"Issue body: checkout times out under load.",
+		"## Findings",
+		"## Conclusion",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scaffold missing %q\nGOT:\n%s", want, got)
+		}
+	}
+
+	// Issue body must appear under `## Question`, before `## Prior work`.
+	idxQuestion := strings.Index(got, "## Question")
+	idxIssue := strings.Index(got, "Issue body: checkout times out under load.")
+	idxPriorWork := strings.Index(got, "## Prior work")
+	if idxQuestion >= idxIssue || idxIssue >= idxPriorWork {
+		t.Errorf("expected Question < issue-body < Prior work, got %d < %d < %d", idxQuestion, idxIssue, idxPriorWork)
+	}
+}
+
+func TestBootstrap_TopicOnlyUsesTopicAsQuestion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "findings.md")
+
+	_, err := Bootstrap(context.Background(), BootstrapInput{
+		Topic:       "Why is checkout flaky?",
+		FindingsDoc: findings,
+	})
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	body, err := os.ReadFile(findings)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	got := string(body)
+
+	// The topic appears under `## Question` (between Question and the next
+	// section). Confirm the topic is not blank by checking it appears after
+	// the Question heading and before Prior work.
+	idxQuestion := strings.Index(got, "## Question")
+	idxTopic := strings.Index(got[idxQuestion:], "Why is checkout flaky?")
+	if idxQuestion < 0 || idxTopic < 0 {
+		t.Fatalf("expected topic to appear under Question section\nGOT:\n%s", got)
+	}
+}
+
+func TestRenderInvestigationScaffold_EmptyQuestionBodyFallsBackToTopic(t *testing.T) {
+	t.Parallel()
+
+	out := renderInvestigationScaffold("My topic", "2026-01-01", "", "")
+	// Topic must appear under `## Question`.
+	idxQuestion := strings.Index(out, "## Question")
+	if idxQuestion < 0 {
+		t.Fatalf("scaffold missing `## Question`\nGOT:\n%s", out)
+	}
+	rest := out[idxQuestion:]
+	if !strings.Contains(rest, "My topic") {
+		t.Errorf("expected topic to appear under Question section when questionBody is empty\nGOT:\n%s", out)
+	}
+}
+
+func TestRenderInvestigationScaffold_TrimsQuestionBodyTrailingWhitespace(t *testing.T) {
+	t.Parallel()
+
+	out := renderInvestigationScaffold("My topic", "2026-01-01", "", "Some seed body\n\n\n   ")
+	// After the seed body content there should be exactly one blank line
+	// followed by `## Prior work` (no stacked blanks from un-trimmed input).
+	if !strings.Contains(out, "Some seed body\n\n## Prior work") {
+		t.Errorf("expected trimmed question body followed by single blank line + Prior work\nGOT:\n%s", out)
 	}
 }
 
