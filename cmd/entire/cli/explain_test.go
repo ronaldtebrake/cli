@@ -2228,6 +2228,72 @@ func TestRunExplainCheckpoint_V2EnabledV1FallbackPreservesTranscriptOffset(t *te
 	require.NotContains(t, buf.String(), "old prompt before checkpoint")
 }
 
+func TestRunExplainCheckpoint_GenerateV1OnlyDualModeReloadsFromV1(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, ".entire", "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}, "summary_generation": {"provider": "claude-code"}}`),
+		0o644,
+	))
+
+	originalGet := getSummaryAgent
+	originalCLI := isSummaryCLIAvailable
+	originalDiscover := discoverSummaryProviders
+	originalGenerate := generateTranscriptSummary
+	t.Cleanup(func() {
+		getSummaryAgent = originalGet
+		isSummaryCLIAvailable = originalCLI
+		discoverSummaryProviders = originalDiscover
+		generateTranscriptSummary = originalGenerate
+	})
+
+	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
+		return &stubTextAgent{name: name, kind: agent.AgentTypeClaudeCode}, nil
+	}
+	isSummaryCLIAvailable = func(types.AgentName) bool { return true }
+	discoverSummaryProviders = func(context.Context) {}
+
+	var sawV1Transcript bool
+	generateTranscriptSummary = func(
+		_ context.Context,
+		transcript redact.RedactedBytes,
+		_ []string,
+		_ types.AgentType,
+		_ summarize.Generator,
+	) (*checkpoint.Summary, error) {
+		sawV1Transcript = strings.Contains(string(transcript.Bytes()), "v1-only generate prompt")
+		return &checkpoint.Summary{Intent: "generated intent", Outcome: "generated outcome"}, nil
+	}
+
+	cpID := id.MustCheckpointID("ab12ab12ab12")
+	ctx := context.Background()
+	require.NoError(t, checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-v1-only-generate",
+		Strategy:     "manual-commit",
+		Transcript: redact.AlreadyRedacted([]byte(
+			`{"type":"user","message":{"content":[{"type":"text","text":"v1-only generate prompt"}]}}` + "\n" +
+				`{"type":"assistant","message":{"content":"done"}}` + "\n",
+		)),
+		AuthorName:  "Test",
+		AuthorEmail: "test@example.com",
+		Agent:       agent.AgentTypeClaudeCode,
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err = runExplainCheckpoint(ctx, &buf, &errBuf, "ab12ab", false, false, false, false, true, true, false, 0)
+	require.NoError(t, err)
+	require.True(t, sawV1Transcript, "summary generation should use v1 raw transcript")
+	require.Contains(t, buf.String(), "generated intent")
+}
+
 func TestRunExplainCheckpoint_V2PreferredGenerateWritesBothStores(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
