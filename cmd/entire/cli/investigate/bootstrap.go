@@ -241,7 +241,13 @@ mermaid both fine. Two boxes and an arrow beats a paragraph. -->
 
 ## Approach
 
-<!-- Each agent describes how they investigated. Append, don't overwrite. -->
+<!-- A concise summary (3-5 sentences) of how the investigation was
+conducted: the key queries, files read, hypotheses formed, and
+hypotheses ruled out. Edit in place each turn — replace stale text,
+keep the section tight. NO per-agent attribution; NO per-turn entries
+("claude-code (round 1):" / "codex (round 2):"). The reasoning trail
+lives in the agent session transcripts on entire/checkpoints/v1; run
+`+"`entire checkpoint explain <id>`"+` to retrieve it. -->
 
 ## Findings
 
