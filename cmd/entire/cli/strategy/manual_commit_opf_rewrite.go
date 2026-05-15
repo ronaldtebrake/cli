@@ -248,6 +248,13 @@ func listUnpushedV1Commits(repo *git.Repository, localTip, remoteTip plumbing.Ha
 // rebuildV1Commit re-parents the commit onto parent. Already-applied
 // commits keep their tree (idempotent); unapplied commits get an
 // OPF-redacted tree + Entire-OPF-Applied: true trailer.
+//
+// Performance: we only redact files inside THIS commit's shard
+// (sharded layout: <id[:2]>/<id[2:]>/*). Files outside that shard live
+// at the same tree because git trees accumulate parent content — they
+// belong to other commits and either are already redacted (prior
+// OPF-applied push) or never will be (this user opted out then in).
+// Walking them every push is O(N×commits) work for no privacy gain.
 func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *object.Commit, parent plumbing.Hash) (plumbing.Hash, error) {
 	newTree := oldCommit.TreeHash
 	if !trailers.HasOPFApplied(oldCommit.Message) {
@@ -255,7 +262,12 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("load tree: %w", err)
 		}
-		newTree, err = rebuildTreeWithOPF(ctx, repo, tree, "")
+		// Parse the shard path from the commit subject. Falls back to
+		// "" (walk everything) for bootstrap commits and unrecognized
+		// subjects — the conservative default still produces correct
+		// output, just slower.
+		shardPath := parseShardPathFromCommitMessage(oldCommit.Message)
+		newTree, err = rebuildTreeWithOPF(ctx, repo, tree, "", shardPath)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
@@ -283,15 +295,43 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 	return hash, nil
 }
 
+// parseShardPathFromCommitMessage extracts the sharded path
+// "<id[:2]>/<id[2:]>" from a "Checkpoint: <id>" subject line.
+// Returns "" when the subject doesn't match (bootstrap commits, or
+// historical commits with a different format) — callers walk the
+// whole tree in that case.
+func parseShardPathFromCommitMessage(message string) string {
+	firstLine, _, _ := strings.Cut(message, "\n")
+	const prefix = "Checkpoint: "
+	if !strings.HasPrefix(firstLine, prefix) {
+		return ""
+	}
+	id := strings.TrimSpace(firstLine[len(prefix):])
+	if len(id) != 12 {
+		return ""
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return id[:2] + "/" + id[2:]
+}
+
 // rebuildTreeWithOPF walks a tree and produces a new tree with
 // OPF-redacted file blobs. content_hash.txt files are recomputed in a
 // second pass against the new full.jsonl in the same directory.
 //
-// Path-specific behavior:
+// shardPath scopes the walk: only files at paths starting with
+// shardPath get redacted; other shards (and the root-level entries
+// outside the shard) are copied verbatim. Empty shardPath means walk
+// everything (used for bootstrap/unknown-subject commits).
+//
+// Path-specific behavior (when in the target shard):
 //   - *.jsonl, *.txt → redacted via checkpoint.RedactBlobBytes (OPF on)
 //   - content_hash.txt → SHA256 of the sibling full.jsonl's new bytes
 //   - other files (metadata.json, *.json) → copied verbatim (no user text)
-func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.Tree, pathPrefix string) (plumbing.Hash, error) {
+func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.Tree, pathPrefix, shardPath string) (plumbing.Hash, error) {
 	entries := make([]object.TreeEntry, 0, len(tree.Entries))
 	// deferredHashes records indexes of content_hash.txt entries we
 	// need to recompute after the full.jsonl in the same dir is built.
@@ -306,21 +346,35 @@ func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.
 	for _, e := range tree.Entries {
 		switch e.Mode { //nolint:exhaustive // non-tree/blob modes fall through to copy
 		case filemode.Dir:
-			subTree, err := repo.TreeObject(e.Hash)
-			if err != nil {
-				return plumbing.ZeroHash, fmt.Errorf("load subtree %s/%s: %w", pathPrefix, e.Name, err)
-			}
 			subPath := e.Name
 			if pathPrefix != "" {
 				subPath = pathPrefix + "/" + e.Name
 			}
-			newSub, err := rebuildTreeWithOPF(ctx, repo, subTree, subPath)
+			// Shard-scoping: only descend into directories that lead
+			// to the target shard, the shard itself, or its
+			// descendants. Other shard subtrees stay byte-identical.
+			if !shouldDescend(subPath, shardPath) {
+				entries = append(entries, e)
+				continue
+			}
+			subTree, err := repo.TreeObject(e.Hash)
+			if err != nil {
+				return plumbing.ZeroHash, fmt.Errorf("load subtree %s/%s: %w", pathPrefix, e.Name, err)
+			}
+			newSub, err := rebuildTreeWithOPF(ctx, repo, subTree, subPath, shardPath)
 			if err != nil {
 				return plumbing.ZeroHash, err
 			}
 			entries = append(entries, object.TreeEntry{Name: e.Name, Mode: e.Mode, Hash: newSub})
 
 		case filemode.Regular, filemode.Executable:
+			// Outside the target shard: copy verbatim. Inside (or when
+			// shardPath is empty for the bootstrap fallback): redact
+			// per file type.
+			if !insideShard(pathPrefix, shardPath) {
+				entries = append(entries, e)
+				continue
+			}
 			switch {
 			case e.Name == paths.ContentHashFileName:
 				deferredHashes = append(deferredHashes, deferred{idx: len(entries), entryName: e.Name, entryMode: e.Mode})
@@ -373,6 +427,40 @@ func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.
 		return plumbing.ZeroHash, fmt.Errorf("store tree: %w", err)
 	}
 	return hash, nil
+}
+
+// shouldDescend reports whether the walker should recurse into a
+// directory at path. With an empty shardPath we descend everywhere
+// (bootstrap fallback). Otherwise we descend only into the target
+// shard, its ancestors (so we can reach it), and its descendants.
+func shouldDescend(path, shardPath string) bool {
+	if shardPath == "" || path == "" {
+		// shardPath="" means "no scoping" (bootstrap fallback);
+		// path=="" is the root, which is the ancestor of every shard.
+		return true
+	}
+	if path == shardPath {
+		return true
+	}
+	// ancestor of shardPath: shardPath starts with path + "/"
+	if strings.HasPrefix(shardPath+"/", path+"/") {
+		return true
+	}
+	// descendant of shardPath: path starts with shardPath + "/"
+	return strings.HasPrefix(path+"/", shardPath+"/")
+}
+
+// insideShard reports whether file blobs at pathPrefix should be
+// redacted. Empty shardPath means "redact everywhere"; otherwise the
+// path must equal shardPath or be a descendant of it.
+func insideShard(pathPrefix, shardPath string) bool {
+	if shardPath == "" {
+		return true
+	}
+	if pathPrefix == shardPath {
+		return true
+	}
+	return strings.HasPrefix(pathPrefix+"/", shardPath+"/")
 }
 
 func readBlob(repo *git.Repository, hash plumbing.Hash) ([]byte, error) {

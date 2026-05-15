@@ -310,6 +310,70 @@ func TestRewriteUnpushedV1WithOPF_BootstrapCap(t *testing.T) {
 	}
 }
 
+// Shard scoping: the rewrite only touches files inside the current
+// commit's own shard. Files belonging to other shards (sitting in the
+// cumulative tree because git trees accumulate) are copied verbatim,
+// so a push doesn't pay O(N) OPF cold-starts per commit.
+func TestParseShardPathFromCommitMessage(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, msg, want string
+	}{
+		{name: "valid", msg: "Checkpoint: a1b2c3d4e5f6\n\nEntire-Session: s\n", want: "a1/b2c3d4e5f6"},
+		{name: "trailing_space", msg: "Checkpoint: a1b2c3d4e5f6   \n", want: "a1/b2c3d4e5f6"},
+		{name: "missing_prefix", msg: "Initialize sessions branch\n", want: ""},
+		{name: "too_short", msg: "Checkpoint: abc123\n", want: ""},
+		{name: "uppercase_rejected", msg: "Checkpoint: A1B2C3D4E5F6\n", want: ""},
+		{name: "non_hex", msg: "Checkpoint: gghhiijjkkll\n", want: ""},
+		{name: "empty_message", msg: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, parseShardPathFromCommitMessage(tc.msg))
+		})
+	}
+}
+
+// Shard-scoping invariants: descend into ancestors-of, the target, and
+// descendants-of the target shard; copy everything else verbatim.
+func TestShouldDescendAndInsideShard(t *testing.T) {
+	t.Parallel()
+	const shard = "a1/b2c3d4e5f6"
+	cases := []struct {
+		name    string
+		path    string
+		descend bool
+		inside  bool
+	}{
+		{name: "root_is_ancestor", path: "", descend: true, inside: false},
+		{name: "shard_prefix_is_ancestor", path: "a1", descend: true, inside: false},
+		{name: "shard_root_is_target", path: shard, descend: true, inside: true},
+		{name: "session_subdir_is_descendant", path: shard + "/0", descend: true, inside: true},
+		{name: "deeper_descendant", path: shard + "/0/tasks", descend: true, inside: true},
+		{name: "sibling_shard_prefix", path: "b2", descend: false, inside: false},
+		{name: "sibling_shard_full", path: "b2/c3d4e5f6a1a2", descend: false, inside: false},
+		{name: "partial_overlap_not_ancestor", path: "a1/zzz", descend: false, inside: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.descend, shouldDescend(tc.path, shard), "shouldDescend")
+			require.Equal(t, tc.inside, insideShard(tc.path, shard), "insideShard")
+		})
+	}
+}
+
+// Empty shardPath = no scoping (bootstrap / unrecognized-subject
+// fallback): descend everywhere, redact everywhere.
+func TestShardScopeEmptyShardPathIsPermissive(t *testing.T) {
+	t.Parallel()
+	require.True(t, shouldDescend("anything/anywhere", ""))
+	require.True(t, insideShard("anything/anywhere", ""))
+	require.True(t, shouldDescend("", ""))
+	require.True(t, insideShard("", ""))
+}
+
 // Fail-closed regression: when the OPF runtime fails and the breaker
 // trips, the rewrite must NOT CAS the ref. Otherwise the new commits
 // would carry Entire-OPF-Applied: true while their content is 7-layer
