@@ -62,7 +62,7 @@ If a custom pattern itself reveals sensitive structure (e.g. an internal ID form
 
 ### Optional OpenAI Privacy Filter (`opf`)
 
-A separate, **opt-in** layer that shells out to the [OpenAI Privacy Filter](https://github.com/openai/privacy-filter) (`opf`) — a 1.5B-parameter token-classification model that finds names, emails, phone numbers, addresses, dates, URLs, account numbers, and secrets that pure regex can miss. Disabled by default. Runs *in addition to* the seven built-in layers, only at the condensation and export boundaries (never per-turn), so the agent loop's hot path stays on the fast pipeline.
+A separate, **opt-in** layer that shells out to the [OpenAI Privacy Filter](https://github.com/openai/privacy-filter) (`opf`) — a 1.5B-parameter token-classification model that finds names, emails, phone numbers, addresses, dates, URLs, account numbers, and secrets that pure regex can miss. Disabled by default. Runs *in addition to* the seven built-in layers, **only at push time** — never per-turn and never at commit time. Local commits stay on the fast 7-layer pipeline so per-commit latency is unchanged; OPF only re-redacts checkpoints right before they leave the machine via `git push`.
 
 Prerequisites:
 
@@ -131,19 +131,74 @@ Full settings reference:
 
 There is no `on_failure` setting; warn-on-failure is the only mode supported today. If OPF is not on PATH, fails to start, or times out, Entire prints a one-line `× OpenAI Privacy Filter unavailable …` notice and continues with the seven built-in layers. A per-process circuit breaker disables OPF for the remainder of the invocation after the first failure, so a broken install costs one warning rather than one timeout per redaction call.
 
-Cost note: each shell-out loads the OPF model (~1.5B parameters on CPU). Condensation batches all eligible leaf strings into a single inference pass per scope (transcript + joined prompts), so a typical real-world commit adds ~25–30s of OPF inference rather than the multi-minute cost a per-leaf flow would incur.
+Cost note: each shell-out loads the OPF model (~1.5B parameters on CPU). The pre-push rewrite batches all eligible leaf strings into a single inference pass per scope (transcript + joined prompts), so a typical real-world push adds ~25–30s of OPF inference rather than the multi-minute cost a per-leaf flow would incur. Per-commit latency is unaffected because OPF doesn't run at commit time.
+
+#### When OPF actually runs
+
+OPF execution lives in the pre-push hook. The flow:
+
+1. **Post-commit** writes the checkpoint with **7-layer-only** redaction to your local `entire/checkpoints/v1` branch. Fast, predictable, no OPF cost on the hot path.
+2. **Pre-push** (`git push`): if OPF is enabled, the hook re-reads each unpushed `entire/checkpoints/v1` commit, runs the OpenAI Privacy Filter over its blobs to add the categories the regex layers don't catch (person names, addresses, etc.), and builds **new commits** carrying an `Entire-OPF-Applied: true` trailer. The local v1 ref fast-forwards atomically to the new tip, and the (now 8-layer-redacted) commits are what get pushed.
+3. The original 7-layer-only commits become **unreachable** in the local git object database and eventually get swept by `git gc`.
+
+This means:
+
+- **The remote only ever sees 8-layer-redacted content** when OPF is enabled.
+- **Local-only commits are 7-layer-redacted** until the moment you push. If you never push, OPF never runs.
+- **Re-running pre-push is idempotent** — commits already carrying the trailer get re-parented into the chain but are not re-redacted.
+
+#### Force-pushed remote, bootstrap, and concurrent pushes
+
+The rewrite refuses to proceed and aborts the push when it detects a divergent state, so checkpoints on the remote are never silently rebased:
+
+- **Diverged remote**: if local `entire/checkpoints/v1` has commits that aren't ancestors of `<remote>/entire/checkpoints/v1`, the hook exits with a `entire/checkpoints/v1 has diverged from remote` error. Fetch the remote and either reset local v1 to the remote tip or resolve manually before pushing.
+- **Bootstrap** (remote has no `entire/checkpoints/v1` yet, e.g. first push): the cap is `100` unpushed commits by default. Override via the env var on the push invocation:
+
+  ```fish
+  set -x ENTIRE_OPF_BOOTSTRAP_LIMIT 500; git push
+  # or fully unbounded:
+  set -x ENTIRE_OPF_BOOTSTRAP_LIMIT unlimited; git push
+  ```
+
+- **Concurrent push** from another worktree: the rewrite uses a CAS to update the local v1 ref. If another process moved the ref while OPF was running, the hook exits with a "concurrent push detected" error and `git push` aborts the whole batch. Fetch and retry.
+
+#### Persistence of un-redacted-by-OPF content
+
+Three places retain content that OPF *didn't* redact, with different lifetimes. Understanding them matters if your threat model goes beyond "what reaches the remote":
+
+| Location | Redaction level | Lifetime | Reaches remote? |
+|---|---|---|---|
+| `.entire/<session>.jsonl` | **None — raw** | Until session is deleted (managed by the agent) | No |
+| Shadow branch `entire/<commit>-<worktree>` | 7-layer | Until session is condensed (and post-push cleanup, if enabled) | No |
+| Unreachable git objects after pre-push rewrite | 7-layer | Until `git gc --prune` (default `gc.pruneExpire` is 2 weeks) | No |
+| Reflog `git reflog show entire/checkpoints/v1` | 7-layer tips | Default `gc.reflogExpire` is 90 days | No |
+| `<remote>/entire/checkpoints/v1` | 8-layer (after OPF rewrite) | Until you delete the branch on the remote | Yes |
+
+The `.entire/<session>.jsonl` files are raw working state owned by the agent (Claude Code, etc.) — Entire reads from them but does not redact them in place, because the agent is reading and writing them continuously and editing under the agent's feet would corrupt the session.
+
+To aggressively scrub the unreachable git objects from the pre-push rewrite (instead of waiting for the 2-week GC window):
+
+```fish
+git reflog expire --expire-unreachable=now refs/heads/entire/checkpoints/v1
+git gc --prune=now
+```
+
+This is I/O-heavy on large repositories; it's not run automatically. If you want it as part of your push workflow, wrap `git push` in a script that invokes it after a successful push.
 
 Verifying it's working:
 
 ```fish
 # After enabling OPF, run an agent turn that includes a name in the prompt,
 # e.g. "Create notes.txt with: Alice Johnson reviewed the proposal."
-# Then commit and inspect the latest checkpoint:
+# Commit (this stays on the fast 7-layer pipeline), then push. OPF runs
+# during the pre-push step:
+git commit -m "demo"
+git push   # → "→ OpenAI Privacy Filter: scanning N checkpoints (~30s)…"
 git log --oneline entire/checkpoints/v1 | head -2
 entire checkpoint explain HEAD | grep -i 'REDACTED_PERSON'
 ```
 
-If `[REDACTED_PERSON]` appears in the prompt or transcript section, OPF is active.
+If `[REDACTED_PERSON]` appears in the prompt or transcript section and the latest `entire/checkpoints/v1` commit carries `Entire-OPF-Applied: true`, OPF is active.
 
 ### Recommendations
 

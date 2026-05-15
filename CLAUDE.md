@@ -442,6 +442,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - **Shadow branch migration** - if user does stash/pull/rebase (HEAD changes without commit), shadow branch is automatically moved to new base commit
 - **Orphaned branch cleanup** - if a shadow branch exists without a corresponding session state file, it is automatically reset when a new session starts
 - PrePush hook can push `entire/checkpoints/v1` branch alongside user pushes
+- **OPF (OpenAI Privacy Filter) runs at pre-push, not post-commit**: when `redaction.openai_privacy_filter.enabled` is true, the PrePush hook re-redacts unpushed `entire/checkpoints/v1` commits with the OPF 8th layer, builds new commits carrying an `Entire-OPF-Applied: true` trailer, and atomically updates the local v1 ref before pushing. Per-commit condensation stays on the fast 7-layer pipeline. See `strategy/manual_commit_opf_rewrite.go` and `docs/security-and-privacy.md` for the full flow, including divergence detection, bootstrap caps, and CAS-on-conflict semantics.
 - Safe to use on main/master since it never modifies commit history
 
 #### Key Files
@@ -450,6 +451,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - `common.go` - Helpers for metadata extraction, tree building, rewind validation, `ListCheckpoints()`
 - `session.go` - Session/checkpoint data structures
 - `push_common.go` - PrePush logic for pushing `entire/checkpoints/v1` branch
+- `manual_commit_opf_rewrite.go` - Pre-push OPF re-redaction: walks unpushed v1 commits, runs OPF over their blobs, rebuilds commits with `Entire-OPF-Applied: true` trailer, CAS-updates the local ref. Sentinel errors: `ErrV1Diverged`, `ErrBootstrapTooLarge`, `ErrV1RefMoved`.
 - `manual_commit.go` - Manual-commit strategy main implementation
 - `manual_commit_types.go` - Type definitions: `SessionState`, `CheckpointInfo`, `CondenseResult`
 - `manual_commit_session.go` - Session state management (load/save/list session states)

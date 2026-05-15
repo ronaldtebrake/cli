@@ -1725,11 +1725,13 @@ func (s *GitStore) copyMetadataDir(ctx context.Context, metadataDir, basePath st
 			return fmt.Errorf("path traversal detected: %s", relPath)
 		}
 
-		// Create blob from file with secrets redaction
-		// Committed-checkpoint write — run the full 8-layer pipeline
-		// including OPF. The per-turn temp-write path stays on plain
-		// redactors via the sibling createRedactedBlobFromFile.
-		blobHash, mode, err := createRedactedBlobFromFileWithPrivacyFilter(ctx, s.repo, path, relPath)
+		// Create blob from file with 7-layer secrets redaction.
+		// Post-commit emits 7-layer-only blobs; the OPF-capable variant
+		// (createRedactedBlobFromFileWithPrivacyFilter) is used later by
+		// the pre-push rewrite path, which re-redacts these blobs into
+		// 8-layer commits before they leave the local machine.
+		_ = ctx // ctx not needed by the 7-layer path; kept on caller signature for future use
+		blobHash, mode, err := createRedactedBlobFromFile(s.repo, path, relPath)
 		if err != nil {
 			return fmt.Errorf("failed to create blob for %s: %w", path, err)
 		}
@@ -1751,22 +1753,13 @@ func (s *GitStore) copyMetadataDir(ctx context.Context, metadataDir, basePath st
 }
 
 // createRedactedBlobFromFile reads a file, applies the 7-layer redaction
-// pipeline, and creates a git blob. Used by per-turn temporary-checkpoint
-// writes — the OpenAI Privacy Filter is intentionally NOT run here to
-// keep per-turn latency inside the agent loop's budget.
+// pipeline, and creates a git blob. Used by committed-checkpoint writes
+// at post-commit time. The OpenAI Privacy Filter is intentionally NOT
+// run here — OPF lives in the pre-push rewrite path
+// (strategy/manual_commit_opf_rewrite.go), which re-redacts the 7-layer
+// blobs into 8-layer commits before they leave the local machine.
 // JSONL files get JSONL-aware redaction; all other files get plain byte redaction.
 func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
-	return createRedactedBlobFromFileImpl(context.Background(), repo, filePath, treePath, false)
-}
-
-// createRedactedBlobFromFileWithPrivacyFilter reads a file, applies the full
-// 8-layer pipeline (including the OpenAI Privacy Filter), and creates a git
-// blob. Used by committed-checkpoint writes — slower but more thorough.
-func createRedactedBlobFromFileWithPrivacyFilter(ctx context.Context, repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
-	return createRedactedBlobFromFileImpl(ctx, repo, filePath, treePath, true)
-}
-
-func createRedactedBlobFromFileImpl(ctx context.Context, repo *git.Repository, filePath, treePath string, usePrivacyFilter bool) (plumbing.Hash, filemode.FileMode, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to stat file: %w", err)
@@ -1793,7 +1786,7 @@ func createRedactedBlobFromFileImpl(ctx context.Context, repo *git.Repository, f
 		return hash, mode, nil
 	}
 
-	content = redactBytesForBlob(ctx, content, treePath, usePrivacyFilter)
+	content = RedactBlobBytes(context.Background(), content, treePath, false)
 
 	hash, err := CreateBlobFromContent(repo, content)
 	if err != nil {
@@ -1802,14 +1795,15 @@ func createRedactedBlobFromFileImpl(ctx context.Context, repo *git.Repository, f
 	return hash, mode, nil
 }
 
-// redactBytesForBlob applies the appropriate redaction pipeline to file
-// content for a checkpoint blob. JSONL files get JSONL-aware redaction
-// (falling back to plain byte redaction on parse failure so the regex
-// layers still apply); other files get plain byte redaction.
-// usePrivacyFilter selects the lighter 7-layer pipeline (per-turn temp
-// writes) versus the full 8-layer pipeline including OPF (committed
-// writes).
-func redactBytesForBlob(ctx context.Context, content []byte, treePath string, usePrivacyFilter bool) []byte {
+// RedactBlobBytes redacts a single blob's content given its tree path.
+// JSONL files get JSONL-aware redaction (falling back to plain bytes on
+// parse failure so regex/credential layers still apply); other files
+// get plain byte redaction. When usePrivacyFilter is true the full
+// 8-layer pipeline (including OPF) runs; otherwise the 7-layer pipeline.
+//
+// Post-commit condensation uses false (fast path). The pre-push rewrite
+// (strategy/manual_commit_opf_rewrite.go) uses true.
+func RedactBlobBytes(ctx context.Context, content []byte, treePath string, usePrivacyFilter bool) []byte {
 	if strings.HasSuffix(treePath, ".jsonl") {
 		var (
 			redacted redact.RedactedBytes
@@ -1823,8 +1817,7 @@ func redactBytesForBlob(ctx context.Context, content []byte, treePath string, us
 		if err == nil {
 			return redacted.Bytes()
 		}
-		// JSONL parse failed — fall through so regex/credential layers
-		// still apply via the plain byte path.
+		// JSONL parse failed — fall through to plain bytes.
 	}
 	if usePrivacyFilter {
 		return redact.BytesWithPrivacyFilter(ctx, content)

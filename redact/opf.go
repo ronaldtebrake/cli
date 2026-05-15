@@ -57,7 +57,7 @@ func ConfigurePrivacyFilter(cfg OPFConfig) {
 		cfgCopy.Timeout = 30
 	}
 	if cfgCopy.Command == "" {
-		cfgCopy.Command = "opf"
+		cfgCopy.Command = defaultOPFCommand
 	}
 	cfgCopy.runtime = newShellOut(cfgCopy.Command, cfgCopy.Timeout)
 	opfConfigMu.Lock()
@@ -84,6 +84,46 @@ func getOPFConfig() *OPFConfig {
 	opfConfigMu.RLock()
 	defer opfConfigMu.RUnlock()
 	return opfConfig
+}
+
+// OPFEnabled reports whether the OpenAI Privacy Filter is configured
+// and turned on for this process. Callers gate pre-push rewrite work
+// on this: when false, the pre-push hook pushes the local 7-layer
+// checkpoint branch verbatim with no extra processing. Independent of
+// the circuit breaker — a tripped breaker still reports Enabled=true
+// because the runtime config didn't change; the rewrite logic itself
+// handles the breaker by short-circuiting per-commit OPF calls.
+func OPFEnabled() bool {
+	cfg := getOPFConfig()
+	return cfg != nil && cfg.Enabled
+}
+
+// OPFBreakerTripped reports whether the per-process OPF circuit breaker
+// has been tripped — i.e. an OPF invocation failed at some point during
+// this process's lifetime. The pre-push rewrite uses this to detect
+// when OPF silently fell back to 7-layer mid-rewrite and abort before
+// CAS-ing the new ref; otherwise the rewritten commits would carry the
+// Entire-OPF-Applied: true trailer despite containing only 7-layer
+// content, and the next push would skip them.
+func OPFBreakerTripped() bool {
+	return opfBreakerTripped.Load()
+}
+
+// defaultOPFCommand is the binary name we resolve via $PATH when the
+// user hasn't pinned a specific path in settings. Used as the fallback
+// inside ConfigurePrivacyFilter and as the OPFCommand() default for
+// error messages.
+const defaultOPFCommand = "opf"
+
+// OPFCommand returns the configured OPF binary command, or the default
+// when OPF is unconfigured. Used by error messages so the user sees the
+// exact command they need to fix.
+func OPFCommand() string {
+	cfg := getOPFConfig()
+	if cfg == nil || cfg.Command == "" {
+		return defaultOPFCommand
+	}
+	return cfg.Command
 }
 
 func resetOPFConfig() {

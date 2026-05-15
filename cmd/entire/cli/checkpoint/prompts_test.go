@@ -47,13 +47,15 @@ func TestRedactedJoinedPrompts_PreRedactedIsTrustedVerbatim(t *testing.T) {
 	assert.Equal(t, preRedacted, got, "preRedacted should pass through verbatim")
 }
 
-// TestRedactedJoinedPrompts_ZeroValueFallsBackToRedaction verifies that
-// when the typed preRedacted is the zero value the helper joins the
-// prompts and runs the full pipeline as a safety net.
-func TestRedactedJoinedPrompts_ZeroValueFallsBackToRedaction(t *testing.T) {
+// TestRedactedJoinedPrompts_ZeroValueFallsBackToLegacyRedaction verifies
+// that when the typed preRedacted is the zero value the helper joins the
+// prompts and runs the 7-layer pipeline as a safety net. Critically, the
+// fallback is JoinedPromptsLegacy (no OPF) — OPF runs exclusively in the
+// pre-push rewrite path, never here in the writer's hot path.
+func TestRedactedJoinedPrompts_ZeroValueFallsBackToLegacyRedaction(t *testing.T) {
 	t.Parallel()
 
 	got := redactedJoinedPrompts(context.Background(), []string{"hello", "world"}, redact.RedactedJoinedPrompts{})
-	assert.NotEmpty(t, got, "zero-value preRedacted should fall back to running the redaction pipeline")
+	assert.NotEmpty(t, got, "zero-value preRedacted should fall back to running the legacy 7-layer pipeline")
 	assert.Contains(t, got, PromptSeparator, "fallback output should preserve the prompt separator")
 }

@@ -2745,11 +2745,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (attribution, files touched, prompts). Hooks run without user interaction
 	// so there is no retry path — preserving partial metadata is better than
 	// losing everything. Persisting an unredacted transcript would be worse.
-	// Run the full 8-layer pipeline (including OPF when configured) over
-	// the transcript — this is the condensation boundary where bytes are
-	// about to leave the local machine via push to entire/checkpoints/v1.
+	// Run the 7-layer pipeline over the transcript — OPF runs later in
+	// the pre-push rewrite path, which re-redacts these 7-layer blobs
+	// and produces 8-layer commits before the push goes out.
 	_, redactSpan := perf.Start(logCtx, "redact_transcript")
-	redactedTranscript, redactErr := redact.JSONLBytesWithPrivacyFilter(logCtx, fullTranscript)
+	redactedTranscript, redactErr := redact.JSONLBytes(fullTranscript)
 	redactSpan.End()
 	if redactErr != nil {
 		logging.Warn(logCtx, "finalize: transcript redaction failed, dropping transcript",
@@ -2759,15 +2759,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		redactedTranscript = redact.RedactedBytes{}
 	}
 
-	// Pre-redact joined prompts ONCE so the checkpoint loop reuses the
-	// result instead of each iteration re-running the 8-layer pipeline
-	// (including OPF shell-out) over identical input. The original code
-	// here ran redact.String per prompt, which produced a per-prompt
-	// OPF call once OPF was wired up; pre-joining + one call collapses
-	// that to a single OPF invocation per finalize. The typed return
-	// value carries a compile-time claim that the content has been
-	// through the pipeline.
-	redactedPrompts := redact.JoinedPrompts(logCtx, prompts, checkpoint.PromptSeparator)
+	// Post-commit emits 7-layer-only blobs; the writer's safety net
+	// (checkpoint.redactedJoinedPrompts via JoinedPromptsLegacy) handles
+	// joining + 7-layer redaction. OPF is applied later, once per push,
+	// by the pre-push rewrite path.
+	redactedPrompts := redact.RedactedJoinedPrompts{}
 
 	store := checkpoint.NewGitStore(repo)
 	v2 := settings.CheckpointsVersion(logCtx) == 2

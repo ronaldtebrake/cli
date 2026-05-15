@@ -155,6 +155,23 @@ func AlreadyRedactedJoinedPrompts(content string) RedactedJoinedPrompts {
 	return RedactedJoinedPrompts{content: content}
 }
 
+// JoinedPromptsLegacy joins prompts with sep and runs only the seven
+// always-on/opt-in regex layers — never the OpenAI Privacy Filter, even
+// when OPF is configured globally. Used by the checkpoint writer's
+// safety net so post-commit blobs stay on the fast 7-layer pipeline; OPF
+// is applied exclusively by the pre-push rewrite path (see
+// strategy/manual_commit_opf_rewrite.go), which calls JoinedPrompts.
+//
+// Mirrors JoinedPrompts in return type so callers can use either
+// constructor and feed the result to WriteCommittedOptions.PromptsRedacted
+// without changing the type contract.
+func JoinedPromptsLegacy(prompts []string, sep string) RedactedJoinedPrompts {
+	if len(prompts) == 0 {
+		return RedactedJoinedPrompts{}
+	}
+	return RedactedJoinedPrompts{content: String(strings.Join(prompts, sep))}
+}
+
 var (
 	betterleaksDetector     *detect.Detector
 	betterleaksDetectorOnce sync.Once

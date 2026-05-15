@@ -111,11 +111,18 @@ type condenseOpts struct {
 	allAgentFiles    map[string]struct{} // Union of all sessions' FilesTouched for cross-session exclusion (nil = single-session)
 }
 
-// redactSessionJSONLBytes runs the full 8-layer redaction pipeline
-// (including the OpenAI Privacy Filter when configured) over a session
-// transcript. Exposed as a var so tests can inject deterministic
-// success/error returns without spinning up the runtime.
-var redactSessionJSONLBytes = redact.JSONLBytesWithPrivacyFilter
+// redactSessionJSONLBytes runs the 7-layer redaction pipeline over a
+// session transcript at post-commit condensation. OPF is intentionally
+// NOT included here — it runs exclusively in the pre-push rewrite path
+// (strategy/manual_commit_opf_rewrite.go), which re-redacts the
+// 7-layer blobs and produces 8-layer commits before the push.
+//
+// Exposed as a var so tests can inject deterministic success/error
+// returns. The signature still takes a context so the var can be
+// re-wired to JSONLBytesWithPrivacyFilter from tests that need OPF.
+var redactSessionJSONLBytes = func(_ context.Context, b []byte) (redact.RedactedBytes, error) {
+	return redact.JSONLBytes(b)
+}
 
 // CondenseSession condenses a session's shadow branch to permanent storage.
 // checkpointID is the 12-hex-char value from the Entire-Checkpoint trailer.
@@ -227,12 +234,10 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		summary = generateSummary(ctx, redactedTranscript, sessionData.FilesTouched, state)
 	}
 
-	// Pre-redact joined prompts once so v1 and v2 writers (plus any
-	// subsequent UpdateCommitted within the same finalize) reuse the same
-	// result instead of each running the 8-layer pipeline over identical
-	// input. The typed return value carries a compile-time claim that the
-	// content has been through the pipeline.
-	redactedPrompts := redact.JoinedPrompts(ctx, sessionData.Prompts, cpkg.PromptSeparator)
+	// Post-commit emits 7-layer-only blobs. We pass an empty
+	// PromptsRedacted so the writer's safety net (redactedJoinedPrompts)
+	// applies the legacy 7-layer pipeline. OPF runs later in the
+	// pre-push rewrite path, never here.
 
 	// Build write options (shared by v1 and v2)
 	writeOpts := cpkg.WriteCommittedOptions{
@@ -242,7 +247,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		Branch:                      branchName,
 		Transcript:                  redactedTranscript,
 		Prompts:                     sessionData.Prompts,
-		PromptsRedacted:             redactedPrompts,
+		PromptsRedacted:             redact.RedactedJoinedPrompts{},
 		FilesTouched:                sessionData.FilesTouched,
 		CheckpointsCount:            state.StepCount,
 		EphemeralBranch:             shadowBranchName,

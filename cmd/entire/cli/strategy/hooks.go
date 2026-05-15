@@ -171,7 +171,14 @@ func buildHookSpecs(cmdPrefix string) []hookSpec {
 	commitMsgCmd := gitHookCommand(cmdPrefix, `commit-msg "$1" || true`, true)
 	postCommitCmd := gitHookCommand(cmdPrefix, `post-commit 2>/dev/null || true`, false)
 	postRewriteCmd := gitHookCommand(cmdPrefix, `post-rewrite "$1" 2>/dev/null || true`, false)
-	prePushCmd := gitHookCommand(cmdPrefix, `pre-push "$1" || true`, false)
+	// pre-push intentionally does NOT swallow exit codes — the OPF
+	// rewrite returns errors when it detects a privacy-critical
+	// condition (diverged remote, oversized bootstrap, CAS conflict)
+	// and the user's git push must abort. Transient checkpoint-push
+	// failures (e.g. the entire/checkpoints/v1 push itself failing)
+	// are NOT returned from PrePush — they're logged and swallowed at
+	// the CLI level so they never reach this point as non-zero exits.
+	prePushCmd := gitHookCommand(cmdPrefix, `pre-push "$1"`, false)
 
 	return []hookSpec{
 		{
