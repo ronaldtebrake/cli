@@ -15,7 +15,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 
 	"github.com/go-git/go-git/v6"
@@ -137,9 +136,6 @@ func printCheckpointRemoteHint(target string) {
 // settingsHintOnce ensures the settings commit hint prints at most once per process.
 var settingsHintOnce sync.Once
 
-// checkpointsV2MigrationHintOnce ensures the checkpoints v2 migration hint prints at most once per process.
-var checkpointsV2MigrationHintOnce sync.Once
-
 // printSettingsCommitHint prints a hint after a successful checkpoint remote push
 // when the committed .entire/settings.json does not contain a checkpoint_remote config.
 // entire.io discovers the external checkpoint repo by reading the committed project
@@ -159,30 +155,6 @@ func printSettingsCommitHint(ctx context.Context, target string) {
 	})
 }
 
-// printCheckpointsV2MigrationHint nudges users who committed checkpoints_version: 2
-// but never ran the migration. Partial migrations are not flagged.
-func printCheckpointsV2MigrationHint(ctx context.Context) {
-	checkpointsV2MigrationHintOnce.Do(func() {
-		if !isCheckpointsVersion2Committed(ctx) {
-			return
-		}
-		if v2MainRefExists(ctx) {
-			return
-		}
-		fmt.Fprintln(os.Stderr, "[entire] Note: .entire/settings.json sets checkpoints_version: 2, but no v2 /main ref was found in this repo.")
-		fmt.Fprintln(os.Stderr, "[entire] Run 'entire migrate --checkpoints v2' to migrate missing checkpoints to v2.")
-	})
-}
-
-func v2MainRefExists(ctx context.Context) bool {
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		return false
-	}
-	_, err = repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
-	return err == nil
-}
-
 // isCheckpointRemoteCommitted returns true if the committed .entire/settings.json
 // at HEAD contains a valid checkpoint_remote configuration. This is the true
 // discoverability check: entire.io reads from committed project settings, not from
@@ -199,21 +171,6 @@ func isCheckpointRemoteCommitted(ctx context.Context) bool {
 		return false
 	}
 	return committed.GetCheckpointRemote() != nil
-}
-
-// isCheckpointsVersion2Committed returns true if the committed .entire/settings.json
-// at HEAD sets checkpoints_version to 2.
-func isCheckpointsVersion2Committed(ctx context.Context) bool {
-	cmd := exec.CommandContext(ctx, "git", "show", "HEAD:.entire/settings.json")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	committed, err := settings.LoadFromBytes(output)
-	if err != nil {
-		return false
-	}
-	return committed.CheckpointsVersion() == 2
 }
 
 // pushResult describes what happened during a push attempt.
@@ -248,7 +205,6 @@ func finishPush(ctx context.Context, stop func(string), result pushResult, targe
 		stop(" done")
 		printSettingsCommitHint(ctx, target)
 	}
-	printCheckpointsV2MigrationHint(ctx)
 }
 
 // tryPushSessionsCommon attempts to push the sessions branch.

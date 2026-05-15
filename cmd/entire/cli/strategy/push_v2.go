@@ -894,7 +894,6 @@ func pushV2Refs(ctx context.Context, target string) {
 	if pushedContent {
 		printSettingsCommitHint(ctx, target)
 	}
-	printCheckpointsV2MigrationHint(ctx)
 }
 
 func readPendingV2FullGenerationPublications(ctx context.Context, store *checkpoint.V2GitStore) ([]checkpoint.PendingV2FullGenerationPublication, error) {
@@ -922,7 +921,6 @@ func printV2PushFailures(ctx context.Context, target string, successfulRefs []pl
 	if pushedContent {
 		printSettingsCommitHint(ctx, target)
 	}
-	printCheckpointsV2MigrationHint(ctx)
 }
 
 func v2RefsToPush(repo *git.Repository) []plumbing.ReferenceName {
