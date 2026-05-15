@@ -60,14 +60,11 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 	}
 
 	fmt.Fprintf(outW, "Device code: %s\n", start.UserCode)
-	if copied := copyDeviceCodeToClipboard(errW, start.UserCode, writeClipboard); copied {
-		fmt.Fprintln(outW, "Device code copied to clipboard.")
-	}
 
 	approvalURL := start.VerificationURI
 
 	if interactive.CanPromptInteractively() {
-		fmt.Fprintf(outW, "Press Enter to open %s in your browser and enter the generated device code...", approvalURL)
+		fmt.Fprintf(outW, "Press Enter to copy the code to your clipboard, open %s in your browser, and enter the generated device code...", approvalURL)
 
 		// Read from /dev/tty so we get a real keypress and don't consume piped stdin.
 		if err := waitForEnter(ctx); err != nil {
@@ -75,6 +72,9 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 		}
 
 		fmt.Fprintln(outW)
+		if copied := copyDeviceCodeToClipboard(errW, start.UserCode, writeClipboard); copied {
+			fmt.Fprintln(outW, "Device code copied to clipboard.")
+		}
 
 		if err := openURL(ctx, approvalURL); err != nil {
 			fmt.Fprintf(errW, "Warning: failed to open browser: %v\n", err)
