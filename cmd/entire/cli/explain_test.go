@@ -2190,6 +2190,44 @@ func TestRunExplainCheckpoint_V2UsesCompactTranscriptForIntent(t *testing.T) {
 	}
 }
 
+func TestRunExplainCheckpoint_V2EnabledV1FallbackPreservesTranscriptOffset(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, ".entire", "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`),
+		0o644,
+	))
+
+	cpID := id.MustCheckpointID("878787878787")
+	transcriptBytes := []byte(
+		`{"type":"user","message":{"content":[{"type":"text","text":"old prompt before checkpoint"}]}}` + "\n" +
+			`{"type":"user","message":{"content":[{"type":"text","text":"scoped prompt for checkpoint"}]}}` + "\n",
+	)
+	require.NoError(t, checkpoint.NewGitStore(repo).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID:              cpID,
+		SessionID:                 "session-v1",
+		Strategy:                  "manual-commit",
+		Transcript:                redact.AlreadyRedacted(transcriptBytes),
+		AuthorName:                "Test",
+		AuthorEmail:               "test@example.com",
+		Agent:                     agent.AgentTypeClaudeCode,
+		CheckpointTranscriptStart: 1,
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err = runExplainCheckpoint(context.Background(), &buf, &errBuf, "878787", true, false, false, false, false, false, false, 0)
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "scoped prompt for checkpoint")
+	require.NotContains(t, buf.String(), "old prompt before checkpoint")
+}
+
 func TestRunExplainCheckpoint_V2PreferredGenerateWritesBothStores(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

@@ -122,15 +122,11 @@ func (r *DualCheckpointReader) ReadSessionMetadata(ctx context.Context, checkpoi
 	return r.readV1SessionMetadataByIndex(ctx, checkpointID, sessionIndex, err)
 }
 
+// ReadSessionMetadataAndPrompts is intentionally v2-only because callers pair
+// this metadata with the v2 compact transcript. Returning v1 raw content here
+// would bypass the checkpoint transcript offset handling in ReadSessionContent.
 func (r *DualCheckpointReader) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
-	content, err := r.v2.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
-	if err == nil {
-		return content, nil
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
-	}
-	return r.readV1SessionContentByIndex(ctx, checkpointID, sessionIndex, err)
+	return r.v2.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
 }
 
 func (r *DualCheckpointReader) ReadSessionCompactTranscript(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) ([]byte, error) {

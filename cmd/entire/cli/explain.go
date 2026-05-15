@@ -734,10 +734,12 @@ func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *expla
 	needsRawTranscript := full || generate || rawTranscript
 	if mainReader, ok := reader.(v2MainContentReader); ok && !needsRawTranscript {
 		content, contentErr := readV2ContentFromMain(ctx, mainReader, cpID, summary)
-		if contentErr != nil {
+		if contentErr == nil {
+			return reader, summary, content, nil
+		}
+		if !errors.Is(contentErr, checkpoint.ErrCheckpointNotFound) {
 			return nil, nil, nil, fmt.Errorf("failed to read checkpoint content: %w", contentErr)
 		}
-		return reader, summary, content, nil
 	}
 	content, contentErr := checkpoint.ReadLatestSessionContent(ctx, reader, cpID, summary)
 	if contentErr != nil {
