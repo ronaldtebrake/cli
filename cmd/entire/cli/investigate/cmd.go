@@ -131,7 +131,8 @@ Flags:
 
 Subcommands:
   fix [run-id]            launch a coding agent with the run's findings as
-                          grounded context`,
+                          grounded context
+  show [run-id]           print a saved investigation's summary + findings`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts at most one seed-doc path, received %d", len(args))
@@ -176,6 +177,7 @@ Subcommands:
 	cmd.Flags().BoolVar(&flags.findings, "findings", false, "browse local investigation manifests")
 
 	cmd.AddCommand(newFixSubcommand(deps))
+	cmd.AddCommand(newShowSubcommand(deps))
 	if deps.AttachCmd != nil {
 		cmd.AddCommand(deps.AttachCmd)
 	}
@@ -259,6 +261,41 @@ func newFixSubcommand(deps Deps) *cobra.Command {
 				ManifestStore: store,
 				Launch:        launch,
 			})
+		},
+	}
+}
+
+// newShowSubcommand wires `entire investigate show [run-id]` to RunShow.
+func newShowSubcommand(deps Deps) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show [run-id]",
+		Short: "Print a saved investigation's summary and findings",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return fmt.Errorf("accepts at most one run id, received %d", len(args))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if _, err := paths.WorktreeRoot(ctx); err != nil {
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Run `entire enable` first.")
+				return wrapSilent(deps.NewSilentError, errors.New("not a git repository"))
+			}
+			store, err := NewLocalManifestStore(ctx)
+			if err != nil {
+				return fmt.Errorf("open manifest store: %w", err)
+			}
+			runID := ""
+			if len(args) == 1 {
+				runID = args[0]
+			}
+			return RunShow(ctx, ShowInput{
+				RunID:  runID,
+				Out:    cmd.OutOrStdout(),
+				ErrOut: cmd.ErrOrStderr(),
+			}, ShowDeps{ManifestStore: store})
 		},
 	}
 }
