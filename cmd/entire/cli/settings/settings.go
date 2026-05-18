@@ -270,10 +270,19 @@ func (s *EntireSettings) ReviewConfigFor(agentName string) ReviewConfig {
 // all configured agents, so the schema is a flat agent list with global
 // loop knobs rather than per-agent skill lists.
 type InvestigateConfig struct {
-	Agents       []string `json:"agents,omitempty"`
-	MaxTurns     int      `json:"max_turns,omitempty"`
-	Quorum       int      `json:"quorum,omitempty"`
-	AlwaysPrompt string   `json:"always_prompt,omitempty"`
+	// Agents is the ordered list of agent names to round-robin during the loop.
+	Agents []string `json:"agents,omitempty"`
+
+	// MaxTurns is the per-agent turn budget. Defaults to 3 when zero.
+	MaxTurns int `json:"max_turns,omitempty"`
+
+	// Quorum is the count of `approve` stances needed to terminate the loop.
+	// Zero means "all agents must approve" (matches marvin's default).
+	Quorum int `json:"quorum,omitempty"`
+
+	// AlwaysPrompt is appended to every turn's composed prompt, parallel
+	// to ReviewConfig.Prompt.
+	AlwaysPrompt string `json:"always_prompt,omitempty"`
 }
 
 // IsZero reports whether the config is effectively unset.
