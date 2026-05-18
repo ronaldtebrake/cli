@@ -186,7 +186,7 @@ func runTrailListAll(ctx context.Context, w io.Writer, authorFilter, statusFilte
 
 	currentUserLogin := ""
 	if authorFilter == trailListAuthorMe {
-		login, err := fetchCurrentUserLogin(ctx, client)
+		login, err := fetchCurrentUserLogin(ctx)
 		if err != nil {
 			return err
 		}
@@ -304,27 +304,13 @@ func parseTrailStatusFilter(filter string) ([]trail.Status, error) {
 	return statuses, nil
 }
 
-type currentUserResponse struct {
-	Login string `json:"login"`
-}
-
-func fetchCurrentUserLogin(ctx context.Context, client *api.Client) (string, error) {
-	resp, err := client.Get(ctx, "/api/v1/me")
+func fetchCurrentUserLogin(ctx context.Context) (string, error) {
+	login, err := ghCurrentUser(ctx, execRunner{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get current user: %w", err)
+		return "", fmt.Errorf("resolve --author %s: %w (pass --author <login> explicitly if GitHub CLI is unavailable)", trailListAuthorMe, err)
 	}
-	defer resp.Body.Close()
-	if err := checkTrailResponse(resp); err != nil {
-		return "", err
-	}
-
-	var out currentUserResponse
-	if err := api.DecodeJSON(resp, &out); err != nil {
-		return "", fmt.Errorf("failed to decode current user: %w", err)
-	}
-	login := out.Login
 	if login == "" {
-		return "", errors.New("current user response did not include a login")
+		return "", errors.New("resolve --author me: GitHub CLI returned an empty login")
 	}
 	return login, nil
 }
