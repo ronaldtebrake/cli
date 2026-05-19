@@ -6,7 +6,9 @@
 package tuiutil
 
 import (
+	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
@@ -105,4 +107,16 @@ func WrapDisplayWidth(s string, width int) []string {
 		out = append(out, strings.Split(wrapped, "\n")...)
 	}
 	return out
+}
+
+// FormatDuration renders a time.Duration in the compact form used by the
+// review and investigate TUI dashboards: "523ms" / "8.4s" / "1m42s".
+func FormatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 }

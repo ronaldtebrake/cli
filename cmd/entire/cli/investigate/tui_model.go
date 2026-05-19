@@ -20,6 +20,8 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/entireio/cli/cmd/entire/cli/tuiutil"
 )
 
 // rowStatus is the per-agent terminal state shown in the STATUS column.
@@ -537,16 +539,10 @@ func formatRowDuration(row agentRow) string {
 	return formatDuration(total)
 }
 
-// formatDuration is a near-copy of review.formatDuration. Kept private so
-// the investigate TUI does not pull in the review package.
+// formatDuration delegates to tuiutil.FormatDuration so the review and
+// investigate TUIs share one implementation.
 func formatDuration(d time.Duration) string {
-	if d < time.Second {
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	}
-	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	return tuiutil.FormatDuration(d)
 }
 
 // formatStance renders the APPROVED column from a canonical stance.
