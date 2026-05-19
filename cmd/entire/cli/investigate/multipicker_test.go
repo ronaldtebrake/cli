@@ -9,7 +9,7 @@ import (
 
 func TestPickInvestigateAgents_RequiresTwo(t *testing.T) {
 	t.Parallel()
-	_, err := PickInvestigateAgents(context.Background(), []AgentChoice{{Name: "claude-code"}})
+	_, err := PickInvestigateAgents(context.Background(), []AgentChoice{{Name: "claude-code"}}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 2")
 }
@@ -20,7 +20,7 @@ func TestPickInvestigateAgents_ContextCancelled(t *testing.T) {
 	cancel()
 	_, err := PickInvestigateAgents(ctx, []AgentChoice{
 		{Name: "claude-code"}, {Name: "codex"},
-	})
+	}, false)
 	require.ErrorIs(t, err, ErrInvestigatePickerCancelled)
 }
 
@@ -38,15 +38,13 @@ func TestPickInvestigateAgents_ResultSortedAlphabetically(t *testing.T) {
 	}, got)
 }
 
-// TestPickInvestigateAgents_PerRunPromptOptional documents the contract
-// that PerRun defaults to the empty string when the user skips the text
-// area. The huh form itself isn't drivable from a non-TTY test, but the
-// zero-value return path is exercised by the cancellation test above;
-// this test pins the type-level guarantee that consumers can rely on
-// "no per-run prompt" being represented as PerRun == "".
-func TestPickInvestigateAgents_PerRunPromptOptional(t *testing.T) {
+// TestPickInvestigateAgents_PromptDefaultsEmpty documents the contract
+// that Prompt defaults to the empty string. The huh form isn't drivable
+// from a non-TTY test; this test pins the type-level guarantee that
+// consumers can rely on "no prompt entered" being Prompt == "".
+func TestPickInvestigateAgents_PromptDefaultsEmpty(t *testing.T) {
 	t.Parallel()
 	var zero PickedInvestigate
-	require.Empty(t, zero.PerRun)
+	require.Empty(t, zero.Prompt)
 	require.Empty(t, zero.Names)
 }

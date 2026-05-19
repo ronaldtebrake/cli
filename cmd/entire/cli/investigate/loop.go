@@ -75,7 +75,6 @@ type LoopInput struct {
 	AlwaysPrompt string    // optional, appended verbatim to every prompt
 	FindingsDoc  string    // absolute path
 	StartingSHA  string    // git HEAD when `entire investigate` was invoked
-	PriorContext string    // optional, e.g. "## Prior Entire Context" excerpt
 	Resume       *RunState // when non-nil, resume from this state
 }
 
@@ -278,7 +277,6 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 		Turn:         state.Turn,
 		AlwaysPrompt: in.AlwaysPrompt,
 		Files:        Files{Findings: in.FindingsDoc, State: cfg.stateDoc},
-		PriorContext: in.PriorContext,
 	})
 	env := AppendInvestigateEnv(os.Environ(), AppendOptions{
 		AgentName:   agentName,

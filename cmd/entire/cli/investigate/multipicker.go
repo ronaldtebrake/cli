@@ -17,13 +17,13 @@ import (
 	"charm.land/huh/v2"
 )
 
-// PickedInvestigate is the result of PickInvestigateAgents: the agents
-// the user selected for this run, plus an optional per-run prompt that
-// callers should append to the configured AlwaysPrompt for the duration
-// of this run only.
+// PickedInvestigate is the result of PickInvestigateAgents: the agents the
+// user selected for this run, and (when no seed/issue input was supplied)
+// the free-form investigation prompt that becomes the topic for this run.
+// Prompt is always empty when askPrompt was false.
 type PickedInvestigate struct {
 	Names  []string
-	PerRun string
+	Prompt string
 }
 
 // ErrInvestigatePickerCancelled is returned when the user aborts the
@@ -36,11 +36,15 @@ var ErrInvestigateNoAgentsSelected = errors.New("no agents selected for investig
 
 // PickInvestigateAgents shows a multi-select form populated from eligible
 // (the agents that are both configured AND have a launchable Spawner),
-// pre-checks all of them, and returns the user's selection plus an
-// optional per-run prompt.
+// pre-checks all of them, and returns the user's selection.
+//
+// When askPrompt is true, a second form collects the investigation prompt
+// that will become the topic for this run. When false (e.g. a seed doc or
+// --issue-link was supplied), the prompt form is skipped and Prompt is
+// returned empty.
 //
 // Requires len(eligible) >= 2.
-func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice) (PickedInvestigate, error) {
+func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice, askPrompt bool) (PickedInvestigate, error) {
 	if len(eligible) < 2 {
 		return PickedInvestigate{}, fmt.Errorf("PickInvestigateAgents requires at least 2 eligible agents, got %d", len(eligible))
 	}
@@ -76,18 +80,22 @@ func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice) (PickedI
 	}
 	sort.Strings(picked)
 
-	var perRun string
+	if !askPrompt {
+		return PickedInvestigate{Names: picked}, nil
+	}
+
+	var prompt string
 	promptForm := newAccessibleForm(huh.NewGroup(
 		huh.NewText().
-			Title("Optional per-run prompt").
-			Description("e.g. 'focus on the auth boundary' — appended to the always_prompt for this run only. Leave blank to skip.").
-			Value(&perRun),
+			Title("Investigation prompt").
+			Description("Describe what you want investigated — this becomes the topic for the run.").
+			Value(&prompt),
 	))
 	if err := promptForm.RunWithContext(ctx); err != nil {
 		return PickedInvestigate{}, ErrInvestigatePickerCancelled
 	}
 
-	return PickedInvestigate{Names: picked, PerRun: perRun}, nil
+	return PickedInvestigate{Names: picked, Prompt: prompt}, nil
 }
 
 // sortAgentChoices returns a copy of eligible sorted alphabetically by

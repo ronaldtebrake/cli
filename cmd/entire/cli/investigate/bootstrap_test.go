@@ -132,46 +132,6 @@ func TestBootstrap_TopicScaffold(t *testing.T) {
 			t.Errorf("scaffold missing section %q", want)
 		}
 	}
-	if strings.Contains(got, "## Prior Entire Context") {
-		t.Errorf("scaffold unexpectedly contains 'Prior Entire Context' when none was passed")
-	}
-}
-
-func TestBootstrap_TopicScaffoldWithPriorEntireContext(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	findings := filepath.Join(dir, "findings.md")
-
-	priorBlock := "Prior session abc123 worked on the same area.\nConclusion: similar root cause."
-	_, err := Bootstrap(context.Background(), BootstrapInput{
-		Topic:              "Why is checkout flaky?",
-		PriorEntireContext: priorBlock,
-		FindingsDoc:        findings,
-	})
-	if err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-
-	body, err := os.ReadFile(findings)
-	if err != nil {
-		t.Fatalf("read findings: %v", err)
-	}
-	got := string(body)
-	if !strings.Contains(got, "## Prior Entire Context") {
-		t.Errorf("scaffold missing 'Prior Entire Context' heading when prior block passed")
-	}
-	if !strings.Contains(got, "Prior session abc123 worked on the same area.") {
-		t.Errorf("scaffold missing prior block content")
-	}
-	// Prior block should be inserted between the Question section and the
-	// Prior work section.
-	idxQuestion := strings.Index(got, "## Question")
-	idxPrior := strings.Index(got, "## Prior Entire Context")
-	idxPriorWork := strings.Index(got, "## Prior work")
-	if idxQuestion >= idxPrior || idxPrior >= idxPriorWork {
-		t.Errorf("expected Question < PriorEntireContext < Prior work, got %d < %d < %d", idxQuestion, idxPrior, idxPriorWork)
-	}
 }
 
 func TestBootstrap_IssueLinkSeedEmbedsQuestionBody(t *testing.T) {
@@ -254,7 +214,7 @@ func TestBootstrap_TopicOnlyUsesTopicAsQuestion(t *testing.T) {
 func TestRenderInvestigationScaffold_EmptyQuestionBodyFallsBackToTopic(t *testing.T) {
 	t.Parallel()
 
-	out := renderInvestigationScaffold("My topic", "2026-01-01", "", "")
+	out := renderInvestigationScaffold("My topic", "2026-01-01", "")
 	// Topic must appear under `## Question`.
 	idxQuestion := strings.Index(out, "## Question")
 	if idxQuestion < 0 {
@@ -269,7 +229,7 @@ func TestRenderInvestigationScaffold_EmptyQuestionBodyFallsBackToTopic(t *testin
 func TestRenderInvestigationScaffold_TrimsQuestionBodyTrailingWhitespace(t *testing.T) {
 	t.Parallel()
 
-	out := renderInvestigationScaffold("My topic", "2026-01-01", "", "Some seed body\n\n\n   ")
+	out := renderInvestigationScaffold("My topic", "2026-01-01", "Some seed body\n\n\n   ")
 	// After the seed body content there should be exactly one blank line
 	// followed by `## Prior work` (no stacked blanks from un-trimmed input).
 	if !strings.Contains(out, "Some seed body\n\n## Prior work") {

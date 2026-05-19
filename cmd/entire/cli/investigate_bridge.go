@@ -7,15 +7,8 @@ package cli
 //
 //	investigate → checkpoint → ... → investigate
 //	investigate → claudecode/codex/geminicli → investigate
-//
-// The bridge mirrors review_bridge.go so the two experimental commands
-// share a single wiring pattern.
 
 import (
-	"context"
-
-	"github.com/spf13/cobra"
-
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/codex"
@@ -26,13 +19,9 @@ import (
 )
 
 // buildInvestigateDeps builds the investigate.Deps used by
-// investigate.NewCommand. attachCmd is the cobra subcommand for
-// `entire investigate attach`; pass nil in tests that don't need it.
-//
-// PriorEntireContextFn is left nil — a future task can wire `entire
-// search` lookup so investigate seeds inherit prior context. LoopRun is
-// also nil so production uses investigate.RunInvestigateLoop directly.
-func buildInvestigateDeps(attachCmd *cobra.Command) investigate.Deps {
+// investigate.NewCommand. LoopRun is left nil so production uses
+// investigate.RunInvestigateLoop directly.
+func buildInvestigateDeps() investigate.Deps {
 	return investigate.Deps{
 		GetAgentsWithHooksInstalled: GetAgentsWithHooksInstalled,
 		NewSilentError: func(err error) error {
@@ -40,8 +29,6 @@ func buildInvestigateDeps(attachCmd *cobra.Command) investigate.Deps {
 		},
 		SpawnerFor:                   launchableSpawnerFor,
 		LaunchFix:                    agentlaunch.LaunchFixAgent,
-		PriorEntireContextFn:         nil,
-		AttachCmd:                    attachCmd,
 		HeadHasInvestigateCheckpoint: headHasInvestigateCheckpoint,
 	}
 }
@@ -62,24 +49,4 @@ func launchableSpawnerFor(agentName string) spawn.Spawner {
 	default:
 		return nil
 	}
-}
-
-// newInvestigateAttachCmd builds the `entire investigate attach
-// <session-id>` cobra subcommand wired to AttachSession in the cli
-// package. Mirrors newReviewAttachCmd.
-func newInvestigateAttachCmd() *cobra.Command {
-	return investigate.NewAttachCommand(investigate.AttachDeps{
-		Attach: func(ctx context.Context, sessionID string, runID string, round, turn int, topic, prompt string) error {
-			return AttachSession(ctx, AttachOptions{
-				Kind:              AttachKindInvestigate,
-				SessionID:         sessionID,
-				InvestigateRunID:  runID,
-				InvestigateRound:  round,
-				InvestigateTurn:   turn,
-				InvestigateTopic:  topic,
-				InvestigatePrompt: prompt,
-			})
-		},
-		NewSilentError: func(err error) error { return NewSilentError(err) },
-	})
 }

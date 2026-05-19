@@ -132,36 +132,3 @@ func TestComposeInvestigatePrompt_WithAlwaysPrompt(t *testing.T) {
 		t.Errorf("AlwaysPrompt rendered before body (idxAlways=%d idxBody=%d)", idxAlways, idxBody)
 	}
 }
-
-func TestComposeInvestigatePrompt_WithPriorContext(t *testing.T) {
-	t.Parallel()
-
-	got := ComposeInvestigatePrompt(ComposeInput{
-		Topic:     "Why is checkout flaky?",
-		AgentName: "claude-code",
-		Round:     1,
-		MaxTurns:  3,
-		Turn:      1,
-		PriorContext: "Prior checkpoint a3b2c4d5e6f7 investigated a similar symptom.\n" +
-			"Conclusion: timeout in /api/checkout was the cause.",
-		Files: Files{
-			Findings: "/abs/findings.md",
-			State:    "/abs/state.json",
-		},
-	})
-
-	assertGoldenString(t, "testdata/prompt-with-prior-context.txt", got)
-
-	if !strings.Contains(got, "## Prior context") {
-		t.Errorf("expected '## Prior context' block when PriorContext is set")
-	}
-	if !strings.Contains(got, "Prior checkpoint a3b2c4d5e6f7") {
-		t.Errorf("PriorContext bytes not rendered")
-	}
-	// Prior context should come BEFORE the body, not be appended at the end.
-	idxPrior := strings.Index(got, "## Prior context")
-	idxBody := strings.Index(got, "You are agent: claude-code")
-	if idxPrior > idxBody {
-		t.Errorf("PriorContext should render before body (idxPrior=%d idxBody=%d)", idxPrior, idxBody)
-	}
-}

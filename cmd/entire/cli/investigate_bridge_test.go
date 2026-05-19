@@ -13,7 +13,7 @@ import (
 func TestBuildInvestigateDeps_HasRequiredFields(t *testing.T) {
 	t.Parallel()
 
-	deps := buildInvestigateDeps(nil)
+	deps := buildInvestigateDeps()
 
 	if deps.GetAgentsWithHooksInstalled == nil {
 		t.Fatal("buildInvestigateDeps: GetAgentsWithHooksInstalled is nil")
@@ -26,9 +26,6 @@ func TestBuildInvestigateDeps_HasRequiredFields(t *testing.T) {
 	}
 	if deps.LaunchFix == nil {
 		t.Fatal("buildInvestigateDeps: LaunchFix is nil")
-	}
-	if deps.AttachCmd != nil {
-		t.Fatal("buildInvestigateDeps(nil) AttachCmd should be nil")
 	}
 }
 
@@ -67,21 +64,6 @@ func TestLaunchableSpawnerFor_KnownAgents(t *testing.T) {
 				t.Fatalf("launchableSpawnerFor(%q) = nil, want non-nil (%s)", tt.agent, tt.description)
 			}
 		})
-	}
-}
-
-// TestNewInvestigateAttachCmd_BuildsAttach ensures the bridge builds the
-// attach subcommand without panicking and exposes the expected Use
-// string.
-func TestNewInvestigateAttachCmd_BuildsAttach(t *testing.T) {
-	t.Parallel()
-
-	cmd := newInvestigateAttachCmd()
-	if cmd == nil {
-		t.Fatal("newInvestigateAttachCmd returned nil")
-	}
-	if got, want := cmd.Use, "attach <session-id>"; got != want {
-		t.Fatalf("Use = %q, want %q", got, want)
 	}
 }
 

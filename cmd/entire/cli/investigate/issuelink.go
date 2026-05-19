@@ -94,7 +94,7 @@ func runGhExec(ctx context.Context, args ...string) ([]byte, error) {
 //
 // Supported: GitHub issues and PRs only. Non-GitHub hosts (gitlab, bitbucket,
 // self-hosted forges) and non-issue/PR GitHub paths return an actionable
-// error pointing the user at --topic or [seed-doc] instead.
+// error pointing the user at [seed-doc] instead.
 //
 // The function intentionally does not follow nested issue/PR cross-references
 // or fetch related sub-issues: keep the seed scope to one resource so agents

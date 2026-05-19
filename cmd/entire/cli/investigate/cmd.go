@@ -55,15 +55,6 @@ type Deps struct {
 	// inject a stub.
 	LaunchFix func(ctx context.Context, agentName string, prompt string) error
 
-	// PriorEntireContextFn returns the "## Prior Entire Context" body for
-	// the seed-doc scaffold. Production may run `entire search` or read
-	// checkpoints; tests pass nil to skip the block.
-	PriorEntireContextFn func(ctx context.Context, topic string) string
-
-	// AttachCmd is the optional `entire investigate attach <session-id>`
-	// subcommand. Wired in a later task.
-	AttachCmd *cobra.Command
-
 	// LoopRun, when non-nil, replaces RunInvestigateLoop. Tests inject a
 	// stub to capture LoopInput and return a canned LoopResult.
 	LoopRun func(ctx context.Context, in LoopInput, ldeps LoopDeps) (LoopResult, error)
@@ -81,13 +72,12 @@ type Deps struct {
 	// InvestigateMultipicker overrides the spawn-time agent picker. Nil
 	// means "use the real PickInvestigateAgents form". Test-injectable so
 	// tests can drive the picker without a TTY.
-	InvestigateMultipicker func(ctx context.Context, choices []AgentChoice) (PickedInvestigate, error)
+	InvestigateMultipicker func(ctx context.Context, choices []AgentChoice, askPrompt bool) (PickedInvestigate, error)
 }
 
 // runFlags collects the flag values the run path inspects. Captured into a
 // struct so helpers don't need a giant signature.
 type runFlags struct {
-	topic     string
 	issueLink string
 	agentsCSV string
 	maxTurns  int
@@ -117,8 +107,11 @@ user feedback.
 
 Inputs (mutually exclusive):
   [seed-doc]              positional path to a starting findings file
-  --topic "<question>"    free-form topic to investigate
   --issue-link <url>      GitHub issue or PR URL (resolved via gh)
+
+When neither input is supplied and the spawn-time multi-agent picker fires,
+the picker collects an "Investigation prompt" that becomes the topic for the
+run.
 
 Flags:
   --agents <csv>          override configured agents (comma-separated)
@@ -167,7 +160,6 @@ Subcommands:
 		},
 	}
 
-	cmd.Flags().StringVar(&flags.topic, "topic", "", "free-form topic to investigate")
 	cmd.Flags().StringVar(&flags.issueLink, "issue-link", "", "GitHub issue or PR URL")
 	cmd.Flags().StringVar(&flags.agentsCSV, "agents", "", "override configured agents (comma-separated)")
 	cmd.Flags().IntVar(&flags.maxTurns, "max-turns", 0, "per-agent turn budget (default 2)")
@@ -179,9 +171,6 @@ Subcommands:
 	cmd.AddCommand(newFixSubcommand(deps))
 	cmd.AddCommand(newShowSubcommand(deps))
 	cmd.AddCommand(newCleanSubcommand(deps))
-	if deps.AttachCmd != nil {
-		cmd.AddCommand(deps.AttachCmd)
-	}
 	return cmd
 }
 
@@ -190,22 +179,21 @@ Subcommands:
 // touching disk.
 func validateFlags(args []string, f runFlags) error {
 	seedSet := len(args) == 1
-	topicSet := strings.TrimSpace(f.topic) != ""
 	issueSet := strings.TrimSpace(f.issueLink) != ""
 	contSet := strings.TrimSpace(f.cont) != ""
 
 	inputCount := 0
-	for _, set := range []bool{seedSet, topicSet, issueSet} {
+	for _, set := range []bool{seedSet, issueSet} {
 		if set {
 			inputCount++
 		}
 	}
 	if inputCount > 1 {
-		return errors.New("at most one of [seed-doc], --topic, --issue-link may be set")
+		return errors.New("at most one of [seed-doc], --issue-link may be set")
 	}
 
 	if contSet && inputCount > 0 {
-		return errors.New("--continue is mutually exclusive with [seed-doc]/--topic/--issue-link")
+		return errors.New("--continue is mutually exclusive with [seed-doc]/--issue-link")
 	}
 
 	modes := 0
@@ -603,9 +591,16 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 		return wrapSilent(silentErr, err)
 	}
 
-	// Spawn-time multipicker: when 2+ agents configured AND --agents not set,
-	// narrow the agent list and capture an optional per-run prompt.
-	perRun := ""
+	// hasSeedOrIssue is true when the user supplied a seed-doc or
+	// --issue-link, in which case the picker (if it fires) skips the
+	// "Investigation prompt" field — the topic comes from the seed/issue
+	// directly.
+	hasSeedOrIssue := len(args) == 1 || strings.TrimSpace(f.issueLink) != ""
+
+	// Spawn-time multipicker: when 2+ agents configured AND --agents not
+	// set, narrow the agent list and (when no seed/issue was supplied)
+	// collect the investigation prompt that becomes the topic.
+	pickerPrompt := ""
 	if len(agents) >= 2 && strings.TrimSpace(f.agentsCSV) == "" {
 		picker := deps.InvestigateMultipicker
 		canRun := picker != nil
@@ -618,7 +613,7 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 			for _, name := range agents {
 				choices = append(choices, AgentChoice{Name: name, Label: name})
 			}
-			picked, pickErr := picker(ctx, choices)
+			picked, pickErr := picker(ctx, choices, !hasSeedOrIssue)
 			if pickErr != nil {
 				if errors.Is(pickErr, ErrInvestigatePickerCancelled) {
 					return nil
@@ -628,7 +623,7 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 				return wrapSilent(silentErr, pickErr)
 			}
 			agents = picked.Names
-			perRun = picked.PerRun
+			pickerPrompt = picked.Prompt
 		}
 	}
 
@@ -646,7 +641,7 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 		return fmt.Errorf("generate run id: %w", err)
 	}
 
-	topic, seedDoc, issueSeed, issueTopic, err := resolveTopicAndSeed(ctx, args, f)
+	topic, seedDoc, issueSeed, issueTopic, err := resolveTopicAndSeed(ctx, args, f, pickerPrompt)
 	if err != nil {
 		cmd.SilenceUsage = true
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
@@ -659,18 +654,12 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 	}
 	findingsDoc := resolveDocPaths(commonDir, runID)
 
-	priorContext := ""
-	if deps.PriorEntireContextFn != nil {
-		priorContext = deps.PriorEntireContextFn(ctx, topic)
-	}
-
 	bres, err := Bootstrap(ctx, BootstrapInput{
-		SeedDoc:            seedDoc,
-		Topic:              topicForBootstrap(topic, seedDoc, issueSeed),
-		IssueLinkSeed:      issueSeed,
-		IssueLinkTopic:     issueTopic,
-		FindingsDoc:        findingsDoc,
-		PriorEntireContext: priorContext,
+		SeedDoc:        seedDoc,
+		Topic:          topicForBootstrap(topic, seedDoc, issueSeed),
+		IssueLinkSeed:  issueSeed,
+		IssueLinkTopic: issueTopic,
+		FindingsDoc:    findingsDoc,
 	})
 	if err != nil {
 		return fmt.Errorf("bootstrap docs: %w", err)
@@ -695,10 +684,9 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 		Agents:       agents,
 		MaxTurns:     maxTurns,
 		Quorum:       quorum,
-		AlwaysPrompt: composeAlwaysPrompt(s.Investigate.AlwaysPrompt, perRun),
+		AlwaysPrompt: strings.TrimSpace(s.Investigate.AlwaysPrompt),
 		FindingsDoc:  findingsDoc,
 		StartingSHA:  headSHA,
-		PriorContext: priorContext,
 	}
 	result, err := executeLoopAndCapture(ctx, cmd, in, deps)
 	if err != nil {
@@ -775,9 +763,11 @@ func verifyAgentsLaunchable(ctx context.Context, agents []string, deps Deps) err
 }
 
 // resolveTopicAndSeed turns the user's input args into a topic + (seed
-// doc path | issue link seed bytes + topic). Exactly one of seedDoc /
-// issueSeed / topic-only is set on return.
-func resolveTopicAndSeed(ctx context.Context, args []string, f runFlags) (topic, seedDoc string, issueSeed []byte, issueTopic string, err error) {
+// doc path | issue link seed bytes + topic). pickerPrompt is the
+// "Investigation prompt" collected from the spawn-time multipicker; it
+// becomes the topic only when no seed-doc / --issue-link was supplied.
+// Exactly one of seedDoc / issueSeed / topic-only is set on return.
+func resolveTopicAndSeed(ctx context.Context, args []string, f runFlags, pickerPrompt string) (topic, seedDoc string, issueSeed []byte, issueTopic string, err error) {
 	switch {
 	case len(args) == 1:
 		seedDoc = args[0]
@@ -787,17 +777,17 @@ func resolveTopicAndSeed(ctx context.Context, args []string, f runFlags) (topic,
 		}
 		topic = DeriveTopicFromSeed(body, seedDoc)
 		return topic, seedDoc, nil, "", nil
-	case strings.TrimSpace(f.topic) != "":
-		topic = strings.TrimSpace(f.topic)
-		return topic, "", nil, "", nil
 	case strings.TrimSpace(f.issueLink) != "":
 		res, resErr := ResolveIssueLink(ctx, f.issueLink)
 		if resErr != nil {
 			return "", "", nil, "", resErr
 		}
 		return res.Topic, "", res.SeedDoc, res.Topic, nil
+	case strings.TrimSpace(pickerPrompt) != "":
+		topic = strings.TrimSpace(pickerPrompt)
+		return topic, "", nil, "", nil
 	default:
-		return "", "", nil, "", errors.New("missing investigation input: pass [seed-doc], --topic, or --issue-link")
+		return "", "", nil, "", errors.New("missing investigation input: pass [seed-doc] or --issue-link, or enter an investigation prompt in the picker")
 	}
 }
 
@@ -1063,21 +1053,4 @@ func wrapSilent(fn func(error) error, err error) error {
 		return err
 	}
 	return fn(err)
-}
-
-// composeAlwaysPrompt joins the configured always-prompt with a per-run
-// preamble. Either may be empty.
-func composeAlwaysPrompt(configured, perRun string) string {
-	c := strings.TrimSpace(configured)
-	p := strings.TrimSpace(perRun)
-	switch {
-	case c == "" && p == "":
-		return ""
-	case c == "":
-		return p
-	case p == "":
-		return c
-	default:
-		return c + "\n\n" + p
-	}
 }

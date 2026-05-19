@@ -69,8 +69,9 @@ func DeriveTopicFromSeed(body []byte, fallbackFilename string) string {
 //     the scaffold and embed the seed bytes under the
 //     `## Question` section. Topic is derived from the
 //     body (or filename).
-//   - Topic only:    the user passed --topic; render the scaffold with
-//     the topic printed under `## Question`.
+//   - Topic only:    the user supplied the investigation prompt via the
+//     spawn-time multipicker (no seed, no issue link); render
+//     the scaffold with the topic printed under `## Question`.
 //   - IssueLinkSeed: the user passed --issue-link; ResolveIssueLink
 //     already produced a markdown body — render the
 //     scaffold and embed those bytes under `## Question`,
@@ -80,7 +81,9 @@ type BootstrapInput struct {
 	// when no seed was passed.
 	SeedDoc string
 
-	// Topic is the user-provided --topic value. Empty when not set.
+	// Topic is the topic-only investigation prompt collected from the
+	// spawn-time multipicker (set when neither SeedDoc nor IssueLinkSeed
+	// is supplied). Empty otherwise.
 	Topic string
 
 	// IssueLinkSeed is the markdown bytes produced by ResolveIssueLink.
@@ -94,12 +97,6 @@ type BootstrapInput struct {
 	// FindingsDoc is the absolute path the findings doc must be written
 	// to.
 	FindingsDoc string
-
-	// PriorEntireContext, if non-empty, is rendered as a "## Prior
-	// Entire Context" block in the topic-only scaffold. Ignored when a
-	// seed doc is supplied (we never inject extra content into the
-	// user's seed).
-	PriorEntireContext string
 }
 
 // BootstrapResult reports what was produced.
@@ -144,7 +141,6 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 		body = []byte(renderInvestigationScaffold(
 			topic,
 			time.Now().UTC().Format("2006-01-02"),
-			in.PriorEntireContext,
 			string(seedBytes),
 		))
 
@@ -156,7 +152,6 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 		body = []byte(renderInvestigationScaffold(
 			topic,
 			time.Now().UTC().Format("2006-01-02"),
-			in.PriorEntireContext,
 			string(in.IssueLinkSeed),
 		))
 
@@ -165,7 +160,6 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 		body = []byte(renderInvestigationScaffold(
 			in.Topic,
 			time.Now().UTC().Format("2006-01-02"),
-			in.PriorEntireContext,
 			"",
 		))
 
@@ -198,11 +192,7 @@ func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) 
 // printed verbatim under `## Question`. When empty (topic-only path), the
 // topic itself is printed under `## Question`. Trailing whitespace on
 // questionBody is trimmed to keep section spacing consistent.
-func renderInvestigationScaffold(topic, createdISODate, priorEntireContext, questionBody string) string {
-	priorSection := ""
-	if strings.TrimSpace(priorEntireContext) != "" {
-		priorSection = "## Prior Entire Context\n\n" + strings.TrimSpace(priorEntireContext) + "\n\n"
-	}
+func renderInvestigationScaffold(topic, createdISODate, questionBody string) string {
 	question := strings.TrimRight(questionBody, " \t\r\n")
 	if question == "" {
 		question = topic
@@ -224,7 +214,7 @@ section reflects the current best hypothesis with confidence ("likely",
 
 %s
 
-%s## Prior work
+## Prior work
 
 <!-- What was searched, what was found, what was ruled out. If nothing
 relevant, say "no prior work found; searched for: <queries>". When a
@@ -263,5 +253,5 @@ test output, or direct quotes. -->
 
 <!-- Filled in once consensus is reached. Stop here. Recommendations and
 action items belong in a plan, not an investigation. -->
-`, topic, createdISODate, question, priorSection)
+`, topic, createdISODate, question)
 }

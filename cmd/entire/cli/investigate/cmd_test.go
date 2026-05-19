@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent/spawn"
@@ -47,6 +46,19 @@ func setupInvestigateRepo(t *testing.T) string {
 	testutil.GitCommit(t, tmp, "init")
 	t.Chdir(tmp)
 	return tmp
+}
+
+// seedArg writes a temp markdown seed file with the given topic body and
+// returns its absolute path. Tests that just need any valid topic input
+// pass the return value as the positional [seed-doc] arg.
+func seedArg(t *testing.T, topic string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "seed.md")
+	if err := os.WriteFile(path, []byte("# "+topic+"\n"), 0o600); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	return path
 }
 
 // captureLoopRun returns a LoopRun stub that records the LoopInput it was
@@ -97,13 +109,13 @@ func TestNewCommand_RejectsConflictingInputs(t *testing.T) {
 	deps := investigate.Deps{NewSilentError: silentPassthrough}
 	cmd := investigate.NewCommand(deps)
 
-	// Need a seed file path to reach the args-and-topic conflict path,
-	// but validation runs before any I/O so it doesn't have to exist.
-	cmd.SetArgs([]string{"some-seed.md", "--topic=bar"})
+	// Validation runs before any I/O, so the seed path doesn't have to
+	// exist on disk to exercise the [seed-doc]+--issue-link conflict.
+	cmd.SetArgs([]string{"some-seed.md", "--issue-link=https://example.com/i/1"})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	if err := cmd.Execute(); err == nil {
-		t.Fatal("expected error when [seed-doc] and --topic are both set")
+		t.Fatal("expected error when [seed-doc] and --issue-link are both set")
 	}
 }
 
@@ -111,11 +123,11 @@ func TestNewCommand_RejectsContinueWithSeed(t *testing.T) {
 	t.Parallel()
 	deps := investigate.Deps{NewSilentError: silentPassthrough}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--continue=abcdef012345", "--topic=bar"})
+	cmd.SetArgs([]string{"some-seed.md", "--continue=abcdef012345"})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	if err := cmd.Execute(); err == nil {
-		t.Fatal("expected error when --continue and --topic are both set")
+		t.Fatal("expected error when [seed-doc] and --continue are both set")
 	}
 }
 
@@ -147,30 +159,6 @@ func TestNewCommand_FixSubcommand_Help(t *testing.T) {
 	}
 }
 
-func TestNewCommand_AttachSubcommandWiredFromDeps(t *testing.T) {
-	t.Parallel()
-	attach := &cobra.Command{
-		Use:   "attach",
-		Short: "tag a session as an investigation",
-		RunE:  func(_ *cobra.Command, _ []string) error { return nil },
-	}
-	deps := investigate.Deps{
-		NewSilentError: silentPassthrough,
-		AttachCmd:      attach,
-	}
-	cmd := investigate.NewCommand(deps)
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(out)
-	cmd.SetArgs([]string{"--help"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if !strings.Contains(out.String(), "attach") {
-		t.Errorf("--help output missing attach subcommand: %s", out.String())
-	}
-}
-
 func TestNewCommand_NotInGitRepoReturnsError(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -180,7 +168,7 @@ func TestNewCommand_NotInGitRepoReturnsError(t *testing.T) {
 	errBuf := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"--topic=foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error outside a git repo")
@@ -210,8 +198,8 @@ func TestNewCommand_AgentsFlagOverrideUsed(t *testing.T) {
 	cmd.SetOut(out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"--topic=test investigation",
 		"--agents=override-a,override-b",
+		seedArg(t, "test investigation"),
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -265,7 +253,7 @@ func TestNewCommand_FreshRunWritesManifest(t *testing.T) {
 	errBuf := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"--topic=test investigation"})
+	cmd.SetArgs([]string{seedArg(t, "test investigation")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v\nstderr: %s", err, errBuf.String())
 	}
@@ -331,7 +319,7 @@ func TestNewCommand_FreshRunPausedKeepsPerRunDir(t *testing.T) {
 	errBuf := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"--topic=paused investigation"})
+	cmd.SetArgs([]string{seedArg(t, "paused investigation")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v\nstderr: %s", err, errBuf.String())
 	}
@@ -386,7 +374,7 @@ func TestNewCommand_FreshRunRejectsNonLaunchableAgent(t *testing.T) {
 	errBuf := &bytes.Buffer{}
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"--topic=foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when configured agent has no spawner")
@@ -417,7 +405,7 @@ func TestNewCommand_FreshRunRejectsAgentWithoutHooks(t *testing.T) {
 	errBuf := &bytes.Buffer{}
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"--topic=foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when configured agent has no hooks")
@@ -725,7 +713,7 @@ func TestRunInvestigate_SoftWarnDeclinedReturnsNil(t *testing.T) {
 		},
 	}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--topic", "foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // soft-warn decline must not run the loop
@@ -751,7 +739,7 @@ func TestRunFresh_SkipsMultipickerWhenAgentsFlagPresent(t *testing.T) {
 		},
 		NewSilentError: func(err error) error { return err },
 		SpawnerFor:     func(name string) spawn.Spawner { return stubSpawner{name: name} },
-		InvestigateMultipicker: func(_ context.Context, _ []investigate.AgentChoice) (investigate.PickedInvestigate, error) {
+		InvestigateMultipicker: func(_ context.Context, _ []investigate.AgentChoice, _ bool) (investigate.PickedInvestigate, error) {
 			pickerCalls++
 			return investigate.PickedInvestigate{Names: []string{"claude-code"}}, nil
 		},
@@ -760,7 +748,7 @@ func TestRunFresh_SkipsMultipickerWhenAgentsFlagPresent(t *testing.T) {
 		},
 	}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--topic", "foo", "--agents", "claude-code"})
+	cmd.SetArgs([]string{"--agents", "claude-code", seedArg(t, "foo")})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // contract is picker not invoked; downstream errors irrelevant
@@ -780,36 +768,35 @@ func TestRunFresh_InvokesMultipickerWhenTwoAgentsAndNoFlag(t *testing.T) {
 		[]byte(`{"investigate":{"agents":["claude-code","codex"]}}`), 0o644))
 
 	var pickerCalled bool
+	var pickerAskPrompt bool
 	var receivedAgents []string
-	var receivedAlwaysPrompt string
 	deps := investigate.Deps{
 		GetAgentsWithHooksInstalled: func(_ context.Context) []types.AgentName {
 			return []types.AgentName{"claude-code", "codex"}
 		},
 		NewSilentError: func(err error) error { return err },
 		SpawnerFor:     func(name string) spawn.Spawner { return stubSpawner{name: name} },
-		InvestigateMultipicker: func(_ context.Context, choices []investigate.AgentChoice) (investigate.PickedInvestigate, error) {
+		InvestigateMultipicker: func(_ context.Context, choices []investigate.AgentChoice, askPrompt bool) (investigate.PickedInvestigate, error) {
 			pickerCalled = true
+			pickerAskPrompt = askPrompt
 			require.Len(t, choices, 2)
 			return investigate.PickedInvestigate{
-				Names:  []string{"claude-code"},
-				PerRun: "focus on auth",
+				Names: []string{"claude-code"},
 			}, nil
 		},
 		LoopRun: func(_ context.Context, in investigate.LoopInput, _ investigate.LoopDeps) (investigate.LoopResult, error) {
 			receivedAgents = in.Agents
-			receivedAlwaysPrompt = in.AlwaysPrompt
 			return investigate.LoopResult{Outcome: investigate.OutcomeQuorum}, nil
 		},
 	}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--topic", "foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // contract checked via captured loop input
 	require.True(t, pickerCalled, "multipicker must run when >=2 agents and no --agents flag")
+	require.False(t, pickerAskPrompt, "askPrompt must be false when a seed-doc is supplied")
 	require.Equal(t, []string{"claude-code"}, receivedAgents, "narrowed list must reach the loop")
-	require.Contains(t, receivedAlwaysPrompt, "focus on auth", "per-run prompt must be threaded into AlwaysPrompt")
 }
 
 func TestRunInvestigate_SoftWarnAcceptedRunsLoop(t *testing.T) {
@@ -843,7 +830,7 @@ func TestRunInvestigate_SoftWarnAcceptedRunsLoop(t *testing.T) {
 		},
 	}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--topic", "foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // soft-warn accept proceeds; ignore downstream errors
@@ -884,7 +871,7 @@ func TestRunInvestigate_SoftWarnSilentInNonInteractive(t *testing.T) {
 		},
 	}
 	cmd := investigate.NewCommand(deps)
-	cmd.SetArgs([]string{"--topic", "foo"})
+	cmd.SetArgs([]string{seedArg(t, "foo")})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // non-interactive path proceeds

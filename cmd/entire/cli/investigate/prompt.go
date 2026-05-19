@@ -19,10 +19,7 @@ type Files struct {
 // ComposeInput is the per-turn data needed to render an investigate prompt.
 //
 // The struct is intentionally kept narrow: the loop driver passes only what
-// the prompt template uses. Marvin's prompt also surfaces prior decisions,
-// claims, and fixes from its memory store; entire does not have an
-// equivalent surface yet, so callers may pass arbitrary text via
-// PriorContext (e.g. checkpoint search excerpts) for rendering.
+// the prompt template uses.
 type ComposeInput struct {
 	// Topic is the human-readable subject of the investigation. Used in
 	// the body of the prompt as plain text — never as a section heading,
@@ -51,12 +48,6 @@ type ComposeInput struct {
 	// Files holds the findings + state absolute paths the agent must
 	// read and edit.
 	Files Files
-
-	// PriorContext, if non-empty, is rendered as a "## Prior context"
-	// block ahead of the main task instructions. Useful for surfacing
-	// checkpoint excerpts, search hits, or other historical context that
-	// is run-specific rather than baked into the prompt template.
-	PriorContext string
 }
 
 // ComposeInvestigatePrompt renders the full prompt sent to one agent for one
@@ -70,12 +61,6 @@ type ComposeInput struct {
 // The agent must not modify any other field of state.json.
 func ComposeInvestigatePrompt(in ComposeInput) string {
 	var b strings.Builder
-
-	if pc := strings.TrimSpace(in.PriorContext); pc != "" {
-		b.WriteString("## Prior context\n\n")
-		b.WriteString(pc)
-		b.WriteString("\n\n")
-	}
 
 	fmt.Fprintf(&b, `You are participating in an autonomous multi-agent investigation. The agents
 — claude-code, codex, others — take turns appending findings, evidence, and analysis
