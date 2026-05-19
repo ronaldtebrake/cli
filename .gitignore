@@ -67,3 +67,5 @@ docs/superpowers
 tmp/
 .tmp/
 .superpowers/
+.clawpatch/
+entire-external-cp-test/
