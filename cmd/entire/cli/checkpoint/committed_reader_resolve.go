@@ -54,6 +54,7 @@ type CommittedReaderOptions struct {
 	BlobFetcher BlobFetchFunc
 }
 
+//nolint:ireturn // Factory selects among v1, v2, and dual reader implementations.
 func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is required")
