@@ -280,6 +280,10 @@ func readCheckpointInfoForResume(ctx context.Context, repo *git.Repository, stor
 	if err == nil {
 		return info, nil
 	}
+	logging.Debug(ctx, "checkpoint store metadata read failed, trying local metadata trees",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.String("error", err.Error()),
+	)
 	legacyInfo, legacyErr := readCheckpointInfoFromLocalTrees(ctx, repo, checkpointID)
 	if legacyErr == nil {
 		return legacyInfo, nil
@@ -324,12 +328,23 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpoint.Committed
 }
 
 func readCheckpointInfoFromLocalTrees(ctx context.Context, repo *git.Repository, checkpointID id.CheckpointID) (*strategy.CheckpointInfo, error) {
-	if info, err := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, strategy.GetV2MetadataBranchTree); err == nil {
+	info, err := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v2", strategy.GetV2MetadataBranchTree)
+	if err == nil {
 		return info, nil
 	}
-	if info, err := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, strategy.GetMetadataBranchTree); err == nil {
+	logging.Debug(ctx, "v2 metadata tree not available, trying v1",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.String("error", err.Error()),
+	)
+
+	info, err = readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v1", strategy.GetMetadataBranchTree)
+	if err == nil {
 		return info, nil
 	}
+	logging.Debug(ctx, "v1 metadata tree not available",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.String("error", err.Error()),
+	)
 	return nil, checkpoint.ErrCheckpointNotFound
 }
 
@@ -337,25 +352,66 @@ func readCheckpointInfoFromLocalTree(
 	ctx context.Context,
 	repo *git.Repository,
 	checkpointID id.CheckpointID,
+	metadataSource string,
 	loadTree func(*git.Repository) (*object.Tree, error),
 ) (*strategy.CheckpointInfo, error) {
 	metadataTree, err := loadTree(repo)
 	if err != nil {
 		return nil, fmt.Errorf("read local checkpoint metadata tree: %w", err)
 	}
+	logging.Debug(ctx, "metadata tree obtained",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.String("checkpoint_path", checkpointID.Path()),
+		slog.String("metadata_source", metadataSource),
+		slog.String("tree_hash", metadataTree.Hash.String()),
+	)
+
 	cpSubtree, err := metadataTree.Tree(checkpointID.Path())
 	if err != nil {
+		logging.Debug(ctx, "checkpoint subtree not found in metadata tree",
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("checkpoint_path", checkpointID.Path()),
+			slog.String("metadata_source", metadataSource),
+			slog.String("tree_hash", metadataTree.Hash.String()),
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("find checkpoint subtree: %w", err)
 	}
+
+	subtreeEntryNames := make([]string, 0, len(cpSubtree.Entries))
+	for _, e := range cpSubtree.Entries {
+		subtreeEntryNames = append(subtreeEntryNames, fmt.Sprintf("%s(%s:%s)", e.Name, e.Mode, e.Hash.String()[:7]))
+	}
+	logging.Debug(ctx, "checkpoint subtree found",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.String("metadata_source", metadataSource),
+		slog.String("subtree_hash", cpSubtree.Hash.String()),
+		slog.Int("entry_count", len(cpSubtree.Entries)),
+		slog.Any("entries", subtreeEntryNames),
+	)
+
 	ft := checkpoint.NewFetchingTree(ctx, cpSubtree, repo.Storer, FetchBlobsByHash)
-	if _, pfErr := ft.PreFetch(); pfErr != nil {
+	if prefetched, pfErr := ft.PreFetch(); pfErr != nil {
 		logging.Debug(ctx, "read checkpoint metadata: PreFetch failed",
 			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("metadata_source", metadataSource),
 			slog.String("error", pfErr.Error()),
+		)
+	} else if prefetched > 0 {
+		logging.Debug(ctx, "PreFetch completed",
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("metadata_source", metadataSource),
+			slog.Int("blobs_fetched", prefetched),
 		)
 	}
 	info, err := strategy.ReadCheckpointMetadataFromSubtree(ft, checkpointID.Path())
 	if err != nil {
+		logging.Debug(ctx, "ReadCheckpointMetadataFromSubtree failed",
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("metadata_source", metadataSource),
+			slog.String("subtree_hash", cpSubtree.Hash.String()),
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("read checkpoint metadata: %w", err)
 	}
 	return info, nil
