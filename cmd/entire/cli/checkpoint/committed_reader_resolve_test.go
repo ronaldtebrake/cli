@@ -153,6 +153,41 @@ func TestDualCheckpointReader_DoesNotUseIndexFallbackWhenV2CheckpointExists(t *t
 	require.ErrorIs(t, err, ErrCheckpointNotFound)
 }
 
+func TestDualCheckpointReader_ReadSessionMetadataAndPromptsDoesNotUseSingleV1FallbackWhenV2CheckpointExists(t *testing.T) {
+	t.Parallel()
+
+	repo := initTestRepo(t)
+	v1Store := NewGitStore(repo)
+	v2Store := NewV2GitStore(repo)
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("898989898989")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-a",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-a"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID:      cpID,
+		SessionID:         "session-b",
+		Strategy:          "manual-commit",
+		CompactTranscript: []byte(`{"text":"compact-session-b"}` + "\n"),
+		AuthorName:        "Test",
+		AuthorEmail:       "test@test.com",
+	}))
+	removeV2MainSessionTree(t, repo, cpID)
+
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
+
+	content, err := reader.ReadSessionMetadataAndPrompts(ctx, cpID, 0)
+	require.Nil(t, content)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrCheckpointNotFound)
+}
+
 func TestDualCheckpointReader_ReadSessionContentReturnsV2AndFallbackErrors(t *testing.T) {
 	t.Parallel()
 

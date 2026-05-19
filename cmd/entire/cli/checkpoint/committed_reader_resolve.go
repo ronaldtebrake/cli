@@ -53,6 +53,7 @@ type CommittedReaderOptions struct {
 	BlobFetcher BlobFetchFunc
 }
 
+//nolint:ireturn // Factory selects among v1, v2, and dual store implementations.
 func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is required")
@@ -190,11 +191,17 @@ func (r *DualCheckpointReader) ReadSessionMetadataAndPrompts(ctx context.Context
 			return nil, existsErr
 		}
 		if v2CheckpointExists {
-			return r.readSingleV1SessionMetadataAndPrompts(ctx, checkpointID, sessionIndex, err)
+			return nil, err
 		}
-		return r.readV1SessionMetadataAndPromptsByIndex(ctx, checkpointID, sessionIndex, err)
 	}
-	return r.readSingleV1SessionMetadataAndPrompts(ctx, checkpointID, sessionIndex, err)
+	content, fallbackErr := r.v1.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
+	if fallbackErr == nil {
+		return content, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	return nil, fallbackReadError(err, "read v1 session metadata and prompts", fallbackErr)
 }
 
 func (r *DualCheckpointReader) ReadSessionCompactTranscript(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) ([]byte, error) {
@@ -330,24 +337,6 @@ func (r *DualCheckpointReader) readSingleV1SessionMetadata(ctx context.Context, 
 		return nil, err
 	}
 	return r.readV1SessionMetadataByIndex(ctx, checkpointID, sessionIndex, originalErr)
-}
-
-func (r *DualCheckpointReader) readSingleV1SessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*SessionContent, error) {
-	if err := r.requireSingleV1Session(ctx, checkpointID, sessionIndex, originalErr); err != nil {
-		return nil, err
-	}
-	return r.readV1SessionMetadataAndPromptsByIndex(ctx, checkpointID, sessionIndex, originalErr)
-}
-
-func (r *DualCheckpointReader) readV1SessionMetadataAndPromptsByIndex(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*SessionContent, error) {
-	content, err := r.v1.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
-	if err == nil {
-		return content, nil
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
-	}
-	return nil, fallbackReadError(originalErr, "read v1 session metadata and prompts", err)
 }
 
 func (r *DualCheckpointReader) readV1SessionMetadataByIndex(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*CommittedMetadata, error) {
