@@ -328,18 +328,26 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpoint.Committed
 }
 
 func readCheckpointInfoFromLocalTrees(ctx context.Context, repo *git.Repository, checkpointID id.CheckpointID) (*strategy.CheckpointInfo, error) {
-	info, err := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v2", strategy.GetV2MetadataBranchTree)
+	v2Tree, err := strategy.GetV2MetadataBranchTree(repo)
 	if err == nil {
-		return info, nil
+		info, infoErr := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v2", v2Tree)
+		if infoErr == nil {
+			return info, nil
+		}
+		err = infoErr
 	}
 	logging.Debug(ctx, "v2 metadata tree not available, trying v1",
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.String("error", err.Error()),
 	)
 
-	info, err = readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v1", strategy.GetMetadataBranchTree)
+	v1Tree, err := strategy.GetMetadataBranchTree(repo)
 	if err == nil {
-		return info, nil
+		info, infoErr := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v1", v1Tree)
+		if infoErr == nil {
+			return info, nil
+		}
+		err = infoErr
 	}
 	logging.Debug(ctx, "v1 metadata tree not available",
 		slog.String("checkpoint_id", checkpointID.String()),
@@ -353,12 +361,8 @@ func readCheckpointInfoFromLocalTree(
 	repo *git.Repository,
 	checkpointID id.CheckpointID,
 	metadataSource string,
-	loadTree func(*git.Repository) (*object.Tree, error),
+	metadataTree *object.Tree,
 ) (*strategy.CheckpointInfo, error) {
-	metadataTree, err := loadTree(repo)
-	if err != nil {
-		return nil, fmt.Errorf("read local checkpoint metadata tree: %w", err)
-	}
 	logging.Debug(ctx, "metadata tree obtained",
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.String("checkpoint_path", checkpointID.Path()),
