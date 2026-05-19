@@ -840,8 +840,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	// necessary objects"). Falls back to a full metadata-branch fetch if
 	// fetch-pack also can't reach the blobs.
 	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		BlobFetcher:    FetchBlobsByHash,
-		FetchRemoteLog: "explain: using origin for v2 store fetch remote",
+		BlobFetcher: FetchBlobsByHash,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
@@ -2057,9 +2056,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	// Warn (once per process) if metadata branches are disconnected
 	strategy.WarnIfMetadataDisconnected()
 
-	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "explain: using origin for branch checkpoint v2 store fetch remote",
-	})
+	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
 	}

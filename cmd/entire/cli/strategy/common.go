@@ -36,8 +36,6 @@ import (
 const (
 	branchMain   = "main"
 	branchMaster = "master"
-	// originRemote is the default git remote name used for fetch/push fallbacks.
-	originRemote = "origin"
 	// Strategy name constants
 	StrategyNameManualCommit = "manual-commit"
 )
@@ -198,9 +196,7 @@ func ListCheckpoints(ctx context.Context) ([]CheckpointInfo, error) {
 	// Warn (once per process) if metadata branches are disconnected
 	WarnIfMetadataDisconnected()
 
-	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "list checkpoints: using origin for v2 store fetch remote",
-	})
+	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare checkpoint store: %w", err)
 	}

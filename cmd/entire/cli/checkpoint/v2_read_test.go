@@ -21,7 +21,7 @@ import (
 func TestV2ReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("a1a2a3a4a5a6")
 	ctx := context.Background()
 
@@ -46,7 +46,7 @@ func TestV2ReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 func TestV2ReadCommitted_ReturnsNilForMissing(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("b1b2b3b4b5b6")
 	ctx := context.Background()
 
@@ -58,7 +58,7 @@ func TestV2ReadCommitted_ReturnsNilForMissing(t *testing.T) {
 func TestV2ReadSessionContent_ReturnsMetadataAndTranscript(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("c1c2c3c4c5c6")
 	ctx := context.Background()
 
@@ -84,7 +84,7 @@ func TestV2ReadSessionContent_ReturnsMetadataAndTranscript(t *testing.T) {
 func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	store.maxCheckpointsPerGeneration = 1
 	ctx := context.Background()
 
@@ -119,7 +119,7 @@ func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
 func TestV2ReadSessionContent_MissingTranscript_ReturnsError(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5f6")
 	ctx := context.Background()
 
@@ -140,7 +140,7 @@ func TestV2ReadSessionContent_MissingTranscript_ReturnsError(t *testing.T) {
 func TestV2ReadSessionMetadataAndPrompts_ReturnsWithoutTranscript(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5f7")
 	ctx := context.Background()
 
@@ -172,7 +172,7 @@ func TestV2ReadSessionMetadataAndPrompts_ReturnsWithoutTranscript(t *testing.T) 
 func TestV2ReadSessionMetadata_DoesNotRequireRawTranscript(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f2f3f4f5f6f7")
 	ctx := context.Background()
 
@@ -197,7 +197,7 @@ func TestV2ReadSessionMetadata_DoesNotRequireRawTranscript(t *testing.T) {
 func TestV2ReadSessionMetadata_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f2f3f4f5f6f8")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -212,7 +212,7 @@ func TestV2ReadSessionMetadata_ContextCancellation(t *testing.T) {
 func TestV2ReadSessionMetadata_ReturnsMetadata(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5fa")
 	ctx := context.Background()
 
@@ -233,7 +233,7 @@ func TestV2ReadSessionMetadata_ReturnsMetadata(t *testing.T) {
 
 func TestV2ReadSessionMetadata_FetchesMissingMetadataBlob(t *testing.T) {
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5fb")
 	ctx := context.Background()
 
@@ -264,7 +264,7 @@ func TestV2ReadSessionMetadata_FetchesMissingMetadataBlob(t *testing.T) {
 
 	reopenedRepo, err := git.PlainOpen(repoRoot)
 	require.NoError(t, err)
-	reopenedStore := NewV2GitStore(reopenedRepo, "origin")
+	reopenedStore := NewV2GitStore(reopenedRepo)
 	fetchCalled := false
 	reopenedStore.SetBlobFetcher(func(_ context.Context, hashes []plumbing.Hash) error {
 		fetchCalled = true
@@ -282,7 +282,7 @@ func TestV2ReadSessionMetadata_FetchesMissingMetadataBlob(t *testing.T) {
 func TestV2ReadSessionMetadataAndPrompts_MissingCheckpoint(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5f8")
 	ctx := context.Background()
 
@@ -297,7 +297,7 @@ func TestV2ReadSessionContent_ChunkedTranscript(t *testing.T) {
 	ctx := context.Background()
 
 	// Write metadata to /main so ReadSessionContent can find the checkpoint
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	err := v2Store.WriteCommitted(ctx, WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-chunked",
@@ -363,7 +363,7 @@ func TestV2ReadSessionContent_ChunkedTranscript(t *testing.T) {
 func TestV2ReadSessionCompactTranscript_ReturnsCompactData(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("b0b1b2b3b4b5")
 	ctx := context.Background()
 
@@ -387,7 +387,7 @@ func TestV2ReadSessionCompactTranscript_ReturnsCompactData(t *testing.T) {
 func TestV2ReadSessionCompactTranscript_MissingCompactTranscript(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("c0c1c2c3c4c5")
 	ctx := context.Background()
 
@@ -408,7 +408,7 @@ func TestV2ReadSessionCompactTranscript_MissingCompactTranscript(t *testing.T) {
 func TestV2ReadSessionCompactTranscript_MissingCheckpointOrSession(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	ctx := context.Background()
 
 	_, err := store.ReadSessionCompactTranscript(ctx, id.MustCheckpointID("d0d1d2d3d4d5"), 0)
@@ -431,7 +431,7 @@ func TestV2ReadSessionCompactTranscript_MissingCheckpointOrSession(t *testing.T)
 func TestV2UpdateSummary_PersistsSummaryToLatestSession(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f0f1f2f3f4f5")
 	ctx := context.Background()
 
@@ -474,7 +474,7 @@ func TestV2UpdateSummary_PersistsSummaryToLatestSession(t *testing.T) {
 func TestV2UpdateSummary_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
-	store := NewV2GitStore(repo, "origin")
+	store := NewV2GitStore(repo)
 	ctx := context.Background()
 
 	err := store.UpdateSummary(ctx, id.MustCheckpointID("000000000000"), &Summary{Intent: "x"})

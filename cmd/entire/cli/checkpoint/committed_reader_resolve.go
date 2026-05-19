@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
@@ -51,11 +50,9 @@ const (
 
 // CommittedReaderOptions configures NewCommittedReader.
 type CommittedReaderOptions struct {
-	BlobFetcher    BlobFetchFunc
-	FetchRemoteLog string
+	BlobFetcher BlobFetchFunc
 }
 
-//nolint:ireturn // Factory selects among v1, v2, and dual store implementations.
 func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is required")
@@ -74,16 +71,7 @@ func NewCommittedReader(ctx context.Context, repo *git.Repository, opts Committe
 
 	var v2Store *V2GitStore
 	if mode != committedReadV1 {
-		v2URL, err := remote.FetchURL(ctx)
-		if err != nil {
-			message := opts.FetchRemoteLog
-			if message == "" {
-				message = "checkpoint reader: using origin for v2 store fetch remote"
-			}
-			logging.Debug(ctx, message, slog.String("error", err.Error()))
-			v2URL = ""
-		}
-		v2Store = NewV2GitStore(repo, v2URL)
+		v2Store = NewV2GitStore(repo)
 		if opts.BlobFetcher != nil {
 			v2Store.SetBlobFetcher(opts.BlobFetcher)
 		}

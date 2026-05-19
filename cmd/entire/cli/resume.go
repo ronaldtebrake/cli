@@ -236,8 +236,7 @@ func resolveLatestCheckpoint(ctx context.Context, checkpointIDs []id.CheckpointI
 		return nil, err
 	}
 	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		BlobFetcher:    FetchBlobsByHash,
-		FetchRemoteLog: "resume: using origin for v2 metadata fetch remote",
+		BlobFetcher: FetchBlobsByHash,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
@@ -268,8 +267,7 @@ func readResumeCheckpointInfo(ctx context.Context, checkpointID id.CheckpointID)
 		return nil, err
 	}
 	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		BlobFetcher:    FetchBlobsByHash,
-		FetchRemoteLog: "resume: using origin for v2 metadata fetch remote",
+		BlobFetcher: FetchBlobsByHash,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
@@ -901,9 +899,7 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 	if repoErr != nil {
 		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
 	} else {
-		store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-			FetchRemoteLog: "resume: using origin for v2 session log fetch remote",
-		})
+		store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 		if storeErr != nil {
 			err = storeErr
 		} else {

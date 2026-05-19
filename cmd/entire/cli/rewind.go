@@ -691,9 +691,7 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 		return "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 
-	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "rewind: using origin for v2 session log fetch remote",
-	})
+	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if err != nil {
 		return "", fmt.Errorf("prepare checkpoint store: %w", err)
 	}

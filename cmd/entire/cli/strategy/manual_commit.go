@@ -74,8 +74,7 @@ func (s *ManualCommitStrategy) committedCheckpointStore(ctx context.Context) (ch
 
 	WarnIfMetadataDisconnected()
 	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		BlobFetcher:    s.blobFetcher,
-		FetchRemoteLog: "manual-commit: using origin for v2 store fetch remote",
+		BlobFetcher: s.blobFetcher,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)

@@ -57,9 +57,7 @@ func headHasReviewCheckpoint(ctx context.Context) (bool, string) {
 		logging.Debug(ctx, "head review check: open repository", slog.String("error", err.Error()))
 		return false, ""
 	}
-	store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "head review check: no configured v2 fetch remote",
-	})
+	store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if storeErr != nil {
 		logging.Debug(ctx, "head review check: checkpoint store unavailable", slog.String("error", storeErr.Error()))
 		return false, ""

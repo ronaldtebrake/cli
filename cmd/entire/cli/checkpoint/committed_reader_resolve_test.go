@@ -21,7 +21,7 @@ func TestCommittedReader_UsesV2WhenFound(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("111111111111")
 
@@ -60,7 +60,7 @@ func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("121212121212")
 
@@ -106,7 +106,7 @@ func TestDualCheckpointReader_DoesNotUseIndexFallbackWhenV2CheckpointExists(t *t
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("787878787878")
 
@@ -158,7 +158,7 @@ func TestDualCheckpointReader_ReadSessionContentReturnsV2AndFallbackErrors(t *te
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("565656565656")
 
@@ -186,7 +186,7 @@ func TestReadRawSessionLogForCheckpoint_FallsBackToV1RawTranscriptByV2SessionID(
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("343434343434")
 
@@ -228,7 +228,7 @@ func TestCommittedReader_FallsBackToV1WhenMissingInV2(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("222222222222")
 
@@ -256,7 +256,7 @@ func TestCommittedReader_PrefersV1WhenV2Disabled(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("333333333333")
 
@@ -290,7 +290,7 @@ func TestReadRawSessionLogForCheckpoint_UsesV2WhenFound(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("444444444444")
 
@@ -315,7 +315,7 @@ func TestDualCheckpointReader_ListCommittedMergesV2AndV1(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	transcript := redact.AlreadyRedacted([]byte(`{"text":"hello"}` + "\n"))
 
@@ -365,7 +365,7 @@ func TestCommittedReadV2DoesNotFallBackToV1(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("abababababab")
 
@@ -390,7 +390,7 @@ func TestReadRawSessionLogForCheckpoint_FallsBackToV1WhenMissingInV2(t *testing.
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("555555555555")
 
@@ -415,7 +415,7 @@ func TestReadRawSessionLogForCheckpoint_PrefersV1WhenV2Disabled(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("666666666666")
 
@@ -449,7 +449,7 @@ func TestCommittedReader_DoesNotUseIndexFallbackWhenV2Malformed(t *testing.T) {
 
 	repo := initTestRepo(t)
 	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
+	v2Store := NewV2GitStore(repo)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("777777777777")
 

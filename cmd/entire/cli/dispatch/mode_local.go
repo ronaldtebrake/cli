@@ -164,9 +164,7 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 		return nil, err
 	}
 
-	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "dispatch local: using origin for v2 store fetch remote",
-	})
+	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("prepare committed checkpoint store: %w", err)
 	}

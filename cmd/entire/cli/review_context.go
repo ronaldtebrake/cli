@@ -97,9 +97,7 @@ func reviewCommittedCheckpointContext(ctx context.Context, worktreeRoot string, 
 		logging.Debug(ctx, "review checkpoint context: open repo", slog.String("error", err.Error()))
 		return ""
 	}
-	store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
-		FetchRemoteLog: "review checkpoint context: no v2 fetch remote",
-	})
+	store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
 	if storeErr != nil {
 		logging.Debug(ctx, "review checkpoint context: checkpoint store unavailable", slog.String("error", storeErr.Error()))
 		return ""

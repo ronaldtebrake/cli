@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
@@ -374,14 +374,14 @@ func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointI
 	return nil, nil
 }
 
-// fetchRemoteFullRefs discovers and fetches /full/* refs from the configured
-// FetchRemote that aren't local.
+// fetchRemoteFullRefs discovers and fetches /full/* refs from the effective
+// checkpoint fetch target that aren't local.
 func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	lsCmd := exec.CommandContext(ctx, "git", "ls-remote", s.FetchRemote, paths.V2FullRefPrefix+"*")
-	output, err := lsCmd.Output()
+	fetchTarget := v2FullRefsFetchTarget(ctx)
+	output, err := remote.LsRemote(ctx, fetchTarget, paths.V2FullRefPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("ls-remote failed: %w", err)
 	}
@@ -409,13 +409,24 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 		return nil
 	}
 
-	args := append([]string{"fetch", "--no-tags", s.FetchRemote}, refSpecs...)
-	fetchCmd := exec.CommandContext(ctx, "git", args...)
-	if fetchOutput, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		return fmt.Errorf("fetch failed: %s", fetchOutput)
+	if fetchOutput, fetchErr := remote.Fetch(ctx, remote.FetchOptions{
+		Remote:   fetchTarget,
+		RefSpecs: refSpecs,
+		NoTags:   true,
+		NoFilter: true,
+	}); fetchErr != nil {
+		return fmt.Errorf("fetch failed: %s: %w", fetchOutput, fetchErr)
 	}
 
 	return nil
+}
+
+func v2FullRefsFetchTarget(ctx context.Context) string {
+	target, err := remote.FetchURL(ctx)
+	if err == nil && target != "" {
+		return target
+	}
+	return "origin"
 }
 
 // readTranscriptFromRef reads the raw transcript from a specific /full/* ref.

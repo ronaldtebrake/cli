@@ -74,7 +74,7 @@ func TestNewCommittedCheckpointReader_UsesLocalV2RefWhenSettingsDisabled(t *test
 	require.NoError(t, err)
 
 	cpID := id.MustCheckpointID("dd11ee22ff33")
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	require.NoError(t, v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-local",
@@ -1981,7 +1981,7 @@ func TestRunExplainCheckpoint_V2OnlyCheckpoint(t *testing.T) {
 		t.Fatalf("failed to write settings: %v", err)
 	}
 
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("777777777777")
 	ctx := context.Background()
 
@@ -2047,7 +2047,7 @@ func TestRunExplainCheckpoint_V2OnlyRawTranscript(t *testing.T) {
 		t.Fatalf("failed to write settings: %v", err)
 	}
 
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("888888888888")
 	ctx := context.Background()
 
@@ -2093,7 +2093,7 @@ func TestRunExplainCheckpoint_V2CheckpointRemoteFallbackResolvesRawTranscript(t 
 
 	cpID := id.MustCheckpointID("121212121212")
 	rawTranscript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"raw from checkpoint_remote"}]}}` + "\n")
-	checkpointStore := checkpoint.NewV2GitStore(checkpointRepo, "origin")
+	checkpointStore := checkpoint.NewV2GitStore(checkpointRepo)
 	require.NoError(t, checkpointStore.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-checkpoint-remote",
@@ -2185,7 +2185,7 @@ func TestRunExplainCheckpoint_V2UsesCompactTranscriptForIntent(t *testing.T) {
 		t.Fatalf("failed to write settings: %v", err)
 	}
 
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("999999999999")
 	ctx := context.Background()
 
@@ -2450,7 +2450,7 @@ func TestRunExplainCheckpoint_V2PreferredGenerateWritesSelectedStore(t *testing.
 	}
 
 	v1Store := checkpoint.NewGitStore(repo)
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("aabbccddeeff")
 	ctx := context.Background()
 
@@ -2514,7 +2514,7 @@ func TestRunExplainCheckpoint_V2OnlyGenerateSucceedsViaSelectedStore(t *testing.
 		0o644,
 	))
 
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("f1f2f3f4f5f6")
 	ctx := context.Background()
 
@@ -2570,7 +2570,7 @@ func TestRunExplainCheckpoint_V2FallsBackToFullWhenCompactMissing(t *testing.T) 
 		0o644,
 	))
 
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("e1e2e3e4e5e6")
 	ctx := context.Background()
 
@@ -2626,7 +2626,7 @@ func TestRunExplainCheckpoint_FullFallsBackToV1WhenV2FullMissing(t *testing.T) {
 	))
 
 	v1Store := checkpoint.NewGitStore(repo)
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("e2e3e4e5e6e7")
 	ctx := context.Background()
 
@@ -2686,7 +2686,7 @@ func TestRunExplainCheckpoint_V2CompactTranscriptNotUsedForGenerate(t *testing.T
 	))
 
 	v1Store := checkpoint.NewGitStore(repo)
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("c0c1c2c3c4c5")
 	ctx := context.Background()
 
@@ -2741,7 +2741,7 @@ func TestListCommittedForExplain_MergesV1AndV2(t *testing.T) {
 	require.NoError(t, err)
 
 	v1Store := checkpoint.NewGitStore(repo)
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	ctx := context.Background()
 
 	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n")
@@ -6177,7 +6177,7 @@ func TestGetBranchCheckpoints_V2OnlyCheckpointDiscoverable(t *testing.T) {
 	expectedPrompt := "Create the v2-only checkpoint test file"
 
 	// Write checkpoint ONLY to v2 store.
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	require.NoError(t, v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-only",
@@ -6251,7 +6251,7 @@ func TestGetBranchCheckpoints_V2PromptFallbackWhenV1Deleted(t *testing.T) {
 
 	// Dual-write: checkpoint in both v1 and v2.
 	v1Store := checkpoint.NewGitStore(repo)
-	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	v2Store := checkpoint.NewV2GitStore(repo)
 	require.NoError(t, v1Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-dual",

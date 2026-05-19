@@ -62,7 +62,7 @@ func setupExportRepo(t *testing.T) *git.Repository {
 
 func writeV2CheckpointForExport(t *testing.T, repo *git.Repository, cpID id.CheckpointID, opts checkpoint.WriteCommittedOptions) {
 	t.Helper()
-	store := checkpoint.NewV2GitStore(repo, "origin")
+	store := checkpoint.NewV2GitStore(repo)
 	opts.CheckpointID = cpID
 	if opts.AuthorName == "" {
 		opts.AuthorName = exportTestAuthorName
