@@ -1,11 +1,14 @@
 package investigate
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/cmd/entire/cli/settings"
@@ -66,4 +69,64 @@ func TestResolveDocPaths_PerRunIsolation(t *testing.T) {
 	)
 	require.NotEqual(t, findings1, findings2,
 		"two runs must not share findings doc paths")
+}
+
+// TestConfirmUntrustedIssueSeed_DeclinedExitsCleanly verifies that when
+// the operator declines the "issue-link arms an externally-seeded
+// investigation" confirmation, the function returns ok=false so runFresh
+// exits without launching agents.
+func TestConfirmUntrustedIssueSeed_DeclinedExitsCleanly(t *testing.T) {
+	t.Parallel()
+	cmd := &cobra.Command{}
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	cmd.SetOut(&stderr)
+
+	deps := Deps{
+		PromptYN: func(_ context.Context, _ string, _ bool) (bool, error) {
+			return false, nil
+		},
+	}
+	ok, err := confirmUntrustedIssueSeed(context.Background(), cmd, deps, "https://github.com/o/r/issues/1")
+	require.NoError(t, err)
+	require.False(t, ok, "decline must surface as ok=false")
+	require.Contains(t, stderr.String(), "permission/sandbox bypass",
+		"warning must explain the bypass risk so the operator can make an informed call")
+}
+
+// TestConfirmUntrustedIssueSeed_AcceptedReturnsOK verifies the happy path.
+func TestConfirmUntrustedIssueSeed_AcceptedReturnsOK(t *testing.T) {
+	t.Parallel()
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+
+	deps := Deps{
+		PromptYN: func(_ context.Context, _ string, _ bool) (bool, error) {
+			return true, nil
+		},
+	}
+	ok, err := confirmUntrustedIssueSeed(context.Background(), cmd, deps, "https://github.com/o/r/issues/1")
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+// TestConfirmUntrustedIssueSeed_PromptError surfaces prompt-transport
+// failures so runFresh can bail with a wrapped error instead of running
+// agents blind.
+func TestConfirmUntrustedIssueSeed_PromptError(t *testing.T) {
+	t.Parallel()
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+
+	wantErr := errors.New("simulated prompt failure")
+	deps := Deps{
+		PromptYN: func(_ context.Context, _ string, _ bool) (bool, error) {
+			return false, wantErr
+		},
+	}
+	ok, err := confirmUntrustedIssueSeed(context.Background(), cmd, deps, "https://github.com/o/r/issues/1")
+	require.False(t, ok)
+	require.ErrorIs(t, err, wantErr)
 }

@@ -383,6 +383,45 @@ func runInvestigate(ctx context.Context, cmd *cobra.Command, args []string, f ru
 	return runFresh(ctx, cmd, args, f, deps)
 }
 
+// confirmUntrustedIssueSeed warns the operator that an --issue-link run
+// feeds external (potentially attacker-controlled) GitHub content into
+// agents that spawn with permission/sandbox bypass, and waits for an
+// affirmative answer before continuing.
+//
+// Interactive: prompts y/N (default N). Returns (false, nil) on decline so
+// the caller exits cleanly. Returns the prompt error wrapped on transport
+// failure (Ctrl+C is treated as decline by uiform.PromptYN).
+//
+// Non-interactive: logs the warning to stderr and proceeds. CI / scripted
+// callers passed --issue-link deliberately and need a way through; a hard
+// block would break automation. The risk surfaces in operator-facing
+// telemetry instead of being silently bypassed.
+func confirmUntrustedIssueSeed(ctx context.Context, cmd *cobra.Command, deps Deps, issueLink string) (bool, error) {
+	const warning = "Warning: --issue-link seeds the investigation with content fetched from " +
+		"GitHub (issue body + comments). Agents in this run spawn with " +
+		"permission/sandbox bypass and will read that content. A malicious " +
+		"issue or comment can influence agent behaviour."
+	prompt := deps.PromptYN
+	canPrompt := prompt != nil
+	if prompt == nil {
+		prompt = realPromptYN
+		canPrompt = interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively()
+	}
+	if !canPrompt {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"%s\nProceeding non-interactively (no TTY to prompt). Source: %s\n",
+			warning, issueLink)
+		return true, nil
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), warning)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Source: %s\n", issueLink)
+	ok, err := prompt(ctx, "Continue with externally seeded investigation?", false)
+	if err != nil {
+		return false, fmt.Errorf("issue-link confirmation prompt: %w", err)
+	}
+	return ok, nil
+}
+
 // runEdit re-opens the config picker and persists the result.
 func runEdit(ctx context.Context, cmd *cobra.Command, deps Deps) error {
 	out := cmd.OutOrStdout()
@@ -521,7 +560,26 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 	if !interactive.IsTerminalWriter(cmd.OutOrStdout()) || !interactive.CanPromptInteractively() {
 		fmt.Fprintf(cmd.OutOrStdout(), "Resuming investigation: %q (run %s)\n", state.Topic, state.RunID)
 	}
-	return executeLoop(ctx, cmd, in, deps)
+
+	result, err := executeLoopAndCapture(ctx, cmd, in, deps)
+	if err != nil {
+		return err
+	}
+
+	// Rewrite the manifest with the new terminal outcome. Reusing
+	// state.StartedAt keeps the filename stable (manifests are keyed
+	// <stamp>-<runID>.json) so this overwrites the paused/cancelled
+	// record in place rather than creating a duplicate. WorktreePath
+	// isn't on RunState, so re-resolve — if it fails the manifest is
+	// still written, just without the path.
+	worktreeRoot, wtErr := paths.WorktreeRoot(ctx)
+	if wtErr != nil {
+		worktreeRoot = ""
+	}
+	writeRunManifest(ctx, cmd.OutOrStdout(), state.RunID, state.Topic, agents,
+		state.StartingSHA, worktreeRoot, state.FindingsDoc,
+		state.StartedAt, time.Now().UTC(), result)
+	return nil
 }
 
 // runFresh handles the full first-run path: bootstrap docs, build initial
@@ -627,6 +685,22 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 		cmd.SilenceUsage = true
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 		return wrapSilent(silentErr, err)
+	}
+
+	// Agents in this loop spawn with --permission-mode bypassPermissions
+	// (claude-code) and --dangerously-bypass-approvals-and-sandbox (codex).
+	// When the investigation is seeded from --issue-link, an attacker who
+	// controls the linked GitHub issue body or comments can influence the
+	// agent through content it reads. Make the operator confirm before
+	// running with externally seeded input + unfettered agent permissions.
+	if len(issueSeed) > 0 {
+		ok, cErr := confirmUntrustedIssueSeed(ctx, cmd, deps, f.issueLink)
+		if cErr != nil {
+			return wrapSilent(silentErr, cErr)
+		}
+		if !ok {
+			return nil
+		}
 	}
 
 	commonDir, err := session.GetGitCommonDir(ctx)
@@ -796,13 +870,6 @@ func topicForBootstrap(topic, seedDoc string, issueSeed []byte) string {
 // part of the user's source tree.
 func resolveDocPaths(commonDir, runID string) string {
 	return filepath.Join(commonDir, InvestigationsDirName, runID, "findings.md")
-}
-
-// executeLoop runs the investigation loop without writing a manifest.
-// Used by the --continue path, where the manifest already exists.
-func executeLoop(ctx context.Context, cmd *cobra.Command, in LoopInput, deps Deps) error {
-	_, err := executeLoopAndCapture(ctx, cmd, in, deps)
-	return err
 }
 
 // executeLoopAndCapture runs the loop and returns the LoopResult so the

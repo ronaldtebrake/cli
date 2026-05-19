@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -458,6 +459,94 @@ func TestNewCommand_ContinueLoadsExistingState(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Resuming investigation") {
 		t.Errorf("expected 'Resuming investigation' banner, got: %s", out.String())
+	}
+}
+
+// TestNewCommand_ContinueWritesTerminalManifest verifies that resuming a
+// paused run and reaching a terminal outcome (quorum/stalled) rewrites the
+// manifest with the new outcome and findings content. Without this the
+// --findings / show / fix subcommands would still see "paused" + empty
+// FindingsContent after a successful continuation.
+func TestNewCommand_ContinueWritesTerminalManifest(t *testing.T) {
+	tmp := setupInvestigateRepo(t)
+
+	stateDir := filepath.Join(tmp, ".git", "entire-investigations")
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	store := investigate.NewStateStoreWithDir(stateDir)
+	runID := "112233445566"
+	// Findings doc must live in the per-run subdir so the terminal-outcome
+	// cleanup (os.RemoveAll(filepath.Dir(findingsDoc))) only nukes that
+	// subdir, not the sibling manifests/ directory.
+	runDir := filepath.Join(stateDir, runID)
+	if err := os.MkdirAll(runDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	findingsPath := filepath.Join(runDir, "findings.md")
+	if err := os.WriteFile(findingsPath, []byte("# resumed findings body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	st := &investigate.RunState{
+		RunID:       runID,
+		Topic:       "resumed topic",
+		Agents:      []string{"resumed-agent"},
+		MaxTurns:    2,
+		Quorum:      1,
+		FindingsDoc: findingsPath,
+		StartingSHA: "deadbeef",
+		StartedAt:   startedAt,
+	}
+	if err := store.Save(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the manifest dir with a paused-state record at the same StartedAt.
+	manifestStore, err := investigate.NewLocalManifestStore(context.Background())
+	if err != nil {
+		t.Fatalf("manifest store: %v", err)
+	}
+	pausedManifest := investigate.LocalManifest{
+		RunID:       runID,
+		Topic:       "resumed topic",
+		StartingSHA: "deadbeef",
+		FindingsDoc: findingsPath,
+		Agents:      []string{"resumed-agent"},
+		Outcome:     string(investigate.OutcomePaused),
+		StartedAt:   startedAt,
+		EndedAt:     startedAt.Add(time.Minute),
+	}
+	if err := manifestStore.Write(context.Background(), pausedManifest); err != nil {
+		t.Fatalf("seed paused manifest: %v", err)
+	}
+
+	// Stub the loop to terminate with Quorum so runContinue takes the
+	// "terminal" branch in writeRunManifest.
+	_, runFn := captureLoopRunWithOutcome(investigate.OutcomeQuorum)
+	deps := newTestDeps(t, []types.AgentName{"resumed-agent"}, []string{"resumed-agent"})
+	deps.LoopRun = runFn
+
+	cmd := investigate.NewCommand(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--continue", runID})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	got, ok, err := manifestStore.FindByRunID(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("FindByRunID: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest disappeared after --continue")
+	}
+	if got.Outcome != string(investigate.OutcomeQuorum) {
+		t.Errorf("manifest.Outcome = %q, want %q (paused -> quorum overwrite)", got.Outcome, investigate.OutcomeQuorum)
+	}
+	if got.FindingsContent == "" {
+		t.Errorf("manifest.FindingsContent empty; expected findings to be captured on terminal outcome")
 	}
 }
 
