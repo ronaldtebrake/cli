@@ -13,16 +13,14 @@ import (
 //
 //	codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -
 //
-// Prompt is piped on stdin. The "dangerously-bypass" flag is
-// codex's documented way to run autonomously without sandbox + approval
-// gates. Less aggressive options (-s workspace-write, --add-dir) are
-// NOT sufficient for `entire investigate`: codex's workspace-write
-// policy explicitly excludes `.git/` regardless of --add-dir, so the
-// agent could not write to <git-common-dir>/entire-investigations/<run-id>/
+// Prompt is piped on stdin. The "dangerously-bypass" flag is codex's
+// documented way to run autonomously without sandbox + approval gates.
+// Less aggressive options (-s workspace-write, --add-dir) are NOT
+// sufficient for `entire investigate`: codex's workspace-write policy
+// excludes `.git/` regardless of --add-dir, so the agent could not
+// write to <git-common-dir>/entire-investigations/<run-id>/
 // (findings.md / state.json) even when that path was added. The user
-// explicitly invoked the agent; the prompt forbids destructive
-// commands; this matches claude-code's --permission-mode bypassPermissions
-// posture in the parallel spawner.
+// explicitly invoked the agent; the prompt forbids destructive commands.
 type codexSpawner struct{}
 
 // NewSpawner returns a Spawner for codex's non-interactive review/investigate mode.

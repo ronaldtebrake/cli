@@ -1,11 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// multipicker.go provides spawn-time agent multi-selection and per-run
-// prompt collection for multi-agent investigation runs. When 2+ eligible
-// agents are configured AND the user has not passed --agents, the
-// dispatch logic in cmd.go calls PickInvestigateAgents to let the user
-// choose a subset and optionally add a one-off preamble without editing
-// settings. Mirrors review/multipicker.go.
 package investigate
 
 import (
@@ -99,8 +91,7 @@ func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice, askPromp
 }
 
 // sortAgentChoices returns a copy of eligible sorted alphabetically by
-// Name. Extracted from PickInvestigateAgents so the ordering can be
-// asserted without driving the huh form.
+// Name.
 func sortAgentChoices(eligible []AgentChoice) []AgentChoice {
 	sorted := make([]AgentChoice, len(eligible))
 	copy(sorted, eligible)

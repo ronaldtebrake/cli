@@ -1,9 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// clean.go implements `entire investigate clean`. The subcommand removes
-// one investigation's artifacts (manifest + per-run dir) by run-id, or
-// every investigation when --all is passed. A confirmation prompt asks
-// before deletion unless --force.
 package investigate
 
 import (
@@ -40,7 +34,7 @@ type CleanDeps struct {
 	// production this is StateStore.RunDir; tests inject a fake.
 	RunDir func(runID string) string
 	// ManifestPath returns the on-disk path for a manifest. In
-	// production this is LocalManifestStore.PathFor(m); tests inject.
+	// production this is LocalManifestStore.PathFor(m).
 	ManifestPath func(m LocalManifest) string
 	// Confirm prompts the user with the given message and returns the
 	// y/N answer. Nil → real huh-backed prompt (use newAccessibleForm).
@@ -105,8 +99,7 @@ func RunClean(ctx context.Context, in CleanInput, deps CleanDeps) error {
 
 // selectCleanTargets resolves the manifest list to the target set.
 // For --all, returns every manifest. For a run id (or prefix), defers
-// to ResolveByRunID for the exact-then-prefix match logic shared with
-// show.
+// to ResolveByRunID for exact-then-prefix matching.
 func selectCleanTargets(manifests []LocalManifest, runID string, all bool) ([]LocalManifest, error) {
 	if all {
 		return manifests, nil
@@ -164,8 +157,6 @@ func deleteOneInvestigation(m LocalManifest, deps CleanDeps) error {
 }
 
 // realConfirm is the production y/N prompt for the clean confirmation.
-// Reuses the existing realPromptYN helper to match other interactive
-// confirmations in this package.
 func realConfirm(ctx context.Context, message string) (bool, error) {
 	return realPromptYN(ctx, message, false)
 }

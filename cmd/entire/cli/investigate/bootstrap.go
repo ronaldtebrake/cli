@@ -12,15 +12,14 @@ import (
 )
 
 // slugRE matches one-or-more characters that are NOT (lowercase) ascii
-// alphanumerics. Anything else is squashed to a single dash. Mirrors marvin's
-// slugifyTopic regex, with one adjustment: marvin pre-lowercases the input
-// before applying the regex, so we do the same.
+// alphanumerics. Anything else is squashed to a single dash. Input is
+// pre-lowercased before applying.
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 // SlugifyTopic converts an arbitrary topic string into a filesystem-safe slug.
 // Result is lowercase, ASCII-alphanumeric with single dashes, no leading or
 // trailing dash, and no longer than 60 characters. Empty/non-mappable input
-// returns "investigation" (entire's analog to marvin's "plan" fallback).
+// returns "investigation".
 func SlugifyTopic(topic string) string {
 	slug := slugRE.ReplaceAllString(strings.ToLower(topic), "-")
 	slug = strings.Trim(slug, "-")
@@ -36,13 +35,10 @@ func SlugifyTopic(topic string) string {
 // DeriveTopicFromSeed extracts a human-readable topic from a seed-doc body.
 // Order of precedence:
 //
-//  1. The first line shaped like `# Investigation: <topic>` — the
-//     scaffold's own title format. Round-trips a finished findings doc
-//     cleanly.
-//  2. The first markdown H1 (`# anything`) — covers prompt-doc seeds that
-//     don't follow the scaffold but do have a title.
-//  3. fallbackFilename without its extension — last-resort fallback so a
-//     plain seed file still produces a readable topic.
+//  1. The first `# Investigation: <topic>` line — the scaffold's own title
+//     format. Round-trips a finished findings doc cleanly.
+//  2. The first markdown H1 (`# anything`).
+//  3. fallbackFilename without its extension.
 func DeriveTopicFromSeed(body []byte, fallbackFilename string) string {
 	lines := strings.Split(string(body), "\n")
 	for _, line := range lines {
@@ -112,13 +108,12 @@ type BootstrapResult struct {
 
 // Bootstrap writes the initial findings doc to disk.
 //
-// File-write semantics: the function creates parent directories as needed
-// and writes the findings file unconditionally. Callers that want "skip
-// if findings doc exists" semantics should stat the path themselves;
-// Bootstrap is intentionally idempotent at the byte level (same input →
-// same output) but does not protect existing files. This mirrors the role
-// of "the loop driver gives me an empty doc to seed" — protecting an
-// existing investigation belongs to a layer above this one.
+// File-write semantics: creates parent directories as needed and writes
+// the findings file unconditionally. Callers that want "skip if findings
+// doc exists" semantics should stat the path themselves; Bootstrap is
+// idempotent at the byte level (same input → same output) but does not
+// protect existing files — protecting an existing investigation belongs
+// to a layer above this one.
 func Bootstrap(ctx context.Context, in BootstrapInput) (BootstrapResult, error) {
 	_ = ctx // Reserved for future use (e.g. cancellation during long renders).
 

@@ -1,12 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// cmd.go provides NewCommand(), the cobra entry point for `entire
-// investigate`. The command bootstraps shared findings/timeline docs and
-// drives a round-robin multi-agent investigation loop via
-// RunInvestigateLoop. The cobra wiring mirrors `entire review` (cmd.go in
-// the review package): a Deps struct collects runtime-injectable hooks so
-// tests can stub spawners, picker forms, and the loop runner without
-// needing real TTY or agent binaries.
 package investigate
 
 import (
@@ -47,16 +38,13 @@ type Deps struct {
 	NewSilentError func(err error) error
 
 	// SpawnerFor maps an agent name → Spawner (claude-code, codex,
-	// gemini-cli). Returns nil for non-launchable agents. Wired by
-	// investigate_bridge.go in a later task.
+	// gemini-cli). Returns nil for non-launchable agents.
 	SpawnerFor func(agentName string) spawn.Spawner
 
-	// LaunchFix delegates to agentlaunch.LaunchFixAgent in production. Tests
-	// inject a stub.
+	// LaunchFix delegates to agentlaunch.LaunchFixAgent in production.
 	LaunchFix func(ctx context.Context, agentName string, prompt string) error
 
-	// LoopRun, when non-nil, replaces RunInvestigateLoop. Tests inject a
-	// stub to capture LoopInput and return a canned LoopResult.
+	// LoopRun, when non-nil, replaces RunInvestigateLoop.
 	LoopRun func(ctx context.Context, in LoopInput, ldeps LoopDeps) (LoopResult, error)
 
 	// PromptYN is the interactive y/N prompt used by the settings migration
@@ -70,13 +58,11 @@ type Deps struct {
 	HeadHasInvestigateCheckpoint func(ctx context.Context) (bool, string)
 
 	// InvestigateMultipicker overrides the spawn-time agent picker. Nil
-	// means "use the real PickInvestigateAgents form". Test-injectable so
-	// tests can drive the picker without a TTY.
+	// means "use the real PickInvestigateAgents form".
 	InvestigateMultipicker func(ctx context.Context, choices []AgentChoice, askPrompt bool) (PickedInvestigate, error)
 }
 
-// runFlags collects the flag values the run path inspects. Captured into a
-// struct so helpers don't need a giant signature.
+// runFlags collects the flag values the run path inspects.
 type runFlags struct {
 	issueLink string
 	agentsCSV string
@@ -88,16 +74,15 @@ type runFlags struct {
 }
 
 // NewCommand returns the `entire investigate` cobra command wired with the
-// provided deps. Callers in the cli package pass a fully-populated Deps;
-// tests pass a Deps with stub fields.
+// provided deps.
 func NewCommand(deps Deps) *cobra.Command {
 	flags := runFlags{}
 
 	cmd := &cobra.Command{
 		Use:   "investigate [seed-doc]",
 		Short: "Run a multi-agent investigation against the current branch",
-		// Hidden from `entire help` while the feature is still maturing —
-		// users who know about it can still run it normally.
+		// Hidden from `entire help` while the feature is still maturing;
+		// directly invoking it still works.
 		Hidden: true,
 		Long: `Run a multi-agent investigation. Agents take turns appending findings,
 evidence, and analysis to a shared findings document until quorum is reached.
@@ -334,10 +319,10 @@ func runInvestigate(ctx context.Context, cmd *cobra.Command, args []string, f ru
 	}
 
 	// Initialize the file-backed logger so per-turn info/warn lines land in
-	// .entire/logs/entire.log instead of stderr — which, during a TUI run,
-	// would otherwise be interleaved with the dashboard frame and corrupt
-	// the display. Failure is non-fatal; the fallback inside logging.log
-	// will use slog.Default() and the user sees no worse than before.
+	// .entire/logs/entire.log instead of stderr — stderr during a TUI run
+	// would interleave with the dashboard frame and corrupt the display.
+	// Failure is non-fatal; the fallback inside logging.log uses
+	// slog.Default().
 	if err := logging.Init(ctx, ""); err == nil {
 		defer logging.Close()
 	}
@@ -497,11 +482,9 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 		return wrapSilent(silentErr, err)
 	}
 
-	// Resume reuses the agents the user originally selected — we do NOT
-	// open the multipicker on --continue. The persisted state already
-	// captures their intent (and re-prompting would force them to re-pick
-	// every time they resume a paused run). Pass --agents to narrow on
-	// resume; the multipicker is for fresh runs only.
+	// Resume reuses the originally selected agents — the multipicker does
+	// NOT reopen on --continue; persisted state already captures intent.
+	// Pass --agents to narrow on resume.
 
 	// state.NextAgentIdx is the index into agents the next turn will use.
 	// If --agents shrinks the list (or the persisted state is otherwise
@@ -531,12 +514,10 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 	}
 
 	// AlwaysPrompt is not persisted in RunState — it's a settings-level
-	// customization that the user controls outside the run. Load it fresh
-	// on resume so a configured "be skeptical" preamble survives Ctrl+C.
-	// If settings.Load fails (e.g. the file was hand-edited and is now
-	// malformed), surface a warning so the user notices their preamble has
-	// silently disappeared instead of letting the agent's behaviour change
-	// mid-investigation with no explanation.
+	// customization. Load it fresh on resume so a configured "be skeptical"
+	// preamble survives Ctrl+C. Surface a settings.Load failure so the
+	// user notices their preamble disappeared instead of letting agent
+	// behaviour change mid-investigation with no explanation.
 	alwaysPrompt := ""
 	if s, sErr := settings.Load(ctx); sErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(),
@@ -569,9 +550,8 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 	// Rewrite the manifest with the new terminal outcome. Reusing
 	// state.StartedAt keeps the filename stable (manifests are keyed
 	// <stamp>-<runID>.json) so this overwrites the paused/cancelled
-	// record in place rather than creating a duplicate. WorktreePath
-	// isn't on RunState, so re-resolve — if it fails the manifest is
-	// still written, just without the path.
+	// record in place. WorktreePath isn't on RunState — re-resolve;
+	// if it fails the manifest is still written, just without the path.
 	worktreeRoot, wtErr := paths.WorktreeRoot(ctx)
 	if wtErr != nil {
 		worktreeRoot = ""
@@ -724,9 +704,8 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 	}
 
 	// Skip the pre-TUI banner when the dashboard will render its own title
-	// row — those two lines were echoing the TUI header and leaving stale
-	// rows above the live dashboard. In non-TTY mode the text sink shows
-	// nothing similar, so the banner remains useful there.
+	// row. In non-TTY mode the text sink doesn't render a header, so the
+	// banner is shown there.
 	if !interactive.IsTerminalWriter(cmd.OutOrStdout()) || !interactive.CanPromptInteractively() {
 		fmt.Fprintf(cmd.OutOrStdout(), "Investigating: %q (run %s)\n", topic, runID)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Findings: %s\n", findingsDoc)
@@ -908,12 +887,10 @@ func executeLoopAndCapture(ctx context.Context, cmd *cobra.Command, in LoopInput
 }
 
 // buildProgressSink chooses between the Bubble Tea TUI and the plain-text
-// fallback based on terminal capability. In TTY mode we wrap ctx in a
+// fallback based on terminal capability. In TTY mode ctx is wrapped in a
 // cancellable child so the in-TUI Ctrl+C handler can stop the run via the
 // same cancel function the cobra root would use on SIGINT. In non-TTY mode
 // the caller's ctx is returned unchanged and cancelTUI is nil.
-//
-
 func buildProgressSink(ctx context.Context, in LoopInput, out io.Writer) (ProgressSink, *tuiProgressSink, context.Context, context.CancelFunc) {
 	if !interactive.IsTerminalWriter(out) || !interactive.CanPromptInteractively() {
 		return newTextProgressSink(out), nil, ctx, nil
@@ -969,11 +946,11 @@ func writeRunManifest(
 	}
 
 	// Capture findings into the manifest on terminal outcomes so the
-	// content survives even after we delete the per-run dir. Failure to
+	// content survives even after the per-run dir is deleted. Failure to
 	// read is logged but non-fatal — the manifest still records that
-	// the run happened, just without the findings body. We intentionally
-	// do NOT clean up the per-run dir if the read fails: leaving the
-	// file behind gives the user a chance to recover it manually.
+	// the run happened, just without the findings body. The per-run dir
+	// is NOT cleaned up if the read fails: leaving the file behind gives
+	// the user a chance to recover it manually.
 	terminal := result.Outcome == OutcomeQuorum || result.Outcome == OutcomeStalled
 	findingsContent := ""
 	captured := false
@@ -1009,10 +986,10 @@ func writeRunManifest(
 	}
 
 	// Clean up the per-run dir only AFTER the manifest write succeeds
-	// and only when we successfully captured the findings body. This
-	// keeps the failure modes safe: a manifest write failure leaves the
-	// per-run dir intact (for retry/inspection), and a read failure
-	// leaves the file on disk so the user can recover it.
+	// and only when the findings body was captured. This keeps failure
+	// modes safe: a manifest write failure leaves the per-run dir intact
+	// (for retry/inspection); a read failure leaves the file on disk so
+	// the user can recover it.
 	if terminal && captured && findingsDoc != "" {
 		runDir := filepath.Dir(findingsDoc)
 		if rmErr := os.RemoveAll(runDir); rmErr != nil {
@@ -1028,8 +1005,7 @@ func writeRunManifest(
 // content, and how to run `entire investigate fix`. The findings
 // content comes from the manifest's embedded FindingsContent on
 // terminal outcomes (Quorum/Stalled — the per-run dir is gone); on
-// paused/cancelled outcomes the per-run dir still has findings.md and
-// we read it from there.
+// paused/cancelled outcomes findings.md is read from the per-run dir.
 func writeInvestigateFooter(w io.Writer, m LocalManifest) {
 	fmt.Fprintln(w)
 	if m.Outcome != "" {
@@ -1042,9 +1018,8 @@ func writeInvestigateFooter(w io.Writer, m LocalManifest) {
 	if body != "" {
 		rendered, renderErr := mdrender.RenderForWriter(w, body)
 		if renderErr != nil {
-			// Fall back to raw markdown so the user still sees the
-			// content even when glamour fails (malformed style config,
-			// unexpected runtime).
+			// Fall back to raw markdown when glamour fails (malformed
+			// style config, unexpected runtime).
 			rendered = body
 		}
 		fmt.Fprint(w, rendered)
@@ -1088,14 +1063,12 @@ func newRunID() (string, error) {
 }
 
 // currentHeadSHA returns the current HEAD commit hash as a 40-char hex
-// string. Thin wrapper around gitexec.HeadSHA preserved so existing call
-// sites don't change.
+// string.
 func currentHeadSHA(ctx context.Context, repoRoot string) (string, error) {
 	return gitexec.HeadSHA(ctx, repoRoot) //nolint:wrapcheck // gitexec already wraps
 }
 
-// wrapSilent applies the silent-error wrapper if it is non-nil. Mirrors
-// review's pattern so tests can inject a passthrough.
+// wrapSilent applies the silent-error wrapper if it is non-nil.
 func wrapSilent(fn func(error) error, err error) error {
 	if fn == nil {
 		return err

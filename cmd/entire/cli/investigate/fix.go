@@ -10,11 +10,10 @@ import (
 )
 
 // defaultFixAgent is the agent registry name used when FixDeps.FixAgent is
-// empty. Hard-coded for now; the cobra wiring task layers on an --agent
-// flag and a settings-backed default.
+// empty.
 //
-// TODO: layer on `entire investigate fix --agent <name>` and settings
-// override in the cobra wiring task.
+// TODO: layer on `entire investigate fix --agent <name>` and a settings
+// override.
 const defaultFixAgent = "claude-code"
 
 // FixDeps collects what RunFix needs that's injectable for tests.
@@ -27,12 +26,10 @@ type FixDeps struct {
 	FixAgent string
 
 	// Launch runs the actual coding agent session. Production wires this
-	// to agentlaunch.LaunchFixAgent. Tests inject a stub.
+	// to agentlaunch.LaunchFixAgent.
 	Launch func(ctx context.Context, agentName string, prompt string) error
 
-	// ReadFile, when non-nil, replaces os.ReadFile. Useful for tests that
-	// want to control which doc bodies the prompt sees without touching
-	// the filesystem.
+	// ReadFile, when non-nil, replaces os.ReadFile.
 	ReadFile func(name string) ([]byte, error)
 }
 
@@ -73,9 +70,9 @@ func RunFix(ctx context.Context, in FixInput, deps FixDeps) error {
 	}
 
 	// Prefer the manifest's embedded findings content (populated on
-	// terminal outcomes by R3 — the per-run dir is auto-cleaned, so
-	// FindingsDoc points at a deleted path). Fall back to reading the
-	// on-disk file for paused/cancelled runs where the dir is preserved.
+	// terminal outcomes — the per-run dir is auto-cleaned, so FindingsDoc
+	// points at a deleted path). Fall back to reading the on-disk file
+	// for paused/cancelled runs where the dir is preserved.
 	findingsBody := manifest.FindingsContent
 	if findingsBody == "" {
 		findingsBody = readDocOrWarn(readFile, manifest.FindingsDoc, "findings", in.ErrOut)
@@ -138,11 +135,11 @@ func readDocOrWarn(read func(string) ([]byte, error), path string, label string,
 	return string(b)
 }
 
-// composeFixPrompt builds the follow-up prompt sent to the fix agent.
-// Layout matches the plan's §10 contract: a "do not re-investigate"
-// preamble, the run identity, and the findings body verbatim under a
-// section heading. An empty findings body is still emitted with a
-// placeholder line so the agent sees the section structure consistently.
+// composeFixPrompt builds the follow-up prompt sent to the fix agent: a
+// "do not re-investigate" preamble, the run identity, and the findings
+// body verbatim under a section heading. An empty findings body is still
+// emitted with a placeholder line so the agent sees the section
+// structure consistently.
 func composeFixPrompt(manifest LocalManifest, findings string) string {
 	var b strings.Builder
 	b.WriteString("A prior multi-agent investigation produced these findings. Use them as\n")

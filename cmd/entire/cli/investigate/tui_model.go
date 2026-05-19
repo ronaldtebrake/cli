@@ -1,13 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// tui_model.go provides investigateTUIModel, the Bubble Tea Model for the
-// investigate dashboard. The model renders a per-agent status table during
-// the run with AGENT / STATUS / DURATION / TURN / APPROVED columns; it
-// reacts to ProgressSink events translated into tea.Msg values by
-// tui_sink.go.
-//
-// Mirrors the structure of review/tui_model.go but uses turn-based events
-// instead of streaming agent events.
 package investigate
 
 import (
@@ -217,8 +207,8 @@ func (m investigateTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // handleTurnStarted marks the named agent as running and stamps the start
-// time. Unknown agents are ignored (defensive — should not happen given the
-// rowIdx pre-population, but we'd rather drop a message than panic).
+// time. Unknown agents are ignored (defensive — should not happen given
+// rowIdx pre-population; dropping the message beats panicking).
 func (m investigateTUIModel) handleTurnStarted(msg turnStartedMsg) investigateTUIModel {
 	idx, ok := m.rowIdx[msg.agent]
 	if !ok {
@@ -279,7 +269,7 @@ func (m investigateTUIModel) handleTurnFinished(msg turnFinishedMsg) investigate
 		findings: msg.findings,
 	})
 
-	// Recompute round + approval counters from the full row set so we are
+	// Recompute round + approval counters from the full row set so it is
 	// resilient to out-of-order messages and replays.
 	totalTurns := 0
 	approvals := 0
@@ -539,8 +529,7 @@ func formatRowDuration(row agentRow) string {
 	return formatDuration(total)
 }
 
-// formatDuration delegates to tuiutil.FormatDuration so the review and
-// investigate TUIs share one implementation.
+// formatDuration delegates to tuiutil.FormatDuration.
 func formatDuration(d time.Duration) string {
 	return tuiutil.FormatDuration(d)
 }

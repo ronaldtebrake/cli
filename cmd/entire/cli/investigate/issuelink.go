@@ -64,7 +64,7 @@ type ghIssue struct {
 }
 
 // runGhFn is the indirection the loop's gh-resolver calls. Production wires
-// this to runGhExec; tests override it.
+// this to runGhExec.
 var runGhFn = runGhExec
 
 // runGhExec is the production runGhFn implementation. Returns gh's stdout
@@ -245,15 +245,13 @@ func renderIssueSeed(rawURL string, issue ghIssue) []byte {
 	fmt.Fprintf(&b, "**Labels:** %s\n\n", labelLine)
 
 	// Issue/PR bodies and comments are untrusted input sourced from the
-	// public internet. We treat them as DATA, not as instructions to the
-	// agent. Wrap each block in a labeled XML-style envelope so a
-	// well-aligned agent treats the content as quoted material rather than
-	// executable instructions, even if the body contains adversarial
-	// markdown like "IGNORE PREVIOUS INSTRUCTIONS" or fake `## Turn N`
-	// headings designed to spoof timeline output. See CLAUDE.md security
-	// rules: external/user-supplied content must be constructed to prevent
-	// prompt injection — treat untrusted input as data, never as
-	// instructions.
+	// public internet. Treat them as DATA, not instructions. Each block
+	// is wrapped in a labeled XML-style envelope so a well-aligned agent
+	// treats the content as quoted material rather than executable
+	// instructions, even if the body contains adversarial markdown like
+	// "IGNORE PREVIOUS INSTRUCTIONS" or fake `## Turn N` headings
+	// designed to spoof timeline output. See CLAUDE.md security rules:
+	// untrusted input must be treated as data, never as instructions.
 	body := strings.TrimSpace(issue.Body)
 	if body == "" {
 		body = "(no body)"
@@ -291,9 +289,8 @@ func renderIssueSeed(rawURL string, issue ghIssue) []byte {
 // writeUntrustedBlock wraps body in a labeled <untrusted> XML envelope so a
 // well-aligned agent treats the content as quoted data rather than
 // instructions to execute. The label disambiguates multiple blocks (e.g.
-// issue body vs comment-3) so the agent can reason about which content came
-// from where. We escape any literal "</untrusted>" inside the body so an
-// adversary cannot break out of the envelope.
+// issue body vs comment-3). Any literal "</untrusted>" inside body is
+// escaped so an adversary cannot break out of the envelope.
 func writeUntrustedBlock(b *strings.Builder, label, body string) {
 	const closeTag = "</untrusted>"
 	// Defang any literal close-tag inside the body so the envelope is

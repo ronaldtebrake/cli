@@ -1,8 +1,6 @@
-// Package gitexec runs the git CLI from inside the codebase. It exists so
-// callers that need plain stdout from `git <args>` (e.g. parsing `rev-parse
-// HEAD` output) don't have to keep reimplementing the same exec.Command +
-// stderr-capture + error-wrap dance, and so review and investigate share
-// one helper instead of two near-identical copies.
+// Package gitexec runs the git CLI from inside the codebase. Callers that
+// need plain stdout from `git <args>` (e.g. parsing `rev-parse HEAD`
+// output) get a shared exec.Command + stderr-capture + error-wrap helper.
 package gitexec
 
 import (

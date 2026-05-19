@@ -1,8 +1,6 @@
-// Package tuiutil hosts width-aware text helpers shared by the review and
-// investigate TUIs. Both packages render fixed-width dashboards where ANSI
-// escapes and control characters must be stripped, truncated to a display
-// width (not byte length), and padded to align columns — keeping the helpers
-// here lets either package evolve its dashboard without re-porting them.
+// Package tuiutil hosts width-aware text helpers for fixed-width TUI
+// dashboards: ANSI/control-char stripping, display-width-based truncation
+// and padding, and a compact duration formatter.
 package tuiutil
 
 import (
@@ -109,8 +107,8 @@ func WrapDisplayWidth(s string, width int) []string {
 	return out
 }
 
-// FormatDuration renders a time.Duration in the compact form used by the
-// review and investigate TUI dashboards: "523ms" / "8.4s" / "1m42s".
+// FormatDuration renders a time.Duration in compact form for TUI
+// dashboards: "523ms" / "8.4s" / "1m42s".
 func FormatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())

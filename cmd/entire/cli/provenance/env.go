@@ -4,11 +4,9 @@
 // child agent process; the UserPromptSubmit hook reads them to tag the
 // in-flight session with the right Kind and provenance metadata.
 //
-// Centralising the names here breaks the otherwise three-way duplication:
-// review/env.go and investigate/env.go declare their constants, and
-// agentlaunch (a leaf both review and investigate depend on) needs to strip
-// both families before spawning a fix agent. With the names owned here,
-// each consumer references the same source of truth.
+// Single source of truth for the names — review, investigate, and
+// agentlaunch (which strips both families before spawning a fix agent) all
+// reference this package.
 //
 // These names are stable API; renaming any constant is a breaking change.
 package provenance
@@ -68,7 +66,7 @@ func IsInvestigateEntry(kv string) bool {
 }
 
 // IsEntry reports whether kv is a "KEY=VALUE" entry from either family.
-// Used by agentlaunch to strip provenance markers before spawning a fix
+// agentlaunch uses this to strip provenance markers before spawning a fix
 // session so the child is not tagged as review or investigate.
 func IsEntry(kv string) bool {
 	return IsReviewEntry(kv) || IsInvestigateEntry(kv)

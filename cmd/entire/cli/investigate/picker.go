@@ -1,10 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// picker.go implements the first-run config picker for `entire
-// investigate`. The picker shows a multi-select of agents that are both
-// installed (hooks present) and launchable (a non-nil Spawner exists for
-// them), then prompts for max-turns / quorum, and returns an
-// InvestigateConfig the caller can persist.
 package investigate
 
 import (
@@ -25,23 +18,20 @@ import (
 
 // AgentChoice is one row in the investigate picker. Name is the agent
 // registry key (used for spawning); Label is the picker-visible string.
-// Exported so tests in investigate_test can drive the picker form fn
-// directly.
 type AgentChoice struct {
 	Name  string
 	Label string
 }
 
 // newAccessibleForm creates a huh form with Entire's standard theme,
-// switching to accessibility mode when ACCESSIBLE is set. Thin wrapper
-// around uiform.New preserved so existing call sites don't change.
+// switching to accessibility mode when ACCESSIBLE is set.
 func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 	return uiform.New(groups...)
 }
 
 // ConfirmFirstRunSetup prints a banner framing the picker as first-run
 // setup (rather than the investigation itself) and waits for the user to
-// confirm. Mirrors review.ConfirmFirstRunSetup.
+// confirm.
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No investigate config found — let's set one up first.")
 	fmt.Fprintln(out)
@@ -89,19 +79,15 @@ func eligibleAgentsForInvestigate(_ context.Context, spawnerFor func(string) spa
 	return out
 }
 
-// pickerFormFn renders the multi-select + max-turns + quorum form. The
-// production implementation uses huh; tests inject a stub via
-// pickerFormOverride below.
+// pickerFormFn renders the multi-select + max-turns + quorum form.
 type pickerFormFn func(ctx context.Context, eligible []AgentChoice, picks *[]string, maxTurns, quorum *int) error
 
 // pickerFormOverride, when non-nil, replaces the production huh form
-// inside RunInvestigateConfigPicker. Tests set this via
-// SetPickerFormFnForTest to drive the picker headlessly.
+// inside RunInvestigateConfigPicker. Test seam.
 var pickerFormOverride pickerFormFn
 
 // SetPickerFormFnForTest swaps the picker form function. Returns a
 // cleanup function the caller must defer to restore the previous value.
-// Intended for tests only.
 func SetPickerFormFnForTest(fn pickerFormFn) func() {
 	prev := pickerFormOverride
 	pickerFormOverride = fn

@@ -5,14 +5,14 @@ package investigate
 // The loop runs a fixed list of agents in a strict round-robin order. For
 // each turn it:
 //
-//  1. Hashes the findings file (SHA-256) BEFORE the turn.
+//  1. Fingerprints the findings file BEFORE the turn.
 //  2. Composes a prompt via ComposeInvestigatePrompt.
 //  3. Spawns the agent via Spawner.BuildCmd with ENTIRE_INVESTIGATE_* env
 //     populated by AppendInvestigateEnv.
 //  4. Discards the agent's stdout/stderr — the lifecycle hooks capture the
 //     full session transcript on the shadow branch and condense it onto
-//     entire/checkpoints/v1 on the next commit (same machinery as review).
-//  5. Waits for the agent to exit. Re-hashes the findings doc.
+//     entire/checkpoints/v1 on the next commit.
+//  5. Waits for the agent to exit. Re-fingerprints the findings doc.
 //  6. Reloads state.json from disk. The agent has written its stance into
 //     state.PendingTurn; the loop validates it, appends a TurnStance, and
 //     clears PendingTurn.
@@ -25,8 +25,8 @@ package investigate
 // before starting. This keeps the order of recorded stances deterministic
 // and avoids racing two agents on the same shared findings doc.
 //
-// Privacy note (per CLAUDE.md): operational metadata only is ever logged.
-// Prompts, file bodies, agent stdout, and commit messages are NEVER logged.
+// Privacy: operational metadata only. Prompts, file bodies, agent stdout,
+// and commit messages are NEVER logged (CLAUDE.md privacy rule).
 
 import (
 	"context"
@@ -43,20 +43,18 @@ import (
 )
 
 // LoopDeps collects the runtime-injectable hooks RunInvestigateLoop needs.
-// Production code passes real implementations; tests inject fakes.
 type LoopDeps struct {
 	// SpawnerFor maps an agent name → Spawner. Returns nil for an unknown
 	// agent name, in which case the loop pauses with an error.
 	SpawnerFor func(agentName string) spawn.Spawner
 
-	// States persists/loads RunState across turns. In production this is a
-	// real *StateStore rooted at <git-common-dir>/entire-investigations;
-	// tests pass NewStateStoreWithDir(t.TempDir()).
+	// States persists/loads RunState across turns. In production this is
+	// a *StateStore rooted at <git-common-dir>/entire-investigations.
 	States *StateStore
 
 	// Progress receives turn lifecycle events. Production wires either a
-	// tuiProgressSink (TTY) or textProgressSink (non-TTY); tests typically
-	// inject a fake recorder. nil is treated as nullProgressSink (no-op).
+	// tuiProgressSink (TTY) or textProgressSink (non-TTY). nil is treated
+	// as nullProgressSink (no-op).
 	Progress ProgressSink
 
 	// Now returns the current time. Defaults to time.Now if nil.
@@ -107,9 +105,9 @@ type LoopResult struct {
 }
 
 // pauseAfterConsecutiveFailures is the number of back-to-back per-turn
-// agent failures that trigger OutcomePaused. Two is the marvin convention:
-// one failure could be transient, two strongly suggests a configuration
-// problem the user must fix before continuing.
+// agent failures that trigger OutcomePaused. Two: one failure could be
+// transient, two strongly suggests a configuration problem the user must
+// fix before continuing.
 const pauseAfterConsecutiveFailures = 2
 
 // defaultMaxTurns is the per-agent turn budget when LoopInput.MaxTurns is 0.
@@ -186,8 +184,7 @@ func RunInvestigateLoop(ctx context.Context, in LoopInput, deps LoopDeps) (LoopR
 	for state.Turn < maxOverall {
 		if ctx.Err() != nil {
 			// Cancellation is a normal terminal outcome surfaced through
-			// LoopResult.Outcome; the linter's nilerr flag would prefer we
-			// return ctxErr, but the contract is "always-returns-result,
+			// LoopResult.Outcome. Contract is "always-returns-result,
 			// error only for programmer bugs".
 			deps.Progress.RunFinished(OutcomeCancelled)
 			//nolint:nilerr // ctx cancellation is reported via Outcome, not the error return
@@ -326,7 +323,7 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 	}
 
 	// Reload state from disk: the agent (running with cfg.stateDoc on the
-	// filesystem) may have written PendingTurn. We merge that into our
+	// filesystem) may have written PendingTurn. Merge that into the
 	// in-memory state, then clear it on disk after recording the stance.
 	stance, note, hasPending := readPendingTurn(ctx, deps.States, in.RunID, state)
 	turn := TurnStance{
@@ -368,7 +365,7 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 // readPendingTurn loads the on-disk state.json (which the agent may have
 // just rewritten) and returns the validated stance + note pair plus a
 // "has pending" flag. The in-memory state is NOT mutated here — the caller
-// owns the canonical state and will clear PendingTurn after recording.
+// owns the canonical state and clears PendingTurn after recording.
 //
 // Validation rules:
 //   - missing file or unreadable file → ("unknown", "<diagnostic>", false)
@@ -399,8 +396,8 @@ func readPendingTurn(ctx context.Context, store *StateStore, runID string, _ *Ru
 	}
 }
 
-// validateLoopInput rejects programmer errors before the loop starts. We
-// treat these as bugs in the caller, not user errors, so they short-circuit
+// validateLoopInput rejects programmer errors before the loop starts.
+// These are bugs in the caller, not user errors, so they short-circuit
 // with a plain error rather than entering the OutcomePaused/Stalled paths.
 func validateLoopInput(in LoopInput) error {
 	if err := validateRunID(in.RunID); err != nil {
@@ -415,13 +412,13 @@ func validateLoopInput(in LoopInput) error {
 	return nil
 }
 
-// initLoopState builds the starting RunState. When in.Resume is non-nil we
-// take its turn/round/idx + accumulated stances; otherwise we initialise a
-// fresh state with Turn=0, NextAgentIdx=0.
+// initLoopState builds the starting RunState. When in.Resume is non-nil it
+// takes its turn/round/idx + accumulated stances; otherwise it initialises
+// a fresh state with Turn=0, NextAgentIdx=0.
 func initLoopState(in LoopInput, now func() time.Time, maxTurns, quorum int) *RunState {
 	if in.Resume != nil {
 		st := *in.Resume
-		// Always use the LoopInput's RunID/Agents/etc — Resume is a
+		// Always use the LoopInput's RunID/Agents/etc. — Resume is a
 		// snapshot, but the caller is the source of truth for run config.
 		st.RunID = in.RunID
 		st.Topic = in.Topic
@@ -466,18 +463,17 @@ func advanceAgent(state *RunState) {
 //   - Turn 1..N → round 1 in progress, completed rounds = 0
 //   - Turn N+1..2N → round 2 in progress, completed rounds = 1
 //
-// Persisting completed-rounds keeps `entire investigate status` honest:
-// the user sees how many full passes have actually happened. The
-// per-stance Round (TurnStance.Round) is 1-indexed and tracks the round
-// each individual turn belongs to — the two fields are not interchangeable.
+// The per-stance Round (TurnStance.Round) is 1-indexed and tracks the
+// round each individual turn belongs to — the two fields are not
+// interchangeable.
 func updateRoundCounter(state *RunState) {
 	state.CompletedRounds = state.Turn / len(state.Agents)
 }
 
 // approveCountInRound returns how many stances in the given round are
-// "approve". We scan the slice rather than looking only at the tail so
-// resumed runs (whose Stances slice may include earlier rounds) compute the
-// right count.
+// "approve". Scans the slice rather than looking only at the tail so
+// resumed runs (whose Stances slice may include earlier rounds) compute
+// the right count.
 func approveCountInRound(stances []TurnStance, round int) int {
 	n := 0
 	for _, s := range stances {
@@ -489,9 +485,8 @@ func approveCountInRound(stances []TurnStance, round int) int {
 }
 
 // recordFailureStance appends a TurnStance with Stance="unknown" and a Note
-// describing the failure. Used when we couldn't even spawn the agent
-// (no spawner, log-file open error). PlanChanged is false because nothing
-// ran.
+// describing the failure. Used when the agent could not be spawned (no
+// spawner, log-file open error). PlanChanged is false because nothing ran.
 func recordFailureStance(state *RunState, round int, agent string, err error, now func() time.Time) {
 	state.Stances = append(state.Stances, TurnStance{
 		Round:  round,
@@ -508,13 +503,12 @@ func recordFailureStance(state *RunState, round int, agent string, err error, no
 // fileFingerprint returns "<size>:<unix-nanos-mtime>" for the file at path,
 // or the empty string when the file is missing or unreadable. Used to
 // drive PlanChanged: stat is enough to detect that the agent rewrote the
-// findings doc, and avoids re-hashing a growing document on every turn
-// (the SHA approach was O(turns² · size) bytes hashed across a run).
+// findings doc, and avoids re-hashing a growing document on every turn.
 //
-// We deliberately do not surface the error: the loop should keep running
-// even if the agent has not yet created the findings file (turn 1 of a new
-// run usually creates it from a template), and a missing file is detected
-// downstream by comparing the empty fingerprint before vs. after the turn.
+// Stat errors are NOT surfaced: the loop must keep running when the
+// findings file does not yet exist (turn 1 of a new run typically creates
+// it from a template). A missing file is detected downstream by comparing
+// the empty fingerprint before vs. after the turn.
 func fileFingerprint(ctx context.Context, path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -527,10 +521,8 @@ func fileFingerprint(ctx context.Context, path string) string {
 
 // --- small slog helpers ---------------------------------------------------
 //
-// The logging package's Info/Warn/etc accept ...any so callers can pass
-// slog.Attr values directly. We wrap the most common attributes in tiny
-// helpers to keep call-sites readable without sprinkling slog.String
-// throughout the loop body.
+// Tiny wrappers around the most common slog attributes to keep call-sites
+// readable without sprinkling slog.String throughout the loop body.
 
 func slogString(k, v string) any { return slog.String(k, v) }
 

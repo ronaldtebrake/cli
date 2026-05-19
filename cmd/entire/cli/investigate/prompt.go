@@ -17,9 +17,8 @@ type Files struct {
 }
 
 // ComposeInput is the per-turn data needed to render an investigate prompt.
-//
-// The struct is intentionally kept narrow: the loop driver passes only what
-// the prompt template uses.
+// Intentionally narrow: the loop driver passes only what the prompt
+// template uses.
 type ComposeInput struct {
 	// Topic is the human-readable subject of the investigation. Used in
 	// the body of the prompt as plain text — never as a section heading,
@@ -34,15 +33,15 @@ type ComposeInput struct {
 	Round int
 
 	// MaxTurns is the per-agent turn budget (the "of N" half of
-	// "Round X of N"). Mirrors LoopInput.MaxTurns.
+	// "Round X of N").
 	MaxTurns int
 
 	// Turn is the 1-indexed overall turn number across rounds.
 	Turn int
 
 	// AlwaysPrompt, if non-empty, is appended verbatim at the end of the
-	// rendered prompt. Mirrors ReviewConfig.Prompt so users can inject
-	// project-specific guardrails into every turn via settings.
+	// rendered prompt. Lets users inject project-specific guardrails into
+	// every turn via settings.
 	AlwaysPrompt string
 
 	// Files holds the findings + state absolute paths the agent must

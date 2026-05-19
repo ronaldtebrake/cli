@@ -1,13 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// tui_sink.go provides tuiProgressSink, a ProgressSink implementation that
-// renders a Bubble Tea dashboard during an investigation. Used for
-// interactive (TTY) runs; non-TTY runs use textProgressSink.
-//
-// The structure mirrors review/tui_sink.go: Start() spawns the program in a
-// goroutine, AgentEvent/TurnStarted/TurnFinished translate calls into
-// tea.Msg values, RunFinished sends the final summary message and blocks
-// via Wait() until the user dismisses.
 package investigate
 
 import (
@@ -65,8 +55,8 @@ func (s *tuiProgressSink) Start() {
 		defer close(s.done)
 		if _, err := s.program.Run(); err != nil {
 			// Bubble Tea program errors are non-actionable in a background
-			// goroutine. We have no good recovery path; the run state and
-			// per-turn logs on disk remain available.
+			// goroutine. Run state and per-turn logs on disk remain
+			// available.
 			_ = err
 		}
 	}()

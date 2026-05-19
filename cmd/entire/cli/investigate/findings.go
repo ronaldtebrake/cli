@@ -1,7 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// findings.go implements `entire investigate --findings`: list locally
-// persisted LocalManifests and (in TTY mode) drill into one for details.
 package investigate
 
 import (
@@ -17,10 +13,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
-// runInvestigateFindings handles `entire investigate --findings`. In a
-// TTY it shows a huh selector and prints the chosen manifest's details;
-// in non-TTY mode it prints a plain list with `entire investigate fix
-// <run-id>` hints. Mirrors review.runReviewFindings in shape.
+// runInvestigateFindings handles `entire investigate --findings`: prints
+// a plain list of saved investigations with `entire investigate fix
+// <run-id>` hints.
 func runInvestigateFindings(ctx context.Context, cmd *cobra.Command, silentErr func(error) error) error {
 	if _, err := paths.WorktreeRoot(ctx); err != nil {
 		cmd.SilenceUsage = true
@@ -39,28 +34,23 @@ func runInvestigateFindings(ctx context.Context, cmd *cobra.Command, silentErr f
 		fmt.Fprintln(cmd.OutOrStdout(), "No local investigations found.")
 		return nil
 	}
-	// Always print the full list. The previous TTY behaviour opened a
-	// single-select picker that surfaced just one manifest's detail,
-	// which hid the rest of the run history from users who reached for
-	// --findings precisely BECAUSE they wanted to see all runs. The
-	// `fix:` hint per row gives them the next step.
+	// Always print the full list — users reach for --findings to see all
+	// runs. The `fix:` hint per row gives them the next step.
 	printInvestigateFindingsList(cmd.OutOrStdout(), manifests)
 	return nil
 }
 
 // PrintInvestigateFindingsListForTest exposes printInvestigateFindingsList
-// to tests in package investigate_test. Production callers should use
-// runInvestigateFindings via the cobra command instead.
+// to tests in package investigate_test.
 func PrintInvestigateFindingsListForTest(w io.Writer, manifests []LocalManifest) {
 	printInvestigateFindingsList(w, manifests)
 }
 
 // printInvestigateFindingsList renders the non-TTY list view. Each
-// manifest gets a header row plus a "fix" command hint. When the run's
-// findings have been captured into the manifest (terminal outcome) we
-// print "<captured in manifest>" instead of the now-stale on-disk path
-// so users know the content is still accessible — just not at that
-// path.
+// manifest gets a header row plus a "fix" command hint. When findings
+// have been captured into the manifest (terminal outcome) the path
+// shows "<captured in manifest>" so users know the on-disk path is
+// stale but the content is reachable via the manifest.
 func printInvestigateFindingsList(w io.Writer, manifests []LocalManifest) {
 	fmt.Fprintln(w, "Investigations")
 	fmt.Fprintln(w)

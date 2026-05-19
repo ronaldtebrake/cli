@@ -18,9 +18,8 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/provenance"
 )
 
-// Investigate env vars. Names live in cmd/entire/cli/provenance; investigate
-// aliases them so existing call sites (investigate.EnvSession, etc.) keep
-// working.
+// Investigate env vars. Names live in cmd/entire/cli/provenance; aliased
+// here for the package's call sites.
 const (
 	EnvSession     = provenance.InvestigateSession
 	EnvAgent       = provenance.InvestigateAgent

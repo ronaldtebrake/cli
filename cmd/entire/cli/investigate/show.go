@@ -1,11 +1,3 @@
-// show.go implements `entire investigate show [run-id]`: prints the
-// header summary and findings body for a saved investigation manifest.
-//
-// This is the user-facing way to read a run's findings after the
-// per-run directory has been auto-cleaned on Quorum/Stalled (see R3 in
-// cmd.go:writeRunManifest). For paused/cancelled runs the manifest's
-// FindingsContent is empty, so we fall back to reading FindingsDoc
-// from disk — the per-run dir is still there for those resumable runs.
 package investigate
 
 import (
@@ -132,11 +124,8 @@ func printShowSummary(w io.Writer, m LocalManifest) {
 // printShowFindings writes the findings content to w. Prefers the
 // manifest's embedded content (set on terminal outcomes); falls back
 // to reading the on-disk findings file (still present for paused or
-// cancelled runs). Prints a soft "no content" notice when neither is
-// available. The body is rendered through mdrender so it gets the
-// shared CLI palette (orange H1 / cyan H2 / indigo H3 / syntax-
-// highlighted code) when w is a terminal; raw markdown passes through
-// for piped output (NO_COLOR or non-TTY) so it stays grep-friendly.
+// cancelled runs). Body is rendered through mdrender for terminal
+// output; raw markdown passes through for piped/NO_COLOR output.
 func printShowFindings(w io.Writer, m LocalManifest) {
 	body := ""
 	switch {

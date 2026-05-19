@@ -1,7 +1,6 @@
 // Package uiform builds huh forms wired to Entire's standard theme and
-// accessibility behavior. Centralising this keeps the picker UI consistent
-// across cli, review, and investigate without each package re-implementing
-// the same Theme()+WithAccessible() recipe and risking drift.
+// accessibility behavior. Centralises the Theme()+WithAccessible() recipe
+// so picker UI stays consistent across callers.
 package uiform
 
 import (

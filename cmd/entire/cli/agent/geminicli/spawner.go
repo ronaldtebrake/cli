@@ -14,8 +14,6 @@ import (
 type geminiSpawner struct{}
 
 // NewSpawner returns a Spawner for gemini-cli's non-interactive review/investigate mode.
-//
-
 func NewSpawner() spawn.Spawner { return geminiSpawner{} }
 
 func (geminiSpawner) Name() string { return "gemini-cli" }

@@ -1,14 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// progress.go defines ProgressSink, the consumer-side abstraction the loop
-// uses to surface turn lifecycle events to whatever UI is rendering the run.
-// Two implementations live in this package: textProgressSink (headless, used
-// for non-TTY stdout) and tuiProgressSink (Bubble Tea dashboard, used for
-// interactive runs). Tests inject their own fakes.
-//
-// The sink is the only seam between the loop and the UI; the loop never
-// imports bubbletea or writes formatted lines directly. This mirrors the
-// review package's Sink pattern.
 package investigate
 
 import (
@@ -46,22 +35,21 @@ type ProgressSink interface {
 }
 
 // nullProgressSink is the zero-overhead default: every method is a no-op.
-// Used when callers pass LoopDeps.Progress == nil (most tests).
+// Used when callers pass LoopDeps.Progress == nil.
 type nullProgressSink struct{}
 
 func (nullProgressSink) TurnStarted(string, int, int, int)                                    {}
 func (nullProgressSink) TurnFinished(string, int, string, time.Duration, bool, error, string) {}
 func (nullProgressSink) RunFinished(LoopOutcome)                                              {}
 
-// textProgressSink writes today's two-line shape to a plain io.Writer:
+// textProgressSink writes the headless two-line shape to a plain io.Writer:
 //
 //	Turn N · <agent>
 //	  Stance: <stance>
 //
 // Used when the terminal cannot render the Bubble Tea TUI (non-TTY stdout,
-// CI, agent-host invocations). The mutex guards Writer access because while
-// the loop is single-threaded, the sink is also invoked from RunFinished
-// after the loop returns — a tiny gap, but cheap to lock.
+// CI, agent-host invocations). The mutex guards Writer access against
+// RunFinished firing after the loop returns.
 type textProgressSink struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -93,8 +81,7 @@ func (s *textProgressSink) TurnFinished(_ string, _ int, stance string, _ time.D
 
 func (s *textProgressSink) RunFinished(_ LoopOutcome) {
 	// The text sink emits per-turn lines only; the post-run footer is the
-	// caller's responsibility (writeInvestigateFooter in cmd.go). Nothing
-	// to do here.
+	// caller's responsibility (writeInvestigateFooter in cmd.go).
 }
 
 // Compile-time interface checks.

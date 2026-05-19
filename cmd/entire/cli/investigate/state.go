@@ -24,9 +24,9 @@ const InvestigationsDirName = "entire-investigations"
 // run directory.
 const stateFileName = "state.json"
 
-// runIDPattern is the validation regex for investigation run IDs: exactly 12
-// lowercase hex characters. Shares the checkpoint-id format via id.Pattern so
-// the two stay aligned by construction.
+// runIDPattern is the validation regex for investigation run IDs: exactly
+// 12 lowercase hex characters. Shares the checkpoint-id format via
+// id.Pattern.
 var runIDPattern = regexp.MustCompile("^" + id.Pattern + "$")
 
 // RunState is the persisted state of an investigation run, sufficient to

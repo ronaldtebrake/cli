@@ -1,10 +1,3 @@
-// Package investigate — see env.go for package-level rationale.
-//
-// tui_detail.go provides detailView, the pure-function renderer for the
-// alt-screen drill-in view. It renders one agent's timeline buffer with
-// header/footer chrome and pads to exactly termHeight lines so every
-// frame has the same line count (avoids ghost rows in the Bubble Tea
-// alt-screen frame diff). Mirrors review/tui_detail.go.
 package investigate
 
 import (

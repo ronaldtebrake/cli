@@ -1,12 +1,9 @@
 package cli
 
 // investigate_bridge.go wires cli-package implementations into the
-// investigate subpackage's NewCommand Deps struct. Functions that need
-// agent registry access or checkpoint summaries live here to avoid the
-// import cycle:
-//
-//	investigate → checkpoint → ... → investigate
-//	investigate → claudecode/codex/geminicli → investigate
+// investigate subpackage's NewCommand Deps struct. The bridge lives in
+// the cli package to break the import cycle between investigate and the
+// per-agent packages / checkpoint store.
 
 import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -20,7 +17,7 @@ import (
 
 // buildInvestigateDeps builds the investigate.Deps used by
 // investigate.NewCommand. LoopRun is left nil so production uses
-// investigate.RunInvestigateLoop directly.
+// investigate.RunInvestigateLoop.
 func buildInvestigateDeps() investigate.Deps {
 	return investigate.Deps{
 		GetAgentsWithHooksInstalled: GetAgentsWithHooksInstalled,
@@ -35,9 +32,8 @@ func buildInvestigateDeps() investigate.Deps {
 
 // launchableSpawnerFor returns the Spawner for known launchable agents,
 // or nil for non-launchable agents (cursor, opencode, factoryai-droid,
-// copilot-cli, vogon). Lives here for the same reason
-// launchableReviewerFor does — to avoid the investigate subpackage
-// importing the per-agent packages, which would create an import cycle.
+// copilot-cli, vogon). Lives in the cli package so the investigate
+// subpackage does not import the per-agent packages (import cycle).
 func launchableSpawnerFor(agentName string) spawn.Spawner {
 	switch agentName {
 	case string(agent.AgentNameClaudeCode):

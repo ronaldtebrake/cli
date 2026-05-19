@@ -4,10 +4,9 @@
 // a follow-up coding agent without spawning a review/investigate session
 // themselves.
 //
-// The package is a leaf — review and investigate both depend on it, so it
-// cannot import them back. The env-var names it needs to strip are owned
-// by cmd/entire/cli/provenance (also a leaf), which keeps the contract in
-// one place rather than mirrored across packages.
+// The package is a leaf so review and investigate (which depend on it)
+// avoid an import cycle. The env-var names it strips live in
+// cmd/entire/cli/provenance (also a leaf).
 package agentlaunch
 
 import (
