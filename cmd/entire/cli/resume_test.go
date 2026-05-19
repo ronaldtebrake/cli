@@ -539,6 +539,67 @@ func TestResolveLatestCheckpoint(t *testing.T) {
 	}
 }
 
+func TestReadCheckpointInfoFromStoreUsesLatestSessionMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+	store := checkpoint.NewGitStore(repo)
+	cpID := id.MustCheckpointID("112233445566")
+	ctx := context.Background()
+	oldCreatedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	latestCreatedAt := time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC)
+
+	sessions := []struct {
+		sessionID string
+		createdAt time.Time
+		agent     types.AgentType
+	}{
+		{
+			sessionID: "session-old",
+			createdAt: oldCreatedAt,
+			agent:     agent.AgentTypeClaudeCode,
+		},
+		{
+			sessionID: "session-latest",
+			createdAt: latestCreatedAt,
+			agent:     agent.AgentTypeCursor,
+		},
+	}
+	for _, session := range sessions {
+		if err := store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+			CheckpointID: cpID,
+			SessionID:    session.sessionID,
+			CreatedAt:    session.createdAt,
+			Strategy:     "manual-commit",
+			Transcript:   redact.AlreadyRedacted([]byte(`{"type":"test"}` + "\n")),
+			Prompts:      []string{"prompt for " + session.sessionID},
+			AuthorName:   "Test",
+			AuthorEmail:  "test@example.com",
+			Agent:        session.agent,
+		}); err != nil {
+			t.Fatalf("WriteCommitted(%s) error = %v", session.sessionID, err)
+		}
+	}
+
+	info, err := readCheckpointInfoFromStore(ctx, store, cpID)
+	if err != nil {
+		t.Fatalf("readCheckpointInfoFromStore() error = %v", err)
+	}
+	if info.SessionID != "session-latest" {
+		t.Errorf("SessionID = %q, want latest session", info.SessionID)
+	}
+	if !info.CreatedAt.Equal(latestCreatedAt) {
+		t.Errorf("CreatedAt = %s, want %s", info.CreatedAt, latestCreatedAt)
+	}
+	if info.Agent != agent.AgentTypeCursor {
+		t.Errorf("Agent = %q, want %q", info.Agent, agent.AgentTypeCursor)
+	}
+	if len(info.SessionIDs) != 2 || info.SessionIDs[0] != "session-old" || info.SessionIDs[1] != "session-latest" {
+		t.Errorf("SessionIDs = %#v, want [session-old session-latest]", info.SessionIDs)
+	}
+}
+
 func TestResolveLatestCheckpointUsesLocalV2WhenSettingsDisabled(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

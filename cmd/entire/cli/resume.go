@@ -299,7 +299,7 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpoint.Committed
 			continue
 		}
 		info.SessionIDs = append(info.SessionIDs, metadata.SessionID)
-		if i == 0 {
+		if metadata.SessionID != "" {
 			info.SessionID = metadata.SessionID
 			info.CreatedAt = metadata.CreatedAt
 			info.Agent = metadata.Agent
