@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 )
@@ -24,8 +25,9 @@ const InvestigationsDirName = "entire-investigations"
 const stateFileName = "state.json"
 
 // runIDPattern is the validation regex for investigation run IDs: exactly 12
-// lowercase hex characters. Same shape as checkpoint IDs.
-var runIDPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
+// lowercase hex characters. Shares the checkpoint-id format via id.Pattern so
+// the two stay aligned by construction.
+var runIDPattern = regexp.MustCompile("^" + id.Pattern + "$")
 
 // RunState is the persisted state of an investigation run, sufficient to
 // resume after a crash, Ctrl+C, or `--continue`.
@@ -141,33 +143,9 @@ func (s *StateStore) Save(ctx context.Context, st *RunState) error {
 	}
 
 	finalPath := s.runStatePath(st.RunID)
-
-	// Use a unique temp file per save so concurrent writers can't corrupt
-	// each other. Same pattern as session.StateStore.Save.
-	tmpFile, err := os.CreateTemp(runDir, stateFileName+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp run state file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
+	if err := jsonutil.WriteFileAtomic(finalPath, data, 0o600); err != nil {
 		return fmt.Errorf("write run state: %w", err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close run state file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, finalPath); err != nil {
-		return fmt.Errorf("rename run state file: %w", err)
-	}
-	removeTmp = false
 	return nil
 }
 

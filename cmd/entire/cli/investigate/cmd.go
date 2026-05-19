@@ -11,8 +11,6 @@ package investigate
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +25,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent/spawn"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/mdrender"
@@ -1040,14 +1039,14 @@ func findingsContentFor(m LocalManifest) string {
 	return string(data)
 }
 
-// newRunID returns a fresh 12-hex-char run identifier. Mirrors the
+// newRunID returns a fresh 12-hex-char run identifier, sharing the
 // checkpoint-id format used by the strategy package.
 func newRunID() (string, error) {
-	var buf [6]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
+	cid, err := id.Generate()
+	if err != nil {
+		return "", fmt.Errorf("generate run ID: %w", err)
 	}
-	return hex.EncodeToString(buf[:]), nil
+	return cid.String(), nil
 }
 
 // currentHeadSHA returns the current HEAD commit hash as a 40-char hex

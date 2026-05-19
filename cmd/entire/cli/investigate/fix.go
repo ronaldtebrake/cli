@@ -109,14 +109,14 @@ func resolveFixManifest(ctx context.Context, store *LocalManifestStore, runID st
 		}
 		return manifest, nil
 	}
-	manifests, err := store.List(ctx)
+	m, ok, err := store.Latest(ctx)
 	if err != nil {
 		return LocalManifest{}, err
 	}
-	if len(manifests) == 0 {
+	if !ok {
 		return LocalManifest{}, errors.New("no local investigations found")
 	}
-	return manifests[0], nil
+	return m, nil
 }
 
 // readDocOrWarn reads path with the supplied reader. A missing or

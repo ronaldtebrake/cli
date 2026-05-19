@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 )
 
@@ -121,35 +122,15 @@ func (s *LocalManifestStore) Write(ctx context.Context, m LocalManifest) error {
 		return fmt.Errorf("create investigations manifests dir: %w", err)
 	}
 
-	data, err := json.MarshalIndent(m, "", "  ")
+	data, err := jsonutil.MarshalIndentWithNewline(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
 
 	finalPath := filepath.Join(s.dir, manifestFilename(m))
-	tmpFile, err := os.CreateTemp(s.dir, filepath.Base(finalPath)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp manifest file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
+	if err := jsonutil.WriteFileAtomic(finalPath, data, 0o644); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close manifest file: %w", err)
-	}
-	if err := os.Rename(tmpName, finalPath); err != nil {
-		return fmt.Errorf("rename manifest file: %w", err)
-	}
-	removeTmp = false
 	return nil
 }
 
@@ -199,20 +180,74 @@ func (s *LocalManifestStore) List(ctx context.Context) ([]LocalManifest, error) 
 // reports whether a match was found; when false the returned manifest is
 // the zero value. Returns an error only when the underlying directory read
 // itself fails.
+//
+// Filenames are <timestamp>-<runID>.json, so the lookup is a single Glob +
+// one file read rather than scanning every manifest in the directory.
 func (s *LocalManifestStore) FindByRunID(ctx context.Context, runID string) (LocalManifest, bool, error) {
+	_ = ctx
 	if err := validateRunID(runID); err != nil {
 		return LocalManifest{}, false, fmt.Errorf("invalid run ID: %w", err)
 	}
-	manifests, err := s.List(ctx)
+	matches, err := filepath.Glob(filepath.Join(s.dir, "*-"+runID+".json"))
 	if err != nil {
-		return LocalManifest{}, false, err
+		return LocalManifest{}, false, fmt.Errorf("glob manifest %s: %w", runID, err)
 	}
-	for _, m := range manifests {
-		if m.RunID == runID {
-			return m, true, nil
+	if len(matches) == 0 {
+		return LocalManifest{}, false, nil
+	}
+	b, err := os.ReadFile(matches[0])
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return LocalManifest{}, false, nil
+		}
+		return LocalManifest{}, false, fmt.Errorf("read manifest %s: %w", filepath.Base(matches[0]), err)
+	}
+	var m LocalManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return LocalManifest{}, false, fmt.Errorf("decode manifest %s: %w", filepath.Base(matches[0]), err)
+	}
+	return m, true, nil
+}
+
+// Latest returns the most recent manifest in the store, identified by the
+// lexicographically largest filename (filenames are <timestamp>-<runID>.json
+// where the timestamp prefix sorts chronologically). The bool reports
+// whether the store has any manifests; when false the returned manifest is
+// the zero value. Avoids reading every manifest just to pick the newest one.
+func (s *LocalManifestStore) Latest(ctx context.Context) (LocalManifest, bool, error) {
+	_ = ctx
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return LocalManifest{}, false, nil
+		}
+		return LocalManifest{}, false, fmt.Errorf("read investigations manifests dir: %w", err)
+	}
+	var latest string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		if name > latest {
+			latest = name
 		}
 	}
-	return LocalManifest{}, false, nil
+	if latest == "" {
+		return LocalManifest{}, false, nil
+	}
+	b, err := os.ReadFile(filepath.Join(s.dir, latest)) //nolint:gosec // name from os.ReadDir(s.dir)
+	if err != nil {
+		return LocalManifest{}, false, fmt.Errorf("read manifest %s: %w", latest, err)
+	}
+	var m LocalManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return LocalManifest{}, false, fmt.Errorf("decode manifest %s: %w", latest, err)
+	}
+	return m, true, nil
 }
 
 // manifestFilename returns the on-disk filename for m. Format:
