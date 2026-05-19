@@ -112,66 +112,6 @@ func AlreadyRedacted(data []byte) RedactedBytes {
 	return RedactedBytes{data: data}
 }
 
-// RedactedJoinedPrompts is the pre-redacted joined-prompts blob written to
-// a checkpoint's prompt.txt. The private field can only be populated by
-// RedactJoinedPrompts (which runs the full 8-layer pipeline) or
-// AlreadyRedactedJoinedPrompts (trusted source) — callers cannot bypass
-// redaction by assigning an arbitrary string to the field. The zero value
-// signals "not pre-redacted" so writers fall back to the safety-net pass.
-type RedactedJoinedPrompts struct {
-	content string
-}
-
-// String returns the redacted blob content. Empty when the value is the
-// zero value (no pre-redaction was performed).
-func (r RedactedJoinedPrompts) String() string {
-	return r.content
-}
-
-// IsSet reports whether a redaction pass actually populated this value.
-// An empty content string is treated as "not set" so the writer's safety
-// net can re-run rather than persist an empty prompt.txt.
-func (r RedactedJoinedPrompts) IsSet() bool {
-	return r.content != ""
-}
-
-// JoinedPrompts joins prompts with sep and runs the full 8-layer pipeline
-// (including the OpenAI Privacy Filter when configured) over the result.
-// This is the only standard way to produce a RedactedJoinedPrompts from
-// raw prompt input — the resulting type carries a compile-time claim
-// that the content has been through the pipeline. Mirrors the
-// noun-named String/Bytes/JSONLBytes constructors in this package.
-func JoinedPrompts(ctx context.Context, prompts []string, sep string) RedactedJoinedPrompts {
-	if len(prompts) == 0 {
-		return RedactedJoinedPrompts{}
-	}
-	return RedactedJoinedPrompts{content: StringWithPrivacyFilter(ctx, strings.Join(prompts, sep))}
-}
-
-// AlreadyRedactedJoinedPrompts wraps content known to already be redacted
-// by a prior write path or controlled test fixture. Use only for trusted
-// sources; for fresh prompt input, use RedactJoinedPrompts.
-func AlreadyRedactedJoinedPrompts(content string) RedactedJoinedPrompts {
-	return RedactedJoinedPrompts{content: content}
-}
-
-// JoinedPromptsLegacy joins prompts with sep and runs only the seven
-// always-on/opt-in regex layers — never the OpenAI Privacy Filter, even
-// when OPF is configured globally. Used by the checkpoint writer's
-// safety net so post-commit blobs stay on the fast 7-layer pipeline; OPF
-// is applied exclusively by the pre-push rewrite path (see
-// strategy/manual_commit_opf_rewrite.go), which calls JoinedPrompts.
-//
-// Mirrors JoinedPrompts in return type so callers can use either
-// constructor and feed the result to WriteCommittedOptions.PromptsRedacted
-// without changing the type contract.
-func JoinedPromptsLegacy(prompts []string, sep string) RedactedJoinedPrompts {
-	if len(prompts) == 0 {
-		return RedactedJoinedPrompts{}
-	}
-	return RedactedJoinedPrompts{content: String(strings.Join(prompts, sep))}
-}
-
 var (
 	betterleaksDetector     *detect.Detector
 	betterleaksDetectorOnce sync.Once

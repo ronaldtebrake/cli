@@ -71,57 +71,45 @@ func (e *shadowCleanupEnv) branchExists(name string) bool {
 	return err == nil
 }
 
-// Happy case: ended session with no pending checkpoints → shadow gone.
-func TestCleanupPushedShadowBranches_FullyEndedDeleted(t *testing.T) {
-	env := newShadowCleanupEnv(t)
-	shadow := env.addShadowBranch(env.baseHash.String(), "")
+// Predicate matrix: each shadow branch is paired with zero or more
+// session states; the cleanup must respect the safety rules (active
+// session OR pending turn checkpoints protect the branch; ended-clean
+// or orphaned branches are deleted).
+func TestCleanupPushedShadowBranches_Predicate(t *testing.T) {
 	ended := time.Now().Add(-time.Minute)
-	env.addSessionState("s1", env.baseHash.String(), "", &ended, nil)
-
-	deleted, err := CleanupPushedShadowBranches(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 1, deleted)
-	require.False(t, env.branchExists(shadow))
-}
-
-// Active session (EndedAt == nil) protects the shadow even if another
-// session on the same branch already ended.
-func TestCleanupPushedShadowBranches_ActiveSessionPreserved(t *testing.T) {
-	env := newShadowCleanupEnv(t)
-	shadow := env.addShadowBranch(env.baseHash.String(), "")
-	ended := time.Now().Add(-time.Minute)
-	env.addSessionState("s1-ended", env.baseHash.String(), "", &ended, nil)
-	env.addSessionState("s2-active", env.baseHash.String(), "", nil, nil)
-
-	deleted, err := CleanupPushedShadowBranches(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, deleted)
-	require.True(t, env.branchExists(shadow))
-}
-
-// Mid-finalize race window: ended session with TurnCheckpointIDs still
-// pending → preserve.
-func TestCleanupPushedShadowBranches_PendingTurnCheckpointsPreserved(t *testing.T) {
-	env := newShadowCleanupEnv(t)
-	shadow := env.addShadowBranch(env.baseHash.String(), "")
-	ended := time.Now().Add(-time.Minute)
-	env.addSessionState("s1", env.baseHash.String(), "", &ended, []string{"a1b2c3d4e5f6"})
-
-	deleted, err := CleanupPushedShadowBranches(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 0, deleted)
-	require.True(t, env.branchExists(shadow))
-}
-
-// Orphaned shadow branch (no matching session state) gets cleaned up.
-func TestCleanupPushedShadowBranches_OrphanedBranchDeleted(t *testing.T) {
-	env := newShadowCleanupEnv(t)
-	shadow := env.addShadowBranch(env.baseHash.String(), "")
-
-	deleted, err := CleanupPushedShadowBranches(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 1, deleted)
-	require.False(t, env.branchExists(shadow))
+	type sessionFixture struct {
+		id                string
+		ended             *time.Time
+		pendingCheckpoint []string
+	}
+	cases := []struct {
+		name        string
+		sessions    []sessionFixture
+		wantDeleted bool
+	}{
+		{name: "ended_no_pending_deleted", sessions: []sessionFixture{{id: "s1", ended: &ended}}, wantDeleted: true},
+		{name: "active_session_preserved", sessions: []sessionFixture{{id: "s1", ended: &ended}, {id: "s2", ended: nil}}, wantDeleted: false},
+		{name: "pending_turn_checkpoints_preserved", sessions: []sessionFixture{{id: "s1", ended: &ended, pendingCheckpoint: []string{"a1b2c3d4e5f6"}}}, wantDeleted: false},
+		{name: "orphaned_branch_no_sessions_deleted", sessions: nil, wantDeleted: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newShadowCleanupEnv(t)
+			shadow := env.addShadowBranch(env.baseHash.String(), "")
+			for _, s := range tc.sessions {
+				env.addSessionState(s.id, env.baseHash.String(), "", s.ended, s.pendingCheckpoint)
+			}
+			deleted, err := CleanupPushedShadowBranches(context.Background())
+			require.NoError(t, err)
+			if tc.wantDeleted {
+				require.Equal(t, 1, deleted)
+				require.False(t, env.branchExists(shadow))
+			} else {
+				require.Equal(t, 0, deleted)
+				require.True(t, env.branchExists(shadow))
+			}
+		})
+	}
 }
 
 // Mixed: two shadow branches with different worktree IDs and different

@@ -2759,12 +2759,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		redactedTranscript = redact.RedactedBytes{}
 	}
 
-	// Post-commit emits 7-layer-only blobs; the writer's safety net
-	// (checkpoint.redactedJoinedPrompts via JoinedPromptsLegacy) handles
-	// joining + 7-layer redaction. OPF is applied later, once per push,
-	// by the pre-push rewrite path.
-	redactedPrompts := redact.RedactedJoinedPrompts{}
-
+	// Post-commit emits 7-layer-only blobs; the writer joins + redacts
+	// via checkpoint.redactedJoinedPrompts. OPF runs later, once per
+	// push, in the pre-push rewrite path.
 	store := checkpoint.NewGitStore(repo)
 	v2 := settings.CheckpointsVersion(logCtx) == 2
 
@@ -2820,7 +2817,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			SessionID:        state.SessionID,
 			Transcript:       redactedTranscript,
 			Prompts:          prompts,
-			PromptsRedacted:  redactedPrompts,
 			Agent:            state.AgentType,
 			PrecomputedBlobs: precomputed,
 		}

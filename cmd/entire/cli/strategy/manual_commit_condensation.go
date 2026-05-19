@@ -234,9 +234,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		summary = generateSummary(ctx, redactedTranscript, sessionData.FilesTouched, state)
 	}
 
-	// Post-commit emits 7-layer-only blobs. We pass an empty
-	// PromptsRedacted so the writer's safety net (redactedJoinedPrompts)
-	// applies the legacy 7-layer pipeline. OPF runs later in the
+	// Post-commit emits 7-layer-only blobs. OPF runs later in the
 	// pre-push rewrite path, never here.
 
 	// Build write options (shared by v1 and v2)
@@ -247,7 +245,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		Branch:                      branchName,
 		Transcript:                  redactedTranscript,
 		Prompts:                     sessionData.Prompts,
-		PromptsRedacted:             redact.RedactedJoinedPrompts{},
 		FilesTouched:                sessionData.FilesTouched,
 		CheckpointsCount:            state.StepCount,
 		EphemeralBranch:             shadowBranchName,

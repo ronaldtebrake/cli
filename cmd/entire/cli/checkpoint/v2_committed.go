@@ -609,7 +609,7 @@ func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommitt
 	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
 
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
+		promptContent := redactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return 0, fmt.Errorf("failed to create prompt blob: %w", err)
@@ -891,7 +891,7 @@ func (s *V2GitStore) writeMainCheckpointEntries(ctx context.Context, opts WriteC
 // and compact transcript to a session subdirectory (0/, 1/, 2/, … indexed by
 // session order within the checkpoint). The raw transcript (raw_transcript) and its
 // content hash (raw_transcript_hash.txt) go to /full/current, not here.
-func (s *V2GitStore) writeMainSessionToSubdirectory(ctx context.Context, opts WriteCommittedOptions, sessionPath string, entries map[string]object.TreeEntry) (SessionFilePaths, error) {
+func (s *V2GitStore) writeMainSessionToSubdirectory(_ context.Context, opts WriteCommittedOptions, sessionPath string, entries map[string]object.TreeEntry) (SessionFilePaths, error) {
 	filePaths := SessionFilePaths{}
 
 	// Clear existing entries at this session path
@@ -903,7 +903,7 @@ func (s *V2GitStore) writeMainSessionToSubdirectory(ctx context.Context, opts Wr
 
 	// Write prompts
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedacted)
+		promptContent := redactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err

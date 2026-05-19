@@ -1,7 +1,6 @@
 package checkpoint
 
 import (
-	"context"
 	"strings"
 
 	"github.com/entireio/cli/redact"
@@ -29,23 +28,9 @@ func SplitPromptContent(content string) []string {
 	return prompts
 }
 
-// redactedJoinedPrompts returns the redacted prompt-blob content for the
-// supplied prompts. When preRedacted is set it is unwrapped verbatim;
-// otherwise the prompts are joined and run through the 7-layer pipeline
-// as a safety net.
-//
-// The safety net is intentionally 7-layer-only (no OPF), even when OPF
-// is enabled globally. OPF runs exclusively in the pre-push rewrite
-// path so per-commit condensation stays fast and predictable; the
-// safety net never drags OPF into a hot path. Callers that have
-// already produced an 8-layer blob (e.g. the pre-push rewrite itself)
-// pass it as preRedacted so this function returns it verbatim.
-//
-// ctx is retained on the signature for future extensions; the 7-layer
-// pipeline doesn't consume it today.
-func redactedJoinedPrompts(_ context.Context, prompts []string, preRedacted redact.RedactedJoinedPrompts) string {
-	if preRedacted.IsSet() {
-		return preRedacted.String()
-	}
-	return redact.JoinedPromptsLegacy(prompts, PromptSeparator).String()
+// redactedJoinedPrompts joins prompts and runs the 7-layer redaction
+// pipeline. OPF runs exclusively in the pre-push rewrite (not here),
+// so the writer's hot path stays predictable.
+func redactedJoinedPrompts(prompts []string) string {
+	return redact.String(strings.Join(prompts, PromptSeparator))
 }
