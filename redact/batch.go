@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -178,4 +179,41 @@ func apply7LayerToBlobs(inputs []NamedBlob) [][]byte {
 // redaction. Matches RedactBlobBytes's dispatch in checkpoint/.
 func isJSONLikeName(name string) bool {
 	return strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".json")
+}
+
+// SumProseLeafBytes returns the cumulative byte size of prose-shaped
+// (has-space) leaves across inputs — the upper bound on what
+// BatchBytesWithPrivacyFilter would send to OPF inference.
+//
+// Callers use this to enforce a cap before paying the OPF cost: a
+// push with 100MB of mostly-structural JSON has tens of KB of actual
+// leaves; a push with 100MB of dense prose has hundreds of MB. The
+// blob-byte size doesn't tell you which without looking inside.
+//
+// Counts the same way the collector inside BatchBytesWithPrivacyFilter
+// does — has-space gate, JSONL/JSON parse with whole-content fallback —
+// so the number matches what would actually go over the wire.
+func SumProseLeafBytes(inputs []NamedBlob) int {
+	var total int
+	for _, in := range inputs {
+		if isJSONLikeName(in.Name) {
+			parsed := false
+			if _, err := jsonlContentImpl(string(in.Content), func(v string) string {
+				parsed = true
+				if strings.ContainsRune(v, ' ') {
+					total += len(v)
+				}
+				return v
+			}); err == nil {
+				_ = parsed
+				continue
+			}
+			// JSON parse failed — fall through to whole-content (matches
+			// the collector's fallback in BatchBytesWithPrivacyFilter).
+		}
+		if bytes.ContainsRune(in.Content, ' ') {
+			total += len(in.Content)
+		}
+	}
+	return total
 }

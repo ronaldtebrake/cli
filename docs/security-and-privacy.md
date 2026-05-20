@@ -155,7 +155,7 @@ OPF failures at push time are **fail-closed**: if OPF is not on PATH, fails to s
 
 (The circuit breaker is per-process, so a broken install costs one warning instead of one timeout per blob — but the push still aborts.)
 
-Cost note: each shell-out loads the OPF model (~1.5B parameters on CPU). The pre-push rewrite batches all eligible leaf strings into a single inference pass per scope (transcript + joined prompts), so a typical real-world push adds ~25–30s of OPF inference rather than the multi-minute cost a per-leaf flow would incur. Per-commit latency is unaffected because OPF doesn't run at commit time.
+Cost note: each shell-out loads the OPF model (~1.5B parameters on CPU). The pre-push rewrite batches **every redactable leaf across every unpushed v1 commit** into a single inference pass, so a typical real-world push pays the model-load cost once (~6s) plus inference (~5s per 100KB of leaf content) — not multiplied by the number of commits or blobs. A 3-commit push with ~250KB of total prose content runs in ~12–15s, not the ~50–100s a per-blob flow would take. Per-commit latency is unaffected because OPF doesn't run at commit time.
 
 #### When OPF actually runs
 
@@ -182,6 +182,14 @@ The rewrite refuses to proceed and aborts the push when it detects a divergent s
   set -x ENTIRE_OPF_BOOTSTRAP_LIMIT 500; git push
   # or fully unbounded:
   set -x ENTIRE_OPF_BOOTSTRAP_LIMIT unlimited; git push
+  ```
+
+- **Batch-size cap**: independent of commit count, the rewrite refuses pushes whose cumulative prose-leaf content exceeds `ENTIRE_OPF_BATCH_LIMIT` bytes (default: 2 MiB ≈ ~110s of inference). The two caps protect different failure modes — the bootstrap cap stops "100 throwaway commits", the batch cap stops "one commit with 50 MB of pasted transcript". A `OPF batch would inference …` error means you've hit this; bump the env var or push without OPF for that push:
+
+  ```fish
+  set -x ENTIRE_OPF_BATCH_LIMIT 10485760; git push   # 10 MiB
+  # or fully unbounded:
+  set -x ENTIRE_OPF_BATCH_LIMIT unlimited; git push
   ```
 
 - **Concurrent push** from another worktree: the rewrite uses a CAS to update the local v1 ref. If another process moved the ref while OPF was running, the hook exits with a "concurrent push detected" error and `git push` aborts the whole batch. Fetch and retry.

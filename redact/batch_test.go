@@ -310,6 +310,72 @@ func TestBatchBytesWithPrivacyFilter_MatchesPerBlobOutput(t *testing.T) {
 	}
 }
 
+// TestSumProseLeafBytes_CountsAcrossBlobShapes covers the helper the
+// strategy uses to enforce ENTIRE_OPF_BATCH_LIMIT. The number must
+// reflect what would actually go to OPF — so the has-space gate
+// excludes non-prose, JSON-parsed leaves are counted individually,
+// and raw text blobs are counted whole.
+func TestSumProseLeafBytes_CountsAcrossBlobShapes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		inputs []NamedBlob
+		want   int
+	}{
+		{
+			name: "empty_input_zero",
+			want: 0,
+		},
+		{
+			name: "single_jsonl_prose_leaves_only",
+			inputs: []NamedBlob{
+				{Name: "a.jsonl", Content: []byte(`{"id":"non-prose","content":"Alice met Bob"}`)},
+			},
+			// "Alice met Bob" = 13 bytes (has space → counted). "non-prose" has no
+			// space → excluded.
+			want: 13,
+		},
+		{
+			name: "json_metadata_with_id_field_skips_id",
+			inputs: []NamedBlob{
+				{Name: "metadata.json", Content: []byte(`{"summary":"Eve walked home","id":"keep-this"}`)},
+			},
+			want: 15, // "Eve walked home"
+		},
+		{
+			name: "raw_text_blob_counted_whole",
+			inputs: []NamedBlob{
+				{Name: "prompt.txt", Content: []byte("Find Frank Smith here")}, // 21 bytes
+			},
+			want: 21,
+		},
+		{
+			name: "raw_text_blob_no_space_excluded",
+			inputs: []NamedBlob{
+				{Name: "id.txt", Content: []byte("abc123-no-spaces-here")},
+			},
+			want: 0,
+		},
+		{
+			name: "multi_blob_sums_each",
+			inputs: []NamedBlob{
+				{Name: "a.jsonl", Content: []byte(`{"content":"Alice met Bob"}`)},
+				{Name: "b.txt", Content: []byte("Charlie sat down")}, // 16 bytes
+			},
+			want: 13 + 16,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := SumProseLeafBytes(tc.inputs)
+			if got != tc.want {
+				t.Errorf("SumProseLeafBytes(%s) = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBatchBytesWithPrivacyFilter_NoEnabledCategoriesReturns7Layer
 // covers the configuration edge case where OPF is enabled but every
 // category is turned off — the model has nothing to look for, so we
