@@ -166,11 +166,13 @@ func descriptionFromSentinelError(err error, code string) string {
 }
 
 // secondsUntil computes seconds-until-expiry for a TokenSet with an
-// absolute ExpiresAt. Returns 0 when no expiry is set, mirroring the
-// historical shape of DeviceAuthPoll.ExpiresIn.
+// absolute ExpiresAt. Returns 0 when no expiry is set or when ExpiresAt
+// is already in the past (clock skew, scheduling delays) — historically
+// ExpiresIn was non-negative and downstream loggers / display code don't
+// expect to see a negative value.
 func secondsUntil(t *tokens.TokenSet) int {
 	if t.ExpiresAt.IsZero() {
 		return 0
 	}
-	return int(t.ExpiresAt.Unix() - nowFunc().Unix())
+	return max(0, int(t.ExpiresAt.Unix()-nowFunc().Unix()))
 }

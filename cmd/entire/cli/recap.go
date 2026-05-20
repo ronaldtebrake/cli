@@ -187,7 +187,7 @@ func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, error)
 	if insecureHTTP {
 		auth.EnableInsecureHTTP()
 	}
-	token, err := auth.TokenForResource(ctx, api.BaseURL())
+	token, err := auth.TokenForResource(ctx, api.OriginOnly(api.BaseURL()))
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		token = ""
 		err = nil

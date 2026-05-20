@@ -72,8 +72,8 @@ func TestSecondsUntil_ZeroExpiry(t *testing.T) {
 }
 
 func TestSecondsUntil_FutureExpiry(t *testing.T) {
-	t.Parallel()
-
+	// No t.Parallel: this test mutates the package-level nowFunc and would
+	// race other parallel tests in this package that also read it.
 	prev := nowFunc
 	t.Cleanup(func() { nowFunc = prev })
 	base := time.Unix(1_700_000_000, 0)
@@ -82,6 +82,19 @@ func TestSecondsUntil_FutureExpiry(t *testing.T) {
 	ts := &tokens.TokenSet{ExpiresAt: base.Add(120 * time.Second)}
 	if got := secondsUntil(ts); got != 120 {
 		t.Fatalf("secondsUntil(+120s) = %d, want 120", got)
+	}
+}
+
+func TestSecondsUntil_PastExpiryClampsToZero(t *testing.T) {
+	// No t.Parallel: same reason as TestSecondsUntil_FutureExpiry.
+	prev := nowFunc
+	t.Cleanup(func() { nowFunc = prev })
+	base := time.Unix(1_700_000_000, 0)
+	nowFunc = func() time.Time { return base }
+
+	ts := &tokens.TokenSet{ExpiresAt: base.Add(-30 * time.Second)}
+	if got := secondsUntil(ts); got != 0 {
+		t.Fatalf("secondsUntil(past expiry) = %d, want 0 (clamped)", got)
 	}
 }
 

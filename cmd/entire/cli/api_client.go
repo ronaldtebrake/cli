@@ -38,7 +38,10 @@ func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Cli
 		}
 	}
 
-	token, err := auth.TokenForResource(ctx, dataURL)
+	// tokenmanager validates Resource as a strict origin URL; strip any path
+	// the operator may have included in ENTIRE_API_BASE_URL before handing
+	// it across the package boundary.
+	token, err := auth.TokenForResource(ctx, api.OriginOnly(dataURL))
 	if err != nil {
 		if errors.Is(err, auth.ErrNotLoggedIn) {
 			return nil, errors.New("not logged in (run 'entire login' first)")
