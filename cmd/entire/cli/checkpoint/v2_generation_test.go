@@ -129,11 +129,14 @@ func TestAddGenerationJSONToTree(t *testing.T) {
 	store := NewV2GitStore(repo)
 
 	// Start with a root tree that has a shard directory entry (simulating checkpoint data)
+	transcriptBlobHash, err := CreateBlobFromContent(repo, []byte("test transcript"))
+	require.NoError(t, err)
+
 	shardEntries := map[string]object.TreeEntry{}
 	shardEntries["aa/bbccddeeff/0/"+paths.V2RawTranscriptFileName] = object.TreeEntry{
 		Name: paths.V2RawTranscriptFileName,
 		Mode: 0o100644,
-		Hash: plumbing.ZeroHash, // dummy
+		Hash: transcriptBlobHash,
 	}
 	rootTreeHash, err := BuildTreeFromEntries(context.Background(), repo, shardEntries)
 	require.NoError(t, err)
