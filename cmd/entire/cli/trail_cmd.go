@@ -886,6 +886,19 @@ func runTrailCreateInteractive(title, body, branch, statusStr *string) error {
 
 // findTrailByBranch looks up a trail by branch name via the list API.
 func findTrailByBranch(ctx context.Context, client *api.Client, host, owner, repo, branch string) (*api.TrailResource, error) {
+	return findTrail(ctx, client, host, owner, repo, func(t api.TrailResource) bool {
+		return t.Branch == branch
+	})
+}
+
+// findTrailByNumber looks up a trail by numeric identifier via the list API.
+func findTrailByNumber(ctx context.Context, client *api.Client, host, owner, repo string, number int) (*api.TrailResource, error) {
+	return findTrail(ctx, client, host, owner, repo, func(t api.TrailResource) bool {
+		return t.Number == number
+	})
+}
+
+func findTrail(ctx context.Context, client *api.Client, host, owner, repo string, match func(api.TrailResource) bool) (*api.TrailResource, error) {
 	resp, err := client.Get(ctx, trailsBasePath(host, owner, repo))
 	if err != nil {
 		return nil, fmt.Errorf("list trails: %w", err)
@@ -901,7 +914,7 @@ func findTrailByBranch(ctx context.Context, client *api.Client, host, owner, rep
 	}
 
 	for i := range listResp.Trails {
-		if listResp.Trails[i].Branch == branch {
+		if match(listResp.Trails[i]) {
 			return &listResp.Trails[i], nil
 		}
 	}
