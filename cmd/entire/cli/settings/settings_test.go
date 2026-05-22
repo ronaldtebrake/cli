@@ -54,8 +54,8 @@ func TestLoad_WithWorktreeRootReadsSettingsFromExplicitRepo(t *testing.T) {
 	testutil.InitRepo(t, targetDir)
 
 	for dir, content := range map[string]string{
-		cwdDir:    `{"enabled": true, "strategy_options": {"checkpoints_version": 2}}`,
-		targetDir: `{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`,
+		cwdDir:    `{"enabled": true, "log_level": "debug"}`,
+		targetDir: `{"enabled": true, "log_level": "info"}`,
 	} {
 		entireDir := filepath.Join(dir, ".entire")
 		if err := os.MkdirAll(entireDir, 0o755); err != nil {
@@ -72,11 +72,8 @@ func TestLoad_WithWorktreeRootReadsSettingsFromExplicitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CheckpointsVersion() != 1 {
-		t.Fatalf("CheckpointsVersion() = %d, want target repo default v1", got.CheckpointsVersion())
-	}
-	if !got.IsCheckpointsV2Enabled() {
-		t.Fatal("IsCheckpointsV2Enabled() = false, want target repo checkpoints_v2 setting")
+	if got.LogLevel != "info" {
+		t.Fatalf("LogLevel = %q, want target repo value %q", got.LogLevel, "info")
 	}
 }
 
@@ -720,14 +717,38 @@ func TestIsCheckpointsV2Enabled_EmptyStrategyOptions(t *testing.T) {
 	}
 }
 
-func TestIsCheckpointsV2Enabled_True(t *testing.T) {
-	t.Parallel()
+// TestIsCheckpointsV2Enabled_TrueIgnoredAfterDisallow verifies that
+// strategy_options.checkpoints_v2: true is no longer honored — the setting is
+// ignored (warning emitted) and IsCheckpointsV2Enabled returns false.
+func TestIsCheckpointsV2Enabled_TrueIgnoredAfterDisallow(t *testing.T) {
+	// Cannot use t.Parallel(): inspects global stderr + warn-once.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	resetCheckpointsV2WarningOnce(t)
+
 	s := &EntireSettings{
 		Enabled:         true,
 		StrategyOptions: map[string]any{"checkpoints_v2": true},
 	}
-	if !s.IsCheckpointsV2Enabled() {
-		t.Error("expected IsCheckpointsV2Enabled to be true")
+	if s.IsCheckpointsV2Enabled() {
+		t.Error("checkpoints_v2: true should be ignored and IsCheckpointsV2Enabled should return false")
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr write end: %v", err)
+	}
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if !strings.Contains(string(buf), "checkpoints_v2: true is no longer supported") {
+		t.Errorf("expected disallow warning on stderr, got: %q", string(buf))
 	}
 }
 
@@ -766,7 +787,12 @@ func TestIsCheckpointsV2Enabled_WrongType(t *testing.T) {
 	}
 }
 
-func TestIsCheckpointsV2Enabled_LoadFromFile(t *testing.T) {
+// TestIsCheckpointsV2Enabled_LoadFromFileIgnoresDisallowedSetting verifies
+// that loading a settings file with checkpoints_v2: true still ignores the
+// setting (the disallow applies regardless of where the setting comes from).
+func TestIsCheckpointsV2Enabled_LoadFromFileIgnoresDisallowedSetting(t *testing.T) {
+	resetCheckpointsV2WarningOnce(t)
+
 	tmpDir := t.TempDir()
 
 	entireDir := filepath.Join(tmpDir, ".entire")
@@ -789,12 +815,16 @@ func TestIsCheckpointsV2Enabled_LoadFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !s.IsCheckpointsV2Enabled() {
-		t.Error("expected IsCheckpointsV2Enabled to be true after loading from file")
+	if s.IsCheckpointsV2Enabled() {
+		t.Error("expected IsCheckpointsV2Enabled to return false even when checkpoints_v2: true is loaded from file — the setting is disallowed")
 	}
 }
 
-func TestIsCheckpointsV2Enabled_LocalOverride(t *testing.T) {
+// TestIsCheckpointsV2Enabled_LocalOverrideIgnoresDisallowedSetting verifies
+// that a local-override checkpoints_v2: true is also ignored.
+func TestIsCheckpointsV2Enabled_LocalOverrideIgnoresDisallowedSetting(t *testing.T) {
+	resetCheckpointsV2WarningOnce(t)
+
 	tmpDir := t.TempDir()
 
 	entireDir := filepath.Join(tmpDir, ".entire")
@@ -802,13 +832,11 @@ func TestIsCheckpointsV2Enabled_LocalOverride(t *testing.T) {
 		t.Fatalf("failed to create .entire directory: %v", err)
 	}
 
-	// Base settings without checkpoints_v2
 	settingsFile := filepath.Join(entireDir, "settings.json")
 	if err := os.WriteFile(settingsFile, []byte(`{"enabled": true}`), 0o644); err != nil {
 		t.Fatalf("failed to write settings file: %v", err)
 	}
 
-	// Local override enables checkpoints_v2
 	localFile := filepath.Join(entireDir, "settings.local.json")
 	if err := os.WriteFile(localFile, []byte(`{"strategy_options": {"checkpoints_v2": true}}`), 0o644); err != nil {
 		t.Fatalf("failed to write local settings file: %v", err)
@@ -824,8 +852,8 @@ func TestIsCheckpointsV2Enabled_LocalOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !s.IsCheckpointsV2Enabled() {
-		t.Error("expected IsCheckpointsV2Enabled to be true from local override")
+	if s.IsCheckpointsV2Enabled() {
+		t.Error("expected IsCheckpointsV2Enabled to return false even when checkpoints_v2: true comes from local override")
 	}
 }
 
@@ -892,6 +920,20 @@ func resetCheckpointsVersionWarningOnce(t *testing.T) {
 	checkpointsVersionWarningOnce = sync.Once{}
 }
 
+// resetCheckpointsV2WarningOnce zeroes the package-level warn-once for the
+// checkpoints_v2 setting; same caveats as resetCheckpointsVersionWarningOnce.
+func resetCheckpointsV2WarningOnce(t *testing.T) {
+	t.Helper()
+	checkpointsV2WarningOnce = sync.Once{}
+}
+
+// resetPushV2RefsWarningOnce zeroes the package-level warn-once for the
+// push_v2_refs setting; same caveats as resetCheckpointsVersionWarningOnce.
+func resetPushV2RefsWarningOnce(t *testing.T) {
+	t.Helper()
+	pushV2RefsWarningOnce = sync.Once{}
+}
+
 func TestIsPushV2RefsEnabled_DefaultsFalse(t *testing.T) {
 	t.Parallel()
 	s := &EntireSettings{Enabled: true}
@@ -900,18 +942,19 @@ func TestIsPushV2RefsEnabled_DefaultsFalse(t *testing.T) {
 	}
 }
 
-func TestIsPushV2RefsEnabled_RequiresBothFlags(t *testing.T) {
-	t.Parallel()
-
+// TestIsPushV2RefsEnabled_AlwaysFalseAfterDisallow verifies that every input
+// returns false now that push_v2_refs is disallowed. The configured-true case
+// also emits a one-time stderr warning.
+func TestIsPushV2RefsEnabled_AlwaysFalseAfterDisallow(t *testing.T) {
 	tests := []struct {
 		name     string
 		opts     map[string]any
-		expected bool
+		wantWarn bool
 	}{
 		{"checkpoints_version 2 ignored after disallow", map[string]any{"checkpoints_v2": false, "push_v2_refs": false, "checkpoints_version": 2}, false},
 		{"both true", map[string]any{"checkpoints_v2": true, "push_v2_refs": true}, true},
 		{"only checkpoints_v2", map[string]any{"checkpoints_v2": true}, false},
-		{"only push_v2_refs", map[string]any{"push_v2_refs": true}, false},
+		{"only push_v2_refs", map[string]any{"push_v2_refs": true}, true},
 		{"both false", map[string]any{"checkpoints_v2": false, "push_v2_refs": false}, false},
 		{"push_v2_refs wrong type", map[string]any{"checkpoints_v2": true, "push_v2_refs": "yes"}, false},
 		{"empty options", map[string]any{}, false},
@@ -919,13 +962,35 @@ func TestIsPushV2RefsEnabled_RequiresBothFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+			// Cannot use t.Parallel(): inspects global stderr + warn-once.
+			origStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("pipe: %v", err)
+			}
+			os.Stderr = w
+			t.Cleanup(func() { os.Stderr = origStderr })
+
+			resetPushV2RefsWarningOnce(t)
+
 			s := &EntireSettings{
 				Enabled:         true,
 				StrategyOptions: tt.opts,
 			}
-			if got := s.IsPushV2RefsEnabled(); got != tt.expected {
-				t.Errorf("IsPushV2RefsEnabled() = %v, want %v", got, tt.expected)
+			if got := s.IsPushV2RefsEnabled(); got {
+				t.Errorf("IsPushV2RefsEnabled() = true, want false (disallowed)")
+			}
+
+			if err := w.Close(); err != nil {
+				t.Fatalf("close stderr write end: %v", err)
+			}
+			buf, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("read stderr: %v", err)
+			}
+			gotWarn := strings.Contains(string(buf), "push_v2_refs: true is no longer supported")
+			if gotWarn != tt.wantWarn {
+				t.Errorf("warning emitted = %v, want %v (stderr: %q)", gotWarn, tt.wantWarn, string(buf))
 			}
 		})
 	}

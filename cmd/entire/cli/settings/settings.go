@@ -35,7 +35,11 @@ const (
 	defaultGenerationRetentionDays = 14
 )
 
-var checkpointsVersionWarningOnce sync.Once
+var (
+	checkpointsVersionWarningOnce sync.Once
+	checkpointsV2WarningOnce      sync.Once
+	pushV2RefsWarningOnce         sync.Once
+)
 
 type worktreeRootContextKey struct{}
 
@@ -1058,17 +1062,22 @@ func (s *EntireSettings) GetCheckpointRemote() *CheckpointRemoteConfig {
 	return &CheckpointRemoteConfig{Provider: provider, Repo: repo}
 }
 
-// IsCheckpointsV2Enabled checks if checkpoints v2 is enabled.
-// Returns true when either checkpoints_v2 is set or checkpoints_version is 2.
+// IsCheckpointsV2Enabled always returns false. strategy_options.checkpoints_v2
+// is no longer supported — when set to true, a one-time warning is emitted and
+// the setting is ignored. CheckpointsVersion()'s v2 disallow handles the
+// checkpoints_version: 2 path separately.
 func (s *EntireSettings) IsCheckpointsV2Enabled() bool {
-	if s.CheckpointsVersion() == 2 {
-		return true
-	}
 	if s.StrategyOptions == nil {
 		return false
 	}
-	val, ok := s.StrategyOptions["checkpoints_v2"].(bool)
-	return ok && val
+	if val, ok := s.StrategyOptions["checkpoints_v2"].(bool); ok && val {
+		checkpointsV2WarningOnce.Do(func() {
+			fmt.Fprintln(os.Stderr,
+				"[entire] strategy_options.checkpoints_v2: true is no longer supported and is being ignored. Remove it from .entire/settings.json.",
+			)
+		})
+	}
+	return false
 }
 
 // CheckpointsVersion returns the configured checkpoints format version from
@@ -1118,20 +1127,21 @@ func parseCheckpointsVersion(val any) (int, bool) {
 	return 1, false
 }
 
-// IsPushV2RefsEnabled checks if pushing v2 refs is enabled.
-// checkpoints_version: 2 forces v2 ref pushes on, regardless of push_v2_refs.
+// IsPushV2RefsEnabled always returns false. strategy_options.push_v2_refs is
+// no longer supported — when set to true, a one-time warning is emitted and
+// the setting is ignored.
 func (s *EntireSettings) IsPushV2RefsEnabled() bool {
-	if s.CheckpointsVersion() == 2 {
-		return true
-	}
-	if !s.IsCheckpointsV2Enabled() {
-		return false
-	}
 	if s.StrategyOptions == nil {
 		return false
 	}
-	val, ok := s.StrategyOptions["push_v2_refs"].(bool)
-	return ok && val
+	if val, ok := s.StrategyOptions["push_v2_refs"].(bool); ok && val {
+		pushV2RefsWarningOnce.Do(func() {
+			fmt.Fprintln(os.Stderr,
+				"[entire] strategy_options.push_v2_refs: true is no longer supported and is being ignored. Remove it from .entire/settings.json.",
+			)
+		})
+	}
+	return false
 }
 
 // GetFullTranscriptGenerationRetentionDays returns the retention window for

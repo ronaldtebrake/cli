@@ -299,59 +299,6 @@ func TestAttach_OutputContainsCheckpointID(t *testing.T) {
 	}
 }
 
-func TestAttach_V2DualWriteEnabled(t *testing.T) {
-	setupAttachTestRepo(t)
-
-	repoDir := mustGetwd(t)
-	setAttachCheckpointsV2Enabled(t, repoDir)
-
-	sessionID := "test-attach-v2-dual-write"
-	setupClaudeTranscript(t, sessionID, `{"type":"user","message":{"role":"user","content":"create hello.txt"},"uuid":"uuid-1"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Write","input":{"file_path":"hello.txt","content":"hello"}}]},"uuid":"uuid-2"}
-{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"wrote file"}]},"uuid":"uuid-3"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]},"uuid":"uuid-4"}
-`)
-
-	var out bytes.Buffer
-	if err := runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, attachOptions{Force: true}); err != nil {
-		t.Fatalf("runAttach failed: %v", err)
-	}
-
-	store, err := session.NewStateStore(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := store.Load(context.Background(), sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state == nil || state.LastCheckpointID.IsEmpty() {
-		t.Fatal("expected attach to persist a checkpoint ID")
-	}
-
-	repo, err := git.PlainOpen(repoDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cpPath := state.LastCheckpointID.Path()
-	mainCompact, found := readFileFromRef(t, repo, paths.V2MainRefName, cpPath+"/0/"+paths.CompactTranscriptFileName)
-	if !found {
-		t.Fatalf("expected %s on %s", paths.CompactTranscriptFileName, paths.V2MainRefName)
-	}
-	if !strings.Contains(mainCompact, "create hello.txt") {
-		t.Errorf("compact transcript missing prompt, got:\n%s", mainCompact)
-	}
-
-	fullTranscript, found := readFileFromRef(t, repo, paths.V2FullCurrentRefName, cpPath+"/0/"+paths.V2RawTranscriptFileName)
-	if !found {
-		t.Fatalf("expected %s on %s", paths.V2RawTranscriptFileName, paths.V2FullCurrentRefName)
-	}
-	if !strings.Contains(fullTranscript, "hello.txt") {
-		t.Errorf("raw transcript missing file content, got:\n%s", fullTranscript)
-	}
-}
-
 // TestAttach_CheckpointsVersion2_FallsBackToV1 verifies that
 // strategy_options.checkpoints_version: 2 is now ignored — attach writes
 // v1 metadata only, and never creates v2 refs solely because of the setting.
@@ -1609,18 +1556,6 @@ func enableEntire(t *testing.T, repoDir string) {
 		t.Fatal(err)
 	}
 	settingsContent := `{"enabled": true}`
-	if err := os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(settingsContent), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func setAttachCheckpointsV2Enabled(t *testing.T, repoDir string) {
-	t.Helper()
-	entireDir := filepath.Join(repoDir, ".entire")
-	if err := os.MkdirAll(entireDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	settingsContent := `{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`
 	if err := os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(settingsContent), 0o600); err != nil {
 		t.Fatal(err)
 	}

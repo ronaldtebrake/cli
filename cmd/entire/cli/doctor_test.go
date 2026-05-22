@@ -839,18 +839,21 @@ func TestRunSessionsFix_V2ChecksSkippedWhenDisabled(t *testing.T) {
 	assert.NotContains(t, output, "v2 /main ref")
 }
 
-func TestRunSessionsFix_V2ChecksRunWhenEnabled(t *testing.T) {
+// TestRunSessionsFix_V2ChecksSkippedWhenSettingIgnored verifies that
+// checkpoints_v2: true alone no longer turns on the doctor v2 checks now that
+// the setting is disallowed. Ref-existence-based gating happens in a
+// follow-up branch (remove-v2-write-paths); on this branch the v2 checks
+// remain settings-gated and therefore inert.
+func TestRunSessionsFix_V2ChecksSkippedWhenSettingIgnored(t *testing.T) {
 	// Cannot use t.Parallel() because t.Chdir modifies process-global state.
 	dir := setupGitRepoForPhaseTest(t)
 	t.Chdir(dir)
 
-	// Create settings.json with checkpoints_v2 enabled
 	entireDir := filepath.Join(dir, ".entire")
 	require.NoError(t, os.MkdirAll(entireDir, 0o755))
 	settingsJSON := `{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`
 	require.NoError(t, os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(settingsJSON), 0o644))
 
-	// Create both v2 refs so ref existence check passes
 	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
 	createV2Ref(t, repo, paths.V2MainRefName)
@@ -862,9 +865,10 @@ func TestRunSessionsFix_V2ChecksRunWhenEnabled(t *testing.T) {
 	require.NoError(t, err)
 
 	output := stdout.String()
-	// v2 checks should appear in output
-	assert.Contains(t, output, "v2 /main ref: OK (no remote to compare)")
-	assert.Contains(t, output, "v2 refs: OK")
+	assert.NotContains(t, output, "v2 /main ref:",
+		"v2 checks should not run when checkpoints_v2: true is the only signal — the setting is ignored")
+	assert.NotContains(t, output, "v2 refs:",
+		"v2 checks should not run when checkpoints_v2: true is the only signal — the setting is ignored")
 }
 
 // TestCheckCodexHookTrust_SilentWhenCodexNotInstalled — `entire doctor`
