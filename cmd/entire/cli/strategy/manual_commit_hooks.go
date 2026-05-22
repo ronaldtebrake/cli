@@ -2759,11 +2759,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	}
 
 	store := checkpoint.NewGitStore(repo)
-	v2 := settings.CheckpointsVersion(logCtx) == 2
+	v2 := settings.CheckpointsWriteVersion(logCtx) == 2
 
 	// Evaluate v2 flag once before the loop to avoid re-reading settings per checkpoint
 	var v2Store *checkpoint.V2GitStore
-	if settings.IsCheckpointsV2Enabled(logCtx) {
+	if settings.IsCheckpointsV2WriteEnabled(logCtx) {
 		v2Store = checkpoint.NewV2GitStore(repo)
 	}
 

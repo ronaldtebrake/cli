@@ -244,7 +244,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	writeOpts.CompactTranscript = compactResult.Transcript
 	writeOpts.CompactTranscriptStart = compactResult.StartLine
 
-	v2 := settings.CheckpointsVersion(ctx) == 2
+	v2 := settings.CheckpointsWriteVersion(ctx) == 2
 
 	// Write checkpoint metadata to the primary store.
 	writeV1Start := time.Now()
@@ -506,7 +506,7 @@ func compactAndRedactExternalTranscript(ctx context.Context, ag agent.Agent, sta
 // the result. Returns nil if the agent is not external (caller should use
 // buildInternalCompactTranscript instead).
 func buildExternalCompactTranscript(ctx context.Context, ag agent.Agent, state *SessionState) *compactTranscriptResult {
-	if !settings.IsCheckpointsV2Enabled(ctx) {
+	if !settings.IsCheckpointsV2WriteEnabled(ctx) {
 		return nil
 	}
 
@@ -544,7 +544,7 @@ func buildExternalCompactTranscript(ctx context.Context, ag agent.Agent, state *
 // buildInternalCompactTranscript produces the compact transcript for built-in
 // agents from already-redacted transcript bytes.
 func buildInternalCompactTranscript(ctx context.Context, ag agent.Agent, redacted redact.RedactedBytes, state *SessionState) compactTranscriptResult {
-	if !settings.IsCheckpointsV2Enabled(ctx) {
+	if !settings.IsCheckpointsV2WriteEnabled(ctx) {
 		return compactTranscriptResult{}
 	}
 
@@ -1601,7 +1601,7 @@ func writeCommittedV2(ctx context.Context, repo *git.Repository, opts cpkg.Write
 // is enabled. Failures are logged as warnings — in dual-write mode v2 writes are
 // best-effort and must not block the v1 path.
 func writeCommittedV2IfEnabled(ctx context.Context, repo *git.Repository, opts cpkg.WriteCommittedOptions) {
-	if !settings.IsCheckpointsV2Enabled(ctx) {
+	if !settings.IsCheckpointsV2WriteEnabled(ctx) {
 		return
 	}
 	if err := writeCommittedV2(ctx, repo, opts); err != nil {
@@ -1625,7 +1625,7 @@ func writeTaskMetadataV2IfEnabled(
 	sessionID string,
 	shadowRef *plumbing.Reference,
 ) {
-	if !settings.IsCheckpointsV2Enabled(ctx) || shadowRef == nil {
+	if !settings.IsCheckpointsV2WriteEnabled(ctx) || shadowRef == nil {
 		return
 	}
 

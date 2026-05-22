@@ -37,8 +37,7 @@ const (
 
 var (
 	checkpointsVersionWarningOnce sync.Once
-	checkpointsV2WarningOnce      sync.Once
-	pushV2RefsWarningOnce         sync.Once
+	checkpointsV2DisallowedOnce   sync.Once
 )
 
 type worktreeRootContextKey struct{}
@@ -971,6 +970,17 @@ func CheckpointsVersion(ctx context.Context) int {
 	return version
 }
 
+// CheckpointsWriteVersion returns the checkpoint version used for new writes.
+// Checkpoints v2 settings are no longer supported for writes, so legacy v2
+// configuration falls back to v1.
+func CheckpointsWriteVersion(ctx context.Context) int {
+	s, err := Load(ctx)
+	if err != nil {
+		return 1
+	}
+	return s.CheckpointsWriteVersion()
+}
+
 // IsPushV2RefsEnabled checks if pushing v2 refs is enabled in settings.
 // Returns false by default if settings cannot be loaded or flags are missing.
 func IsPushV2RefsEnabled(ctx context.Context) bool {
@@ -979,6 +989,27 @@ func IsPushV2RefsEnabled(ctx context.Context) bool {
 		return false
 	}
 	return s.IsPushV2RefsEnabled()
+}
+
+// IsCheckpointsV2WriteEnabled returns whether new writes should create v2
+// checkpoint refs. Legacy settings are disallowed for writes, so this is false.
+func IsCheckpointsV2WriteEnabled(ctx context.Context) bool {
+	s, err := Load(ctx)
+	if err != nil {
+		return false
+	}
+	return s.IsCheckpointsV2WriteEnabled()
+}
+
+// WarnIfCheckpointsV2Disallowed emits the user-facing fallback warning when a
+// settings file still requests checkpoints v2. Call this from push-time flows
+// so users learn why v1 metadata is being pushed instead.
+func WarnIfCheckpointsV2Disallowed(ctx context.Context) {
+	s, err := Load(ctx)
+	if err != nil {
+		return
+	}
+	s.WarnIfCheckpointsV2Disallowed()
 }
 
 // IsFilteredFetchesEnabled checks if filtered fetches should be used.
@@ -1062,28 +1093,28 @@ func (s *EntireSettings) GetCheckpointRemote() *CheckpointRemoteConfig {
 	return &CheckpointRemoteConfig{Provider: provider, Repo: repo}
 }
 
-// IsCheckpointsV2Enabled always returns false. strategy_options.checkpoints_v2
-// is no longer supported — when set to true, a one-time warning is emitted and
-// the setting is ignored. CheckpointsVersion()'s v2 disallow handles the
-// checkpoints_version: 2 path separately.
+// IsCheckpointsV2Enabled checks if checkpoints v2 is enabled for read paths.
+// Writes use IsCheckpointsV2WriteEnabled instead so existing v2 checkpoint
+// metadata remains readable while new writes fall back to v1.
 func (s *EntireSettings) IsCheckpointsV2Enabled() bool {
 	if s.StrategyOptions == nil {
 		return false
 	}
-	if val, ok := s.StrategyOptions["checkpoints_v2"].(bool); ok && val {
-		checkpointsV2WarningOnce.Do(func() {
-			fmt.Fprintln(os.Stderr,
-				"[entire] strategy_options.checkpoints_v2: true is no longer supported and is being ignored. Remove it from .entire/settings.json.",
-			)
-		})
+	if val, ok := s.StrategyOptions["checkpoints_version"]; ok {
+		version, supported := parseCheckpointsVersion(val)
+		if supported && version == 2 {
+			return true
+		}
 	}
-	return false
+	val, ok := s.StrategyOptions["checkpoints_v2"].(bool)
+	return ok && val
 }
 
 // CheckpointsVersion returns the configured checkpoints format version from
-// strategy_options.checkpoints_version. Returns 1 when unset or invalid.
-// checkpoints_version: 2 is no longer supported — when configured, a one-time
-// warning is emitted and 1 is returned instead.
+// strategy_options.checkpoints_version. Returns 1 when unset, invalid, or
+// unsupported. Version 2 is no longer an exclusive storage mode; reads use
+// IsCheckpointsV2Enabled to enable dual v2/v1 lookup when legacy settings are
+// present.
 func (s *EntireSettings) CheckpointsVersion() int {
 	if s.StrategyOptions == nil {
 		return 1
@@ -1093,19 +1124,57 @@ func (s *EntireSettings) CheckpointsVersion() int {
 		return 1
 	}
 	version, ok := parseCheckpointsVersion(val)
-	if !ok {
+	if ok && version == 1 {
 		return 1
 	}
-	if version == 2 {
-		checkpointsVersionWarningOnce.Do(func() {
-			fmt.Fprintf(os.Stderr,
-				"[entire] strategy_options.checkpoints_version %v is no longer supported. Falling back to version 1.\n",
-				val,
-			)
-		})
-		return 1
+	return 1
+}
+
+// IsCheckpointsV2WriteEnabled always returns false. Legacy checkpoints v2
+// settings are read-compatible but no longer enable new v2 writes.
+func (s *EntireSettings) IsCheckpointsV2WriteEnabled() bool {
+	return false
+}
+
+// CheckpointsWriteVersion returns the checkpoint version used for writes.
+// Writes always use v1 now, even when legacy settings request v2.
+func (s *EntireSettings) CheckpointsWriteVersion() int {
+	return 1
+}
+
+// WarnIfCheckpointsV2Disallowed emits the v2 fallback warning when any legacy
+// settings key requests v2 writes or pushes.
+func (s *EntireSettings) WarnIfCheckpointsV2Disallowed() {
+	if val, ok := s.disallowedCheckpointsV2Value(); ok {
+		warnCheckpointsV2Disallowed(val)
 	}
-	return version
+}
+
+func (s *EntireSettings) disallowedCheckpointsV2Value() (any, bool) {
+	if s.StrategyOptions == nil {
+		return nil, false
+	}
+	if val, ok := s.StrategyOptions["checkpoints_version"]; ok {
+		version, supported := parseCheckpointsVersion(val)
+		if supported && version == 2 {
+			return val, true
+		}
+	}
+	for _, key := range []string{"checkpoints_v2", "push_v2_refs", "push_v2"} {
+		if val, ok := s.StrategyOptions[key].(bool); ok && val {
+			return 2, true
+		}
+	}
+	return nil, false
+}
+
+func warnCheckpointsV2Disallowed(val any) {
+	checkpointsV2DisallowedOnce.Do(func() {
+		fmt.Fprintf(os.Stderr,
+			"[entire] strategy_options.checkpoints_version %v is no longer supported. Falling back to version 1\n",
+			val,
+		)
+	})
 }
 
 func parseCheckpointsVersion(val any) (int, bool) {
@@ -1128,19 +1197,8 @@ func parseCheckpointsVersion(val any) (int, bool) {
 }
 
 // IsPushV2RefsEnabled always returns false. strategy_options.push_v2_refs is
-// no longer supported — when set to true, a one-time warning is emitted and
-// the setting is ignored.
+// no longer supported and is ignored.
 func (s *EntireSettings) IsPushV2RefsEnabled() bool {
-	if s.StrategyOptions == nil {
-		return false
-	}
-	if val, ok := s.StrategyOptions["push_v2_refs"].(bool); ok && val {
-		pushV2RefsWarningOnce.Do(func() {
-			fmt.Fprintln(os.Stderr,
-				"[entire] strategy_options.push_v2_refs: true is no longer supported and is being ignored. Remove it from .entire/settings.json.",
-			)
-		})
-	}
 	return false
 }
 

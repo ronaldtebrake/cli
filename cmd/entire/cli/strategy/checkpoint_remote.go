@@ -82,9 +82,9 @@ func resolvePushSettings(ctx context.Context, pushRemoteName string) pushSetting
 
 	ps.checkpointURL = checkpointURL
 
-	// Skip the v1 metadata-branch fetch entirely when checkpoints_version is 2 —
-	// there is no v1 branch being written or pushed, so there is nothing to sync.
-	if s.CheckpointsVersion() != 2 {
+	// checkpoints_version: 2 now falls back to v1, so the metadata branch is
+	// still the active checkpoint push target.
+	if s.CheckpointsWriteVersion() != 2 {
 		// If the v1 checkpoint branch doesn't exist locally, try to fetch it from the URL.
 		// This is a one-time operation — once the branch exists locally, subsequent pushes
 		// skip the fetch entirely. Only fetch the metadata branch; trails are always pushed
@@ -96,7 +96,8 @@ func resolvePushSettings(ctx context.Context, pushRemoteName string) pushSetting
 		}
 	}
 
-	// Also fetch v2 /main ref if v2 refs are enabled
+	// v2 ref pushing is no longer enabled by settings; this remains gated for
+	// any non-settings caller that may still exercise the helper in tests.
 	if s.IsPushV2RefsEnabled() {
 		if err := fetchV2MainRefIfMissing(ctx, checkpointURL); err != nil {
 			logging.Warn(ctx, "checkpoint-remote: failed to fetch v2 /main ref",

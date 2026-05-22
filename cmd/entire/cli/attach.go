@@ -298,16 +298,15 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		writeOpts.CompactTranscript = compacted
 	}
 
-	v2 := settings.CheckpointsVersion(logCtx) == 2
+	v2 := settings.CheckpointsWriteVersion(logCtx) == 2
 	if !v2 {
 		if err := store.WriteCommitted(ctx, writeOpts); err != nil {
 			return fmt.Errorf("failed to write checkpoint: %w", err)
 		}
 	}
-	// IsCheckpointsV2Enabled is true whenever v2 writes are enabled, including
-	// both v2-only mode (checkpoints_version == 2) and dual-write mode. Only
-	// v2-only mode propagates the error.
-	if settings.IsCheckpointsV2Enabled(logCtx) {
+	// Legacy v2 settings now fall back to v1, so this branch remains disabled
+	// unless a future non-settings caller deliberately re-enables the helper.
+	if settings.IsCheckpointsV2WriteEnabled(logCtx) {
 		if err := writeAttachCheckpointV2(logCtx, repo, writeOpts); err != nil {
 			if v2 {
 				return fmt.Errorf("failed to write checkpoint to v2: %w", err)
@@ -378,7 +377,7 @@ func ensureCheckpointAvailable(ctx, logCtx context.Context, repo *git.Repository
 		return repo, nil
 	}
 
-	v2Only := settings.CheckpointsVersion(logCtx) == 2
+	v2Only := settings.CheckpointsWriteVersion(logCtx) == 2
 
 	present, readErr := checkpointPresentLocally(ctx, repo, checkpointID, v2Only)
 	if readErr != nil {
