@@ -36,12 +36,5 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	}
 	pushCheckpointsSpan.End()
 
-	// Push v2 refs when enabled.
-	if settings.IsPushV2RefsEnabled(ctx) {
-		_, pushV2Span := perf.Start(ctx, "push_v2_refs")
-		pushV2Refs(ctx, ps.pushTarget())
-		pushV2Span.End()
-	}
-
 	return err
 }

@@ -985,46 +985,6 @@ func captureSettingsStderr(t *testing.T, fn func()) string {
 	return string(buf)
 }
 
-func TestIsPushV2RefsEnabled_DefaultsFalse(t *testing.T) {
-	t.Parallel()
-	s := &EntireSettings{Enabled: true}
-	if s.IsPushV2RefsEnabled() {
-		t.Error("expected IsPushV2RefsEnabled to default to false")
-	}
-}
-
-// TestIsPushV2RefsEnabled_AlwaysFalseAfterDisallow verifies that every input
-// returns false now that push_v2_refs is disallowed.
-func TestIsPushV2RefsEnabled_AlwaysFalseAfterDisallow(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		opts map[string]any
-	}{
-		{"checkpoints_version 2 ignored after disallow", map[string]any{"checkpoints_v2": false, "push_v2_refs": false, "checkpoints_version": 2}},
-		{"both true", map[string]any{"checkpoints_v2": true, "push_v2_refs": true}},
-		{"only checkpoints_v2", map[string]any{"checkpoints_v2": true}},
-		{"only push_v2_refs", map[string]any{"push_v2_refs": true}},
-		{"both false", map[string]any{"checkpoints_v2": false, "push_v2_refs": false}},
-		{"push_v2_refs wrong type", map[string]any{"checkpoints_v2": true, "push_v2_refs": "yes"}},
-		{"empty options", map[string]any{}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			s := &EntireSettings{
-				Enabled:         true,
-				StrategyOptions: tt.opts,
-			}
-			if got := s.IsPushV2RefsEnabled(); got {
-				t.Errorf("IsPushV2RefsEnabled() = true, want false (disallowed)")
-			}
-		})
-	}
-}
-
 func TestGetFullTranscriptGenerationRetentionDays(t *testing.T) {
 	t.Parallel()
 

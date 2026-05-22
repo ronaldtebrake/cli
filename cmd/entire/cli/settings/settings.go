@@ -980,16 +980,6 @@ func CheckpointsWriteVersion(ctx context.Context) int {
 	return s.CheckpointsWriteVersion()
 }
 
-// IsPushV2RefsEnabled checks if pushing v2 refs is enabled in settings.
-// Returns false by default if settings cannot be loaded or flags are missing.
-func IsPushV2RefsEnabled(ctx context.Context) bool {
-	s, err := Load(ctx)
-	if err != nil {
-		return false
-	}
-	return s.IsPushV2RefsEnabled()
-}
-
 // IsCheckpointsV2WriteEnabled returns whether new writes should create v2
 // checkpoint refs. Legacy settings are disallowed for writes, so this is false.
 func IsCheckpointsV2WriteEnabled(ctx context.Context) bool {
@@ -1191,12 +1181,6 @@ func parseCheckpointsVersion(val any) (int, bool) {
 		}
 	}
 	return 1, false
-}
-
-// IsPushV2RefsEnabled always returns false. strategy_options.push_v2_refs is
-// no longer supported and is ignored.
-func (s *EntireSettings) IsPushV2RefsEnabled() bool {
-	return false
 }
 
 // GetFullTranscriptGenerationRetentionDays returns the retention window for
