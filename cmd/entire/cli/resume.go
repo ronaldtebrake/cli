@@ -845,12 +845,16 @@ func checkRemoteMetadata(ctx context.Context, w, errW io.Writer, checkpointID id
 	return nil
 }
 
+// promoteRemoteTrackingMetadataBranch aligns the local entire/checkpoints/v1
+// branch with origin's remote-tracking ref. It creates the local ref when it
+// does not exist and fast-forwards a stale local ref when origin has new
+// commits — without this, callers reading checkpoint metadata via the local
+// ref (e.g. the committed-checkpoint store in RestoreLogsOnly) miss
+// checkpoints that have already been fetched into refs/remotes/origin/...
+// SafelyAdvanceLocalRef no-ops when the local ref is at or ahead of the
+// target, so unpushed local checkpoints are preserved.
 func promoteRemoteTrackingMetadataBranch(ctx context.Context, repo *git.Repository) {
 	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
-	if _, err := repo.Reference(localRefName, true); err == nil {
-		return
-	}
-
 	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), true)
 	if err != nil {
 		return

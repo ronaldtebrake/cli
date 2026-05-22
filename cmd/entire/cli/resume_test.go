@@ -921,6 +921,165 @@ func TestCheckRemoteMetadata_CheckpointNotOnRemote(t *testing.T) {
 	}
 }
 
+// TestPromoteRemoteTrackingMetadataBranch_FastForwardsStaleLocal verifies that
+// promoteRemoteTrackingMetadataBranch advances a stale local entire/checkpoints/v1
+// to match origin/entire/checkpoints/v1 when the remote-tracking branch is ahead.
+// Before the fix, this function returned early whenever the local ref existed,
+// even if it was behind remote — so callers reading checkpoint metadata from the
+// local branch could miss checkpoints already fetched into the remote-tracking ref.
+func TestPromoteRemoteTrackingMetadataBranch_FastForwardsStaleLocal(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	// Initial position of the local metadata branch (from EnsureMetadataBranch).
+	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	initialRef, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to read initial metadata branch ref: %v", err)
+	}
+	initialHash := initialRef.Hash()
+
+	// Add a checkpoint commit on top — this advances the local metadata branch.
+	_ = createCheckpointOnMetadataBranch(t, repo, "2025-01-01-test-session-uuid")
+	descendantRef, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to read advanced metadata branch ref: %v", err)
+	}
+	descendantHash := descendantRef.Hash()
+	if descendantHash == initialHash {
+		t.Fatalf("expected the metadata branch to advance after createCheckpointOnMetadataBranch")
+	}
+
+	// Mirror the descendant into the remote-tracking ref ("origin has the new commit").
+	remoteRefName := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(remoteRefName, descendantHash)); err != nil {
+		t.Fatalf("Failed to set remote-tracking ref: %v", err)
+	}
+
+	// Rewind the LOCAL branch back to before the checkpoint, simulating a stale
+	// local ref while the remote-tracking ref is up to date.
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(localRefName, initialHash)); err != nil {
+		t.Fatalf("Failed to rewind local metadata branch: %v", err)
+	}
+
+	// Sanity check: local is stale.
+	pre, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to re-read local ref: %v", err)
+	}
+	if pre.Hash() != initialHash {
+		t.Fatalf("precondition: local should be at initial hash, got %s want %s", pre.Hash(), initialHash)
+	}
+
+	// Promote.
+	promoteRemoteTrackingMetadataBranch(context.Background(), repo)
+
+	// Post-condition: local should match the remote-tracking ref.
+	post, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to read local ref after promote: %v", err)
+	}
+	if post.Hash() != descendantHash {
+		t.Errorf("local should be fast-forwarded to remote-tracking ref: got %s, want %s",
+			post.Hash(), descendantHash)
+	}
+}
+
+// TestResumeFromCurrentBranch_FastForwardsStaleLocalMetadata exercises the
+// end-to-end resume flow when the local entire/checkpoints/v1 branch is behind
+// origin/entire/checkpoints/v1 (a fresh checkpoint has been pushed but the user
+// hasn't fast-forwarded their local ref). Before the fix the resume command
+// printed "session log not available" because the committed-checkpoint reader
+// in RestoreLogsOnly/resumeSingleSession only consults the local ref (it only
+// falls back to origin/... when the local ref is missing entirely). After the
+// fix, promoteRemoteTrackingMetadataBranch fast-forwards local from remote
+// before the metadata reads happen, so the message is no longer printed.
+func TestResumeFromCurrentBranch_FastForwardsStaleLocalMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Redirect Claude session writes into the temp dir.
+	claudeDir := filepath.Join(tmpDir, "claude-projects")
+	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", claudeDir)
+
+	repo, w, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	// Capture the local metadata branch's initial position (no checkpoints yet).
+	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	initialRef, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to read initial metadata branch ref: %v", err)
+	}
+	initialHash := initialRef.Hash()
+
+	// Write a real checkpoint with agent metadata so RestoreLogsOnly can resolve
+	// the agent and write the restored session file. This advances local.
+	ctx := context.Background()
+	sessionID := "2025-01-01-test-session-uuid"
+	cpID := id.MustCheckpointID("abc123def456")
+	rawTranscript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n")
+
+	v1Store := checkpoint.NewGitStore(repo)
+	if err := v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    sessionID,
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted(rawTranscript),
+		Agent:        types.AgentType("Claude Code"),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted: %v", err)
+	}
+
+	advancedRef, err := repo.Reference(localRefName, true)
+	if err != nil {
+		t.Fatalf("Failed to read advanced metadata branch ref: %v", err)
+	}
+	descendantHash := advancedRef.Hash()
+
+	// Mirror the new commit into the remote-tracking ref…
+	remoteRefName := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(remoteRefName, descendantHash)); err != nil {
+		t.Fatalf("Failed to set remote-tracking ref: %v", err)
+	}
+	// …then rewind the LOCAL ref to before the checkpoint, leaving the local
+	// branch stale while the remote-tracking ref is ahead.
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(localRefName, initialHash)); err != nil {
+		t.Fatalf("Failed to rewind local metadata branch: %v", err)
+	}
+
+	// Create a feature-style commit on master carrying the checkpoint trailer.
+	featureFile := filepath.Join(tmpDir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature content"), 0o644); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	if _, err := w.Add("feature.txt"); err != nil {
+		t.Fatalf("add feature file: %v", err)
+	}
+	commitMsg := "Add feature\n\nEntire-Checkpoint: " + cpID.String()
+	if _, err := w.Commit(commitMsg, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
+	}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Run resume from the current branch with force=true (skip interactive prompt).
+	var stdout, stderr bytes.Buffer
+	if err := resumeFromCurrentBranch(ctx, &stdout, &stderr, "master", true); err != nil {
+		t.Fatalf("resumeFromCurrentBranch error: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+
+	combined := stdout.String() + stderr.String()
+	if strings.Contains(combined, "session log not available") {
+		t.Errorf("resumeFromCurrentBranch reported missing log even though origin has the checkpoint metadata (local metadata branch was not fast-forwarded from remote-tracking ref):\n%s",
+			combined)
+	}
+}
+
 func TestResumeFromCurrentBranch_NoMetadataAvailable(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
