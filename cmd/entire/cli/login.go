@@ -29,6 +29,18 @@ const maxTransientErrors = 5
 // browserOpenFunc is the signature for opening a URL in the user's browser.
 type browserOpenFunc func(ctx context.Context, url string) error
 
+// chooseApprovalURL prefers verification_uri_complete (RFC 8628 §3.3.1) so the
+// browser lands on a URL with the user_code already in the query string —
+// most verification pages prefill the input from that param, sparing the
+// user from typing. Falls back to the bare verification_uri when the AS
+// didn't supply a complete form.
+func chooseApprovalURL(start *auth.DeviceAuthStart) string {
+	if start.VerificationURIComplete != "" {
+		return start.VerificationURIComplete
+	}
+	return start.VerificationURI
+}
+
 // clipboardWriteFunc is the signature for copying text to the user's clipboard.
 type clipboardWriteFunc func(text string) error
 
@@ -63,7 +75,7 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 
 	fmt.Fprintf(outW, "Device code: %s\n", start.UserCode)
 
-	approvalURL := start.VerificationURI
+	approvalURL := chooseApprovalURL(start)
 
 	if interactive.CanPromptInteractively() {
 		fmt.Fprintf(outW, "Press Enter to copy the code to your clipboard, open %s in your browser, and enter the generated device code...", approvalURL)
