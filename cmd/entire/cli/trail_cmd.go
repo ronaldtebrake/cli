@@ -58,6 +58,7 @@ branch, or lists recent trails if no trail exists for the current branch.`,
 	cmd.AddCommand(newTrailListCmd())
 	cmd.AddCommand(newTrailCreateCmd())
 	cmd.AddCommand(newTrailUpdateCmd())
+	cmd.AddCommand(newTrailReviewCmd())
 	cmd.AddCommand(newTrailWatchCmd())
 
 	return cmd

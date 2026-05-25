@@ -73,6 +73,11 @@ func (c *Client) GetStream(ctx context.Context, path string, headers http.Header
 
 // Post sends an authenticated POST request with a JSON body to the given API-relative path.
 func (c *Client) Post(ctx context.Context, path string, body any) (*http.Response, error) {
+	return c.PostWithHeaders(ctx, path, body, nil)
+}
+
+// PostWithHeaders sends an authenticated POST request with a JSON body and extra headers.
+func (c *Client) PostWithHeaders(ctx context.Context, path string, body any, headers http.Header) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -81,7 +86,7 @@ func (c *Client) Post(ctx context.Context, path string, body any) (*http.Respons
 		}
 		reader = bytes.NewReader(data)
 	}
-	return c.do(ctx, http.MethodPost, path, reader, nil)
+	return c.do(ctx, http.MethodPost, path, reader, headers)
 }
 
 // Put sends an authenticated PUT request with a JSON body to the given API-relative path.
