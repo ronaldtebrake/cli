@@ -1307,7 +1307,6 @@ func TestSafelyAdvanceLocalRef_DoesNotAdvanceOnRefReadError(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-
 // buildCommittedTree creates a git tree with the sharded committed checkpoint layout
 // used by entire/checkpoints/v1. files is a map of path -> content relative to the tree root.
 // Example: {"a3/b2c4d5e6f7/0/prompt.txt": "Hello"} creates the nested directory structure.
