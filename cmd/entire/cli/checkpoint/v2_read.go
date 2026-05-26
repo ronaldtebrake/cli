@@ -471,7 +471,10 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 		NoFilter: true,
 		Dir:      repoRoot,
 	}); fetchErr != nil {
-		return fmt.Errorf("fetch failed: %s: %w", fetchOutput, fetchErr)
+		if output := strings.TrimSpace(string(fetchOutput)); output != "" {
+			return fmt.Errorf("fetch failed: %s: %w", output, fetchErr)
+		}
+		return fmt.Errorf("fetch failed: %w", fetchErr)
 	}
 
 	return nil
