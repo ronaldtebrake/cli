@@ -203,7 +203,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		summary = generateSummary(ctx, redactedTranscript, sessionData.FilesTouched, state)
 	}
 
-	// Build write options (shared by v1 and v2)
 	writeOpts := cpkg.WriteCommittedOptions{
 		CheckpointID:                checkpointID,
 		SessionID:                   state.SessionID,

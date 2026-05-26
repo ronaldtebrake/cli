@@ -8,11 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
+	"github.com/entireio/cli/redact"
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-git/go-git/v6"
@@ -21,7 +24,35 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
-func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts checkpoint.WriteCommittedOptions) {
+type v2CheckpointFixtureOptions struct {
+	CheckpointID              id.CheckpointID
+	SessionID                 string
+	Strategy                  string
+	Branch                    string
+	Transcript                redact.RedactedBytes
+	Prompts                   []string
+	FilesTouched              []string
+	CheckpointsCount          int
+	CreatedAt                 time.Time
+	AuthorName                string
+	AuthorEmail               string
+	Agent                     types.AgentType
+	Model                     string
+	TurnID                    string
+	TokenUsage                *agent.TokenUsage
+	SessionMetrics            *checkpoint.SessionMetrics
+	Summary                   *checkpoint.Summary
+	InitialAttribution        *checkpoint.InitialAttribution
+	PromptAttributions        json.RawMessage
+	CompactTranscript         []byte
+	CheckpointTranscriptStart int
+	Kind                      string
+	ReviewSkills              []string
+	ReviewPrompt              string
+	HasReview                 bool
+}
+
+func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts v2CheckpointFixtureOptions) {
 	t.Helper()
 
 	sessionIndex := writeV2MainCheckpointFixture(t, repo, opts)
@@ -30,7 +61,7 @@ func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts checkpoin
 	}
 }
 
-func writeV2MainCheckpointFixture(t *testing.T, repo *git.Repository, opts checkpoint.WriteCommittedOptions) int {
+func writeV2MainCheckpointFixture(t *testing.T, repo *git.Repository, opts v2CheckpointFixtureOptions) int {
 	t.Helper()
 
 	if opts.CreatedAt.IsZero() {
@@ -108,13 +139,13 @@ func writeV2MainCheckpointFixture(t *testing.T, repo *git.Repository, opts check
 		Agent:                     opts.Agent,
 		Model:                     opts.Model,
 		TurnID:                    opts.TurnID,
-		CheckpointTranscriptStart: opts.CompactTranscriptStart,
-		TranscriptLinesAtStart:    opts.CompactTranscriptStart,
+		CheckpointTranscriptStart: opts.CheckpointTranscriptStart,
+		TranscriptLinesAtStart:    opts.CheckpointTranscriptStart,
 		TokenUsage:                opts.TokenUsage,
 		SessionMetrics:            opts.SessionMetrics,
 		Summary:                   opts.Summary,
 		InitialAttribution:        opts.InitialAttribution,
-		PromptAttributions:        opts.PromptAttributionsJSON,
+		PromptAttributions:        opts.PromptAttributions,
 		Kind:                      opts.Kind,
 		ReviewSkills:              opts.ReviewSkills,
 		ReviewPrompt:              opts.ReviewPrompt,

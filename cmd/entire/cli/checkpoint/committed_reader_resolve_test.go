@@ -27,7 +27,7 @@ func TestCommittedReader_UsesV2WhenFound(t *testing.T) {
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("111111111111")
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -63,7 +63,7 @@ func TestDualCheckpointReader_UpdateSummaryUpdatesV1Only(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -107,7 +107,7 @@ func TestDualCheckpointReader_ReadSessionPromptsFallsBackWhenV2PromptMissing(t *
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-with-v1-prompt",
 		Strategy:     "manual-commit",
@@ -149,7 +149,7 @@ func TestDualCheckpointReader_ReadSessionMetadataAndPromptsFallsBackWhenV2Prompt
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -247,7 +247,7 @@ func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -297,7 +297,7 @@ func TestDualCheckpointReader_DoesNotUseIndexFallbackWhenV2CheckpointExists(t *t
 	require.NoError(t, err)
 	require.Equal(t, "session-a", v1IndexZero.Metadata.SessionID)
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -337,7 +337,7 @@ func TestDualCheckpointReader_ReadSessionMetadataAndPromptsDoesNotUseSingleV1Fal
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -382,7 +382,7 @@ func TestDualCheckpointReader_ReadSessionMetadataAndPromptsDoesNotFallbackByInde
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -410,7 +410,7 @@ func TestDualCheckpointReader_ReadSessionContentReturnsV2AndFallbackErrors(t *te
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("565656565656")
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-missing-v1",
 		Strategy:          "manual-commit",
@@ -454,7 +454,7 @@ func TestReadRawSessionLogForCheckpoint_FallsBackToV1RawTranscriptByV2SessionID(
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-b",
 		Strategy:          "manual-commit",
@@ -507,7 +507,7 @@ func TestCommittedReader_PrefersV1WhenV2Disabled(t *testing.T) {
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("333333333333")
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -541,7 +541,7 @@ func TestReadRawSessionLogForCheckpoint_UsesV2WhenFound(t *testing.T) {
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("444444444444")
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -589,7 +589,7 @@ func TestDualCheckpointReader_ListCommittedMergesV2AndV1(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: dualID,
 		SessionID:    "session-dual",
 		CreatedAt:    older,
@@ -673,7 +673,7 @@ func TestReadRawSessionLogForCheckpoint_PrefersV1WhenV2Disabled(t *testing.T) {
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("666666666666")
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -726,7 +726,7 @@ func TestCommittedReader_DoesNotUseIndexFallbackWhenV2Malformed(t *testing.T) {
 	}))
 
 	// Write valid v2 checkpoint, then corrupt its metadata.json.
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",

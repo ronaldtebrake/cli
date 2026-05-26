@@ -20,7 +20,7 @@ func TestGetV2MetadataTree_LocalRef(t *testing.T) {
 	ctx := context.Background()
 
 	// Write a checkpoint fixture so the /main ref exists.
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -67,7 +67,7 @@ func TestGetV2MetadataTree_FetchSucceeds(t *testing.T) {
 	ctx := context.Background()
 
 	// Write checkpoint fixture so the ref exists after "fetch".
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -98,7 +98,7 @@ func TestGetV2MetadataTree_TreelessFetchFails_FallsBackToFullFetch(t *testing.T)
 	cpID := id.MustCheckpointID("c1c2c3c4c5c6")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",

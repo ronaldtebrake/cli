@@ -3,15 +3,19 @@ package checkpoint
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
+	"github.com/entireio/cli/redact"
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-git/go-git/v6"
@@ -19,6 +23,34 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
+
+type v2TestCheckpointOptions struct {
+	CheckpointID              id.CheckpointID
+	SessionID                 string
+	Strategy                  string
+	Branch                    string
+	Transcript                redact.RedactedBytes
+	Prompts                   []string
+	FilesTouched              []string
+	CheckpointsCount          int
+	CreatedAt                 time.Time
+	AuthorName                string
+	AuthorEmail               string
+	Agent                     types.AgentType
+	Model                     string
+	TurnID                    string
+	TokenUsage                *agent.TokenUsage
+	SessionMetrics            *SessionMetrics
+	Summary                   *Summary
+	InitialAttribution        *InitialAttribution
+	PromptAttributions        json.RawMessage
+	CompactTranscript         []byte
+	CheckpointTranscriptStart int
+	Kind                      string
+	ReviewSkills              []string
+	ReviewPrompt              string
+	HasReview                 bool
+}
 
 // initTestRepo creates a bare-minimum git repo with one commit (needed for HEAD).
 func initTestRepo(t *testing.T) *git.Repository {
@@ -36,7 +68,7 @@ func initTestRepo(t *testing.T) *git.Repository {
 	return repo
 }
 
-func writeV2TestCheckpoint(t *testing.T, repo *git.Repository, opts WriteCommittedOptions) {
+func writeV2TestCheckpoint(t *testing.T, repo *git.Repository, opts v2TestCheckpointOptions) {
 	t.Helper()
 
 	sessionIndex := writeV2TestMainCheckpoint(t, repo, opts)
@@ -45,7 +77,7 @@ func writeV2TestCheckpoint(t *testing.T, repo *git.Repository, opts WriteCommitt
 	}
 }
 
-func writeV2TestMainCheckpoint(t *testing.T, repo *git.Repository, opts WriteCommittedOptions) int {
+func writeV2TestMainCheckpoint(t *testing.T, repo *git.Repository, opts v2TestCheckpointOptions) int {
 	t.Helper()
 
 	if opts.CreatedAt.IsZero() {
@@ -125,13 +157,13 @@ func writeV2TestMainCheckpoint(t *testing.T, repo *git.Repository, opts WriteCom
 		Agent:                     opts.Agent,
 		Model:                     opts.Model,
 		TurnID:                    opts.TurnID,
-		CheckpointTranscriptStart: opts.CompactTranscriptStart,
-		TranscriptLinesAtStart:    opts.CompactTranscriptStart,
+		CheckpointTranscriptStart: opts.CheckpointTranscriptStart,
+		TranscriptLinesAtStart:    opts.CheckpointTranscriptStart,
 		TokenUsage:                opts.TokenUsage,
 		SessionMetrics:            opts.SessionMetrics,
 		Summary:                   opts.Summary,
 		InitialAttribution:        opts.InitialAttribution,
-		PromptAttributions:        opts.PromptAttributionsJSON,
+		PromptAttributions:        opts.PromptAttributions,
 		Kind:                      opts.Kind,
 		ReviewSkills:              opts.ReviewSkills,
 		ReviewPrompt:              opts.ReviewPrompt,

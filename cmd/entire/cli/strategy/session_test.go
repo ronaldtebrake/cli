@@ -301,7 +301,7 @@ func TestGetDescriptionForCheckpointFallsForwardToV2WhenV1MissesCheckpoint(t *te
 
 	targetCheckpointID := id.MustCheckpointID("222222222222")
 	expectedDesc := "prompt from v2"
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: targetCheckpointID,
 		SessionID:    "session-v2-description",
 		Strategy:     StrategyNameManualCommit,

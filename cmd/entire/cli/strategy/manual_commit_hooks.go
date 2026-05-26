@@ -2913,7 +2913,6 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 	// but this would complicate checkpoint retrieval and require careful tracking of dependencies.
 	state.StepCount = 1
 	state.CheckpointTranscriptStart = 0
-	state.CompactTranscriptStart = 0
 	state.CheckpointTranscriptSize = 0
 	state.LastCheckpointID = ""
 	// NOTE: TurnCheckpointIDs is intentionally NOT cleared here. Those checkpoint

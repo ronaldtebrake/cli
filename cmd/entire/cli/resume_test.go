@@ -607,7 +607,7 @@ func TestResolveLatestCheckpointUsesLocalV2WhenSettingsDisabled(t *testing.T) {
 	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
 	cpID := id.MustCheckpointID("dd11ee22ff33")
 	v2Store := checkpoint.NewV2GitStore(repo)
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-local",
 		Strategy:     "manual-commit",
@@ -633,7 +633,7 @@ func TestResolveLatestCheckpointFallsBackToV1WhenLocalV2MissesCheckpoint(t *test
 	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
 
 	v2Store := checkpoint.NewV2GitStore(repo)
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: id.MustCheckpointID("dd11ee22ff33"),
 		SessionID:    "session-v2-other",
 		Strategy:     "manual-commit",
@@ -795,7 +795,7 @@ func TestResumeSingleSession_FallsBackToV1WhenV2FullMissing(t *testing.T) {
 		t.Fatalf("failed to write v1 checkpoint: %v", err)
 	}
 
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID:      cpID,
 		SessionID:         sessionID,
 		Strategy:          "manual-commit",

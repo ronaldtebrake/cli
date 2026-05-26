@@ -26,7 +26,7 @@ func TestV2ReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 	cpID := id.MustCheckpointID("a1a2a3a4a5a6")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -62,7 +62,7 @@ func TestV2ReadSessionContent_ReturnsMetadataAndTranscript(t *testing.T) {
 	cpID := id.MustCheckpointID("c1c2c3c4c5c6")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -87,7 +87,7 @@ func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
 	ctx := context.Background()
 
 	cpID := id.MustCheckpointID("d1d2d3d4d5d6")
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-archived",
 		Strategy:     "manual-commit",
@@ -112,7 +112,7 @@ func TestV2ReadSessionContent_FetchesRemoteArchivedGeneration(t *testing.T) {
 	remoteRepo := initTestRepo(t)
 	remoteRoot := repoRootForTest(t, remoteRepo)
 	cpID := id.MustCheckpointID("d2d3d4d5d6d7")
-	writeV2TestCheckpoint(t, remoteRepo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, remoteRepo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-remote-archive",
 		Strategy:     "manual-commit",
@@ -148,7 +148,7 @@ func TestV2ReadSessionContent_MissingTranscript_ReturnsError(t *testing.T) {
 	cpID := id.MustCheckpointID("f1f2f3f4f5f6")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -169,7 +169,7 @@ func TestV2FetchRemoteFullRefsUsesStoreRepository(t *testing.T) {
 	remoteRepo := initTestRepo(t)
 	remoteRoot := repoRootForTest(t, remoteRepo)
 	cpID := id.MustCheckpointID("a7a8a9aaabac")
-	writeV2TestCheckpoint(t, remoteRepo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, remoteRepo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-remote",
 		Strategy:     "manual-commit",
@@ -235,7 +235,7 @@ func TestV2ReadSessionMetadataAndPrompts_ReturnsWithoutTranscript(t *testing.T) 
 
 	// Write a checkpoint with prompts but no transcript (the fixture skips
 	// /full/current when Transcript is empty).
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-meta-only",
 		Strategy:     "manual-commit",
@@ -292,7 +292,7 @@ func TestV2ReadSessionMetadata_DoesNotRequireRawTranscript(t *testing.T) {
 	cpID := id.MustCheckpointID("f2f3f4f5f6f7")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
@@ -331,7 +331,7 @@ func TestV2ReadSessionMetadata_ReturnsMetadata(t *testing.T) {
 	cpID := id.MustCheckpointID("f1f2f3f4f5fa")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-metadata-only",
 		Strategy:     "manual-commit",
@@ -350,7 +350,7 @@ func TestV2ReadSessionMetadata_FetchesMissingMetadataBlob(t *testing.T) {
 	cpID := id.MustCheckpointID("f1f2f3f4f5fb")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-fetch-metadata",
 		Strategy:     "manual-commit",
@@ -410,7 +410,7 @@ func TestV2ReadSessionContent_ChunkedTranscript(t *testing.T) {
 
 	// Write metadata to /main so ReadSessionContent can find the checkpoint
 	v2Store := NewV2GitStore(repo)
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-chunked",
 		Strategy:     "manual-commit",
@@ -449,7 +449,7 @@ func TestV2ReadSessionCompactTranscript_ReturnsCompactData(t *testing.T) {
 	ctx := context.Background()
 
 	compact := []byte(`{"v":1,"agent":"claude-code","cli_version":"0.5.1","type":"user","content":[{"text":"hello compact"}]}` + "\n")
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-compact",
 		Strategy:          "manual-commit",
@@ -471,7 +471,7 @@ func TestV2ReadSessionCompactTranscript_MissingCompactTranscript(t *testing.T) {
 	cpID := id.MustCheckpointID("c0c1c2c3c4c5")
 	ctx := context.Background()
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-no-compact",
 		Strategy:     "manual-commit",
@@ -494,7 +494,7 @@ func TestV2ReadSessionCompactTranscript_MissingCheckpointOrSession(t *testing.T)
 	require.ErrorIs(t, err, ErrCheckpointNotFound)
 
 	cpID := id.MustCheckpointID("e0e1e2e3e4e5")
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-0",
 		Strategy:     "manual-commit",

@@ -74,7 +74,7 @@ func TestNewCommittedCheckpointReader_UsesLocalV2RefWhenSettingsDisabled(t *test
 	require.NoError(t, err)
 
 	cpID := id.MustCheckpointID("dd11ee22ff33")
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-local",
 		Strategy:     "manual-commit",
@@ -1982,7 +1982,7 @@ func TestRunExplainCheckpoint_V2OnlyCheckpoint(t *testing.T) {
 
 	cpID := id.MustCheckpointID("777777777777")
 
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -2044,7 +2044,7 @@ func TestRunExplainCheckpoint_V2OnlyRawTranscript(t *testing.T) {
 
 	cpID := id.MustCheckpointID("888888888888")
 
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2",
 		Strategy:     "manual-commit",
@@ -2108,7 +2108,7 @@ func TestRunExplainCheckpoint_V2UsesCompactTranscriptForIntent(t *testing.T) {
 			`{"v":1,"agent":"claude-code","cli_version":"0.5.1","type":"assistant","ts":"2026-01-01T00:00:01Z","id":"m1","content":[{"type":"text","text":"assistant reply"}]}` + "\n",
 	)
 
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID:              cpID,
 		SessionID:                 "session-v2",
 		Strategy:                  "manual-commit",
@@ -2379,7 +2379,7 @@ func TestRunExplainCheckpoint_V2PreferredGenerateWritesV1Store(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}))
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-dual",
 		Strategy:     "manual-commit",
@@ -2436,7 +2436,7 @@ func TestRunExplainCheckpoint_V2FallsBackToFullWhenCompactMissing(t *testing.T) 
 	)
 
 	// Write checkpoint with raw transcript but NO compact transcript.
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-no-compact",
 		Strategy:     "manual-commit",
@@ -2497,7 +2497,7 @@ func TestRunExplainCheckpoint_FullFallsBackToV1WhenV2FullMissing(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}))
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-v1-fallback",
 		Strategy:          "manual-commit",
@@ -2557,7 +2557,7 @@ func TestRunExplainCheckpoint_V2CompactTranscriptNotUsedForGenerate(t *testing.T
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}))
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID:      cpID,
 		SessionID:         "session-compact",
 		Strategy:          "manual-commit",
@@ -2620,7 +2620,7 @@ func TestListCommittedForExplain_MergesV1AndV2(t *testing.T) {
 		AuthorName:   "T",
 		AuthorEmail:  "t@t.com",
 	}))
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: overlapID,
 		SessionID:    "session-overlap",
 		Strategy:     "manual-commit",
@@ -6088,7 +6088,7 @@ func TestGetBranchCheckpoints_V2OnlyCheckpointDiscoverable(t *testing.T) {
 	expectedPrompt := "Create the v2-only checkpoint test file"
 
 	// Write checkpoint ONLY to v2 refs.
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-only",
 		Strategy:     "manual-commit",
@@ -6171,7 +6171,7 @@ func TestGetBranchCheckpoints_V2PromptFallbackWhenV1Deleted(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}))
-	writeV2CheckpointFixture(t, repo, checkpoint.WriteCommittedOptions{
+	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-dual",
 		Strategy:     "manual-commit",

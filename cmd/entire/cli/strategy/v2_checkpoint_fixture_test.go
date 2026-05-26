@@ -7,10 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
+	"github.com/entireio/cli/redact"
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-git/go-git/v6"
@@ -19,7 +23,25 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
-func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts checkpoint.WriteCommittedOptions) {
+type v2CheckpointFixtureOptions struct {
+	CheckpointID     id.CheckpointID
+	SessionID        string
+	Strategy         string
+	Branch           string
+	Transcript       redact.RedactedBytes
+	Prompts          []string
+	FilesTouched     []string
+	CheckpointsCount int
+	CreatedAt        time.Time
+	AuthorName       string
+	AuthorEmail      string
+	Agent            types.AgentType
+	Model            string
+	TokenUsage       *agent.TokenUsage
+	HasReview        bool
+}
+
+func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts v2CheckpointFixtureOptions) {
 	t.Helper()
 
 	if opts.CreatedAt.IsZero() {
@@ -82,7 +104,7 @@ func writeV2CheckpointFixture(t *testing.T, repo *git.Repository, opts checkpoin
 	}
 }
 
-func writeV2RawTranscriptFixture(t *testing.T, repo *git.Repository, opts checkpoint.WriteCommittedOptions) {
+func writeV2RawTranscriptFixture(t *testing.T, repo *git.Repository, opts v2CheckpointFixtureOptions) {
 	t.Helper()
 
 	sessionPath := opts.CheckpointID.Path() + "/0/"

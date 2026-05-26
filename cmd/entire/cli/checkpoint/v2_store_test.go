@@ -27,7 +27,7 @@ func TestV2GitStore_GetRefState_ReturnsParentAndTree(t *testing.T) {
 	repo := initTestRepo(t)
 	store := NewV2GitStore(repo)
 
-	writeV2TestCheckpoint(t, repo, WriteCommittedOptions{
+	writeV2TestCheckpoint(t, repo, v2TestCheckpointOptions{
 		CheckpointID: id.MustCheckpointID("a1a2a3a4a5a6"),
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",

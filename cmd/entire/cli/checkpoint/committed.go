@@ -1641,10 +1641,6 @@ func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.Reda
 // plus the content-hash blob to the object store once, returning the resulting
 // hashes for reuse across multiple UpdateCommitted calls that share the same
 // transcript content.
-//
-// The returned blobs work for both v1 (full.jsonl) and v2 (raw_transcript)
-// paths since blob hashes are content-addressed (SHA-1 of chunk bytes). Only
-// the tree-entry filenames differ between v1 and v2.
 func PrecomputeTranscriptBlobs(ctx context.Context, repo *git.Repository, transcript redact.RedactedBytes, agentType types.AgentType) (*PrecomputedTranscriptBlobs, error) {
 	raw := transcript.Bytes()
 
