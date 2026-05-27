@@ -162,7 +162,7 @@ func SafelyAdvanceLocalRef(ctx context.Context, repo *git.Repository, localRefNa
 		if shallow {
 			return fmt.Errorf("no merge base for %s, and reachable shallow history prevents proving refs are disconnected; run 'entire doctor' or 'git fetch --unshallow' and try again", localRefName)
 		}
-		return replayDisconnectedLocalRef(ctx, repo, localRefName, localHash, targetHash)
+		return replayDisconnectedLocalRef(ctx, repo, repoPath, localRefName, localHash, targetHash)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to find merge base for %s: %w", localRefName, err)
@@ -182,23 +182,31 @@ func replayLocalRefFromBase(ctx context.Context, repo *git.Repository, repoPath 
 	if err != nil {
 		return fmt.Errorf("failed to collect local replay commits for %s: %w", localRefName, err)
 	}
-	return replayLocalCommits(ctx, repo, localRefName, targetHash, localCommits)
+	shallow, err := loadShallowHashes(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to load shallow boundaries for %s: %w", localRefName, err)
+	}
+	return replayLocalCommits(ctx, repo, localRefName, targetHash, localCommits, shallow)
 }
 
-func replayDisconnectedLocalRef(ctx context.Context, repo *git.Repository, localRefName plumbing.ReferenceName, localHash, targetHash plumbing.Hash) error {
-	localCommits, err := collectCommitChain(repo, localHash)
+func replayDisconnectedLocalRef(ctx context.Context, repo *git.Repository, repoPath string, localRefName plumbing.ReferenceName, localHash, targetHash plumbing.Hash) error {
+	shallow, err := loadShallowHashes(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to load shallow boundaries for %s: %w", localRefName, err)
+	}
+	localCommits, err := collectCommitChain(repo, localHash, shallow)
 	if err != nil {
 		return fmt.Errorf("failed to collect disconnected local commits for %s: %w", localRefName, err)
 	}
-	return replayLocalCommits(ctx, repo, localRefName, targetHash, localCommits)
+	return replayLocalCommits(ctx, repo, localRefName, targetHash, localCommits, shallow)
 }
 
-func replayLocalCommits(ctx context.Context, repo *git.Repository, localRefName plumbing.ReferenceName, targetHash plumbing.Hash, localCommits []*object.Commit) error {
+func replayLocalCommits(ctx context.Context, repo *git.Repository, localRefName plumbing.ReferenceName, targetHash plumbing.Hash, localCommits []*object.Commit, shallow map[plumbing.Hash]bool) error {
 	if len(localCommits) == 0 {
 		return setRefHash(repo, localRefName, targetHash)
 	}
 
-	newTip, err := cherryPickOnto(ctx, repo, targetHash, localCommits)
+	newTip, err := cherryPickOnto(ctx, repo, targetHash, localCommits, shallow)
 	if err != nil {
 		return fmt.Errorf("failed to replay local commits for %s: %w", localRefName, err)
 	}
