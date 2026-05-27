@@ -1,4 +1,4 @@
-//nolint:ireturn,wrapcheck // billy.Filesystem requires interface-returning passthrough methods; preserve osfs errors exactly.
+//nolint:wrapcheck // Preserve osfs errors exactly for billy.Filesystem passthrough methods.
 package gitrepo
 
 import (
