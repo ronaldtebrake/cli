@@ -4,6 +4,4 @@
 OUTPUT="entire"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) OUTPUT="entire.exe" ;; esac
 
-# No ldflags: versioninfo derives the version/commit from Go's embedded build
-# info, so a plain `go build` self-reports a real commit.
 go build -o "$OUTPUT" ./cmd/entire
