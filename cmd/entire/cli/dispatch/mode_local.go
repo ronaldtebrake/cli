@@ -23,8 +23,13 @@ import (
 )
 
 var (
-	lookupCurrentToken = auth.LookupCurrentToken
-	nowUTC             = func() time.Time { return time.Now().UTC() }
+	// lookupResourceToken returns a bearer scoped to the given resource
+	// origin. Production wiring goes through auth.TokenForResource so
+	// the tokenmanager's same-host shortcut, JWT-aud shortcut, and
+	// exchange dispatch all apply. Tests swap to a fixed-token closure.
+	lookupResourceToken = auth.TokenForResource
+
+	nowUTC = func() time.Time { return time.Now().UTC() }
 )
 
 func runLocal(ctx context.Context, opts Options) (*Dispatch, error) {

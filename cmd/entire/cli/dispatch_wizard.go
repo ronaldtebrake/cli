@@ -29,7 +29,7 @@ var getDispatchWizardCurrentBranch = GetCurrentBranch
 var runDispatchWizardForm = func(form *huh.Form) error { return form.Run() }
 
 func defaultListDispatchWizardRepoResources(ctx context.Context) ([]api.Repository, error) {
-	client, err := NewAuthenticatedAPIClient(false)
+	client, err := NewAuthenticatedAPIClient(ctx, false)
 	if err != nil {
 		return nil, err
 	}
