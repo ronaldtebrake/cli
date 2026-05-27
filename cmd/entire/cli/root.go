@@ -130,8 +130,8 @@ func NewRootCmd() *cobra.Command {
 }
 
 func versionString() string {
-	return fmt.Sprintf("Entire CLI %s (%s)\nGo version: %s\nOS/Arch: %s/%s\n",
-		versioninfo.Version, versioninfo.Commit, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("Entire CLI %s\nGo version: %s\nOS/Arch: %s/%s\n",
+		versioninfo.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 }
 
 func newVersionCmd() *cobra.Command {
