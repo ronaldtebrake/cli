@@ -6,8 +6,6 @@ set -eu
 export GOBIN=${GOPATH:-$HOME/go}/bin
 echo "NOTE: we're overriding \$GOBIN: $GOBIN" 1>&2
 
-TAG=$(git describe --tags --abbrev=0 || echo "v0.0.0")
-COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-VERSION="${TAG}-dev-${COMMIT}"
-
-go install -ldflags "-X github.com/entireio/cli/cmd/entire/cli/versioninfo.Version=${VERSION} -X github.com/entireio/cli/cmd/entire/cli/versioninfo.Commit=${COMMIT}" ./cmd/entire
+# No ldflags: versioninfo derives the commit (and any module version) from Go's
+# embedded build info, so a plain `go install` self-reports a real commit.
+go install ./cmd/entire
