@@ -92,6 +92,14 @@ func TestIsSplitHost(t *testing.T) {
 		"auth same as base":   {"https://api.example.com", "https://api.example.com", false},
 		"auth cosmetic match": {"https://api.example.com", "https://api.example.com/", false},
 		"different origins":   {"https://api.example.com", "https://auth.example.com", true},
+		// Regressions for asymmetric-normalisation bug: BaseURL only
+		// trims whitespace/trailing slash, AuthBaseURL canonicalises,
+		// so cosmetic differences in ENTIRE_API_BASE_URL would falsely
+		// register as split-host if both sides aren't normalised.
+		"base uppercase host, auth unset": {"HTTPS://API.EXAMPLE.COM", "", false},
+		"base default port, auth unset":   {"https://api.example.com:443", "", false},
+		"base path suffix, auth unset":    {"https://api.example.com/v1", "", false},
+		"base trailing slash, auth unset": {"https://api.example.com/", "", false},
 	}
 
 	for name, tc := range cases {
