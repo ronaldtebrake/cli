@@ -456,24 +456,6 @@ func TestShouldDescendAndInsideShard(t *testing.T) {
 	}
 }
 
-// addV1Checkpoint appends one more committed checkpoint on the
-// entire/checkpoints/v1 branch. Used by multi-commit tests to set up
-// the "N unpushed commits, all needing OPF" scenario the batching
-// refactor specifically targets.
-func addV1Checkpoint(t *testing.T, repo *git.Repository, checkpointHex, transcriptText, promptText string) {
-	t.Helper()
-	store := checkpoint.NewGitStore(repo)
-	require.NoError(t, store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
-		CheckpointID: id.MustCheckpointID(checkpointHex),
-		SessionID:    "test-session-" + checkpointHex[:6],
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(transcriptText)),
-		Prompts:      []string{promptText},
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	}))
-}
-
 // Batching contract: across N unpushed commits with redactable blobs,
 // the rewrite must invoke OPF exactly once — the headline win the
 // pre-push refactor is built around. Without batching, this same
@@ -483,9 +465,9 @@ func TestRewriteUnpushedV1WithOPF_MultiCommit_SingleBatchCall(t *testing.T) {
 	fake := &fakeOPFForRewrite{}
 	configureFakeOPF(t, fake)
 	repo, _ := setupV1Repo(t) // first checkpoint, "PERSONABC" sentinel embedded
-	addV1Checkpoint(t, repo, "b2c3d4e5f6a1",
+	addV1Checkpoint(t, repo, "b2c3d4e5f6a1", "test-session-2",
 		`{"role":"user","content":"PERSONABC contacted again"}`+"\n", "Find PERSONABC")
-	addV1Checkpoint(t, repo, "c3d4e5f6a1b2",
+	addV1Checkpoint(t, repo, "c3d4e5f6a1b2", "test-session-3",
 		`{"role":"user","content":"PERSONABC said hello"}`+"\n", "Greet PERSONABC")
 
 	newTip, err := RewriteUnpushedV1WithOPF(context.Background(), repo, "origin")

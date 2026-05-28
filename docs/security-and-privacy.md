@@ -184,7 +184,7 @@ The rewrite refuses to proceed and aborts the push when it detects a divergent s
   set -x ENTIRE_OPF_BOOTSTRAP_LIMIT unlimited; git push
   ```
 
-- **Batch-size cap**: independent of commit count, the rewrite refuses pushes whose cumulative prose-leaf content exceeds `ENTIRE_OPF_BATCH_LIMIT` bytes (default: 2 MiB ≈ ~110s of inference). The two caps protect different failure modes — the bootstrap cap stops "100 throwaway commits", the batch cap stops "one commit with 50 MB of pasted transcript". A `OPF batch would inference …` error means you've hit this; bump the env var or push without OPF for that push:
+- **Batch-size cap**: independent of commit count, the rewrite refuses pushes whose cumulative prose-leaf content exceeds `ENTIRE_OPF_BATCH_LIMIT` bytes (default: 2 MiB ≈ ~110s of inference). The two caps protect different failure modes — the bootstrap cap stops "100 throwaway commits", the batch cap stops "one commit with 50 MB of pasted transcript". An `OPF would run inference on …` error means you've hit this; bump the env var or push without OPF for that push:
 
   ```fish
   set -x ENTIRE_OPF_BATCH_LIMIT 10485760; git push   # 10 MiB

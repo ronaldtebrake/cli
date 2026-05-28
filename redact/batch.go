@@ -190,22 +190,24 @@ func isJSONLikeName(name string) bool {
 // leaves; a push with 100MB of dense prose has hundreds of MB. The
 // blob-byte size doesn't tell you which without looking inside.
 //
-// Counts the same way the collector inside BatchBytesWithPrivacyFilter
-// does — has-space gate, JSONL/JSON parse with whole-content fallback —
-// so the number matches what would actually go over the wire.
+// Returns a CONSERVATIVE UPPER BOUND on what would go to OPF — same
+// has-space gate and JSONL/JSON parse with whole-content fallback as
+// the collector inside BatchBytesWithPrivacyFilter, BUT this function
+// does NOT deduplicate identical leaves across blobs. The actual batch
+// sent to OPF dedups by leaf-text, so a push with many repeated leaves
+// will report higher byte counts here than OPF actually sees. Callers
+// using this for cap enforcement get an over-strict bound, which is
+// safe (false positives possible, false negatives impossible).
 func SumProseLeafBytes(inputs []NamedBlob) int {
 	var total int
 	for _, in := range inputs {
 		if isJSONLikeName(in.Name) {
-			parsed := false
 			if _, err := jsonlContentImpl(string(in.Content), func(v string) string {
-				parsed = true
 				if strings.ContainsRune(v, ' ') {
 					total += len(v)
 				}
 				return v
 			}); err == nil {
-				_ = parsed
 				continue
 			}
 			// JSON parse failed — fall through to whole-content (matches

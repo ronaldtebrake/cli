@@ -104,7 +104,7 @@ func resolveBootstrapLimit() int {
 	case v == "":
 		return bootstrapDefaultLimit
 	case strings.EqualFold(v, "unlimited"):
-		return math.MaxInt32
+		return math.MaxInt
 	}
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
 		return n
@@ -126,7 +126,7 @@ type OPFBatchTooLargeError struct {
 }
 
 func (e *OPFBatchTooLargeError) Error() string {
-	return fmt.Sprintf("OPF batch would inference %d prose-leaf bytes "+
+	return fmt.Sprintf("OPF would run inference on %d prose-leaf bytes "+
 		"(limit %d). Set ENTIRE_OPF_BATCH_LIMIT=<bytes> or =unlimited to override, "+
 		"or push without OPF (ENTIRE_OPF=no git push) and let a smaller follow-up push run OPF",
 		e.LeafBytes, e.Limit)
@@ -147,12 +147,26 @@ func resolveBatchLimit() int {
 	case v == "":
 		return batchDefaultLimit
 	case strings.EqualFold(v, "unlimited"):
-		return math.MaxInt32
+		return math.MaxInt
 	}
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
 		return n
 	}
 	return batchDefaultLimit
+}
+
+// scaleBatchLimit multiplies a batch-limit value by mult, saturating
+// at math.MaxInt to avoid signed-overflow when the limit is "unlimited"
+// (math.MaxInt) or a very large explicit value. Returns 0 if either
+// operand is non-positive, so the caller can treat 0 as "no cap" too.
+func scaleBatchLimit(limit, mult int) int {
+	if limit <= 0 || mult <= 0 {
+		return 0
+	}
+	if limit > math.MaxInt/mult {
+		return math.MaxInt
+	}
+	return limit * mult
 }
 
 // OPFRawBytesTooLargeError: the cumulative raw blob bytes the
@@ -247,8 +261,7 @@ func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, target 
 	// each blob's source commit + tree path so we can route the redacted
 	// bytes back during apply.
 	type pendingCommit struct {
-		commit    *object.Commit
-		shardPath string
+		commit *object.Commit
 		// blobs and paths are parallel slices; len(paths)==len(blobs).
 		// startIdx is this commit's offset into the global redacted slice.
 		blobs    []redact.NamedBlob
@@ -260,19 +273,27 @@ func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, target 
 	// Bound raw-bytes-in-memory incrementally so a pathological push
 	// (e.g. 5 GiB of pasted dumps) aborts before exhausting the user's
 	// shell RAM. The leaf-byte cap downstream is about inference cost;
-	// this one is about memory ceiling and fires earlier.
-	rawCap := resolveBatchLimit() * rawByteCapMultiplier
+	// this one is about memory ceiling and fires earlier. scaleBatchLimit
+	// saturates at math.MaxInt so "unlimited" actually means unlimited
+	// — without saturation, "unlimited" × 100 overflows int and the cap
+	// trips on every push.
+	rawCap := scaleBatchLimit(resolveBatchLimit(), rawByteCapMultiplier)
 	var rawBytesSoFar int
 	for _, c := range unpushed {
 		pc := pendingCommit{commit: c}
 		if !trailers.HasOPFApplied(c.Message) {
-			pc.shardPath = parseShardPathFromCommitMessage(c.Message)
 			tree, err := repo.TreeObject(c.TreeHash)
 			if err != nil {
 				return plumbing.ZeroHash, fmt.Errorf("load tree for %s: %w", c.Hash.String()[:7], err)
 			}
 			pc.startIdx = len(globalBlobs)
-			if err := collectTreeBlobs(repo, tree, "", pc.shardPath, &pc.blobs, &pc.paths); err != nil {
+			// Whole-tree redaction (empty shardPath): each v1 commit tree is
+			// cumulative, so the newest commit can still carry older shards
+			// that were 7-layer-only before this rewrite. Redacting the whole
+			// tree for every unapplied commit keeps the final rewritten tip
+			// from reintroducing an un-OPF-redacted older shard. collect and
+			// apply MUST pass the same scope so cached keys line up.
+			if err := collectTreeBlobs(repo, tree, "", "", &pc.blobs, &pc.paths); err != nil {
 				return plumbing.ZeroHash, fmt.Errorf("collect blobs %s: %w", c.Hash.String()[:7], err)
 			}
 			for _, b := range pc.blobs {
@@ -455,12 +476,11 @@ func listUnpushedV1Commits(repo *git.Repository, localTip, remoteTip plumbing.Ha
 // "ab/cd.../0/full.jsonl") to its OPF-redacted bytes. Only required for
 // unapplied commits; pass nil for already-applied ones.
 //
-// Performance: we only redact files inside THIS commit's shard
-// (sharded layout: <id[:2]>/<id[2:]>/*). Files outside that shard live
-// at the same tree because git trees accumulate parent content — they
-// belong to other commits and either are already redacted (prior
-// OPF-applied push) or never will be (this user opted out then in).
-// Walking them every push is O(N×commits) work for no privacy gain.
+// Correctness note: each v1 commit tree is cumulative. During a multi-commit
+// rewrite, the newest original commit can still contain older shards that were
+// 7-layer-only before this rewrite. The collect/apply walkers redact the whole
+// tree (empty shardPath) for every unapplied commit so the final rewritten tip
+// cannot reintroduce an older un-OPF-redacted shard.
 func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *object.Commit, parent plumbing.Hash, redactedByPath map[string][]byte) (plumbing.Hash, error) {
 	newTree := oldCommit.TreeHash
 	if !trailers.HasOPFApplied(oldCommit.Message) {
@@ -468,12 +488,9 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("load tree: %w", err)
 		}
-		// Parse the shard path from the commit subject. Falls back to
-		// "" (walk everything) for bootstrap commits and unrecognized
-		// subjects — the conservative default still produces correct
-		// output, just slower.
-		shardPath := parseShardPathFromCommitMessage(oldCommit.Message)
-		newTree, err = rebuildTreeWithCachedRedaction(repo, tree, "", shardPath, redactedByPath)
+		// Whole-tree redaction (empty shardPath) — see the collect pass in
+		// RewriteUnpushedV1WithOPF for why we never scope to a single shard.
+		newTree, err = rebuildTreeWithCachedRedaction(repo, tree, "", "", redactedByPath)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}

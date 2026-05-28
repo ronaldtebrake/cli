@@ -127,13 +127,44 @@ func TestBatchBytesWithPrivacyFilter_AppliesSpansToRawText(t *testing.T) {
 	}
 }
 
+// recordingRuntime captures the slice passed to RedactBatch so a test
+// can assert exact dedup behavior (not just call count). Independent
+// of fakeRuntime so its presence doesn't change unrelated tests.
+type recordingRuntime struct {
+	spans      []Span
+	lastInputs []string
+	calls      int
+}
+
+func (r *recordingRuntime) Redact(_ context.Context, _ string, _ []string) ([]Span, error) {
+	return r.spans, nil
+}
+
+func (r *recordingRuntime) RedactBatch(_ context.Context, inputs []string, _ []string) ([][]Span, error) {
+	r.calls++
+	r.lastInputs = append([]string(nil), inputs...)
+	out := make([][]Span, len(inputs))
+	for i := range inputs {
+		out[i] = r.spans
+	}
+	return out, nil
+}
+
 // TestBatchBytesWithPrivacyFilter_DedupsLeavesAcrossBlobs confirms that
-// the same leaf string appearing in two blobs is sent to OPF exactly
-// once. Without this, a transcript that quotes the same prompt in 10
-// places would inflate the batch unnecessarily.
+// the same leaf string appearing in N blobs is sent to OPF as ONE
+// input, not N. Without this, a transcript that quotes the same prompt
+// in 10 places would inflate the batch unnecessarily.
 func TestBatchBytesWithPrivacyFilter_DedupsLeavesAcrossBlobs(t *testing.T) {
-	fake := &fakeRuntime{spans: []Span{{Start: 0, End: 5, Label: "private_person"}}}
-	configureFakeOPF(t, fake, map[string]bool{"private_person": true})
+	rt := &recordingRuntime{spans: []Span{{Start: 0, End: 5, Label: "private_person"}}}
+	resetOPFConfig()
+	t.Cleanup(resetOPFConfig)
+	origStderr := opfStderr
+	opfStderr = io.Discard
+	t.Cleanup(func() { opfStderr = origStderr })
+	ConfigurePrivacyFilterWithRuntime(OPFConfig{
+		Enabled:    true,
+		Categories: map[string]bool{"private_person": true},
+	}, rt)
 
 	shared := "Alice met Bob in the lobby"
 	inputs := []NamedBlob{
@@ -145,12 +176,14 @@ func TestBatchBytesWithPrivacyFilter_DedupsLeavesAcrossBlobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BatchBytesWithPrivacyFilter: %v", err)
 	}
-	// One batch call (already covered above) AND it should see exactly
-	// one input string. The fake doesn't expose its inputs directly, but
-	// we can lean on the batchCalls counter: a deduped batch can't fire
-	// twice no matter how many duplicates appear.
-	if fake.batchCalls != 1 {
-		t.Errorf("want 1 batch call across duplicated leaves, got %d", fake.batchCalls)
+	if rt.calls != 1 {
+		t.Errorf("want 1 batch call, got %d", rt.calls)
+	}
+	if got := len(rt.lastInputs); got != 1 {
+		t.Errorf("want dedup to collapse 3 identical leaves into 1 batch input, got %d (inputs: %v)", got, rt.lastInputs)
+	}
+	if len(rt.lastInputs) == 1 && rt.lastInputs[0] != shared {
+		t.Errorf("want dedup'd input = %q, got %q", shared, rt.lastInputs[0])
 	}
 }
 
@@ -355,14 +388,18 @@ func TestBatchBytesWithPrivacyFilter_MatchesPerBlobOutput(t *testing.T) {
 	}
 
 	// Bonus assertion: batching collapsed 4 blobs into 1 call, while
-	// per-blob made 3 calls (4 blobs but the dup leaf would still spawn
-	// its own call in the per-blob path because each blob's leaves are
-	// deduped only within that blob).
+	// per-blob made exactly 4 batch calls — one per JSON-shaped blob
+	// (full.jsonl, metadata.json, duplicate.jsonl), plus one for the
+	// .txt blob's single-string path. The singular path deliberately
+	// routes through RedactBatch too so short returns trip the breaker.
+	// Within a JSON blob, leaves are deduped, but across blobs in the
+	// per-blob path they aren't — that's the inefficiency the batched
+	// API addresses.
 	if fake2.batchCalls != 1 {
 		t.Errorf("want exactly 1 batched call, got %d", fake2.batchCalls)
 	}
-	if fake1.batchCalls < 3 {
-		t.Errorf("expected per-blob path to make ≥3 batch calls (one per JSON-shaped blob), got %d", fake1.batchCalls)
+	if fake1.batchCalls != 4 {
+		t.Errorf("want exactly 4 per-blob batch calls, got %d", fake1.batchCalls)
 	}
 }
 
