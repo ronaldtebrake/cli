@@ -16,6 +16,27 @@ const (
 	trailListTestAuthorBob   = "bob"
 )
 
+func TestTrailsBasePath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		forge, owner, rp string
+		want             string
+	}{
+		{"gh forge", "gh", "acme", "repo", "/api/v1/trails/gh/acme/repo"},
+		{"et forge", "et", "acme", "repo", "/api/v1/trails/et/acme/repo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := trailsBasePath(tt.forge, tt.owner, tt.rp)
+			if got != tt.want {
+				t.Fatalf("trailsBasePath(%q, %q, %q) = %q, want %q", tt.forge, tt.owner, tt.rp, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLimitTrailsKeepsMostRecentPrefix(t *testing.T) {
 	t.Parallel()
 	trails := []*trail.Metadata{

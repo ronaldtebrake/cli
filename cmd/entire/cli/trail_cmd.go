@@ -99,12 +99,12 @@ func runTrailShow(ctx context.Context, w io.Writer, insecureHTTP bool) error {
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
-	host, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
 	if err != nil {
 		return fmt.Errorf("failed to resolve repository: %w", err)
 	}
 
-	found, err := findTrailByBranch(ctx, client, host, owner, repo, branch)
+	found, err := findTrailByBranch(ctx, client, forge, owner, repo, branch)
 	if err != nil {
 		return err
 	}
@@ -176,12 +176,12 @@ func runTrailListAll(ctx context.Context, w io.Writer, opts trailListOptions) er
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
-	host, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
 	if err != nil {
 		return fmt.Errorf("failed to resolve repository: %w", err)
 	}
 
-	resp, err := client.Get(ctx, trailsBasePath(host, owner, repo))
+	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo))
 	if err != nil {
 		return fmt.Errorf("failed to list trails: %w", err)
 	}
@@ -585,7 +585,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
-	host, owner, repoName, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	forge, owner, repoName, err := gitremote.ResolveRemoteRepo(ctx, "origin")
 	if err != nil {
 		return fmt.Errorf("failed to resolve repository: %w", err)
 	}
@@ -598,7 +598,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		Status:     statusStr,
 	}
 
-	resp, err := client.Post(ctx, trailsBasePath(host, owner, repoName), createReq)
+	resp, err := client.Post(ctx, trailsBasePath(forge, owner, repoName), createReq)
 	if err != nil {
 		return fmt.Errorf("failed to create trail: %w", err)
 	}
@@ -672,7 +672,7 @@ func runTrailUpdate(ctx context.Context, w, errW io.Writer, insecureHTTP bool, s
 		return fmt.Errorf("authentication required: %w", err)
 	}
 
-	host, owner, repoName, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	forge, owner, repoName, err := gitremote.ResolveRemoteRepo(ctx, "origin")
 	if err != nil {
 		return fmt.Errorf("failed to resolve repository: %w", err)
 	}
@@ -686,7 +686,7 @@ func runTrailUpdate(ctx context.Context, w, errW io.Writer, insecureHTTP bool, s
 	}
 
 	// Find the trail by branch
-	found, err := findTrailByBranch(ctx, client, host, owner, repoName, branch)
+	found, err := findTrailByBranch(ctx, client, forge, owner, repoName, branch)
 	if err != nil {
 		return err
 	}
@@ -744,7 +744,7 @@ func runTrailUpdate(ctx context.Context, w, errW io.Writer, insecureHTTP bool, s
 	// Build update request with only changed fields
 	updateReq := buildTrailUpdateRequest(found, statusStr, title, body, labelAdd, labelRemove)
 
-	resp, err := client.Patch(ctx, trailsBasePath(host, owner, repoName)+"/"+found.ID, updateReq)
+	resp, err := client.Patch(ctx, trailsBasePath(forge, owner, repoName)+"/"+found.ID, updateReq)
 	if err != nil {
 		return fmt.Errorf("failed to update trail: %w", err)
 	}
@@ -886,21 +886,21 @@ func runTrailCreateInteractive(title, body, branch, statusStr *string) error {
 }
 
 // findTrailByBranch looks up a trail by branch name via the list API.
-func findTrailByBranch(ctx context.Context, client *api.Client, host, owner, repo, branch string) (*api.TrailResource, error) {
-	return findTrail(ctx, client, host, owner, repo, func(t api.TrailResource) bool {
+func findTrailByBranch(ctx context.Context, client *api.Client, forge, owner, repo, branch string) (*api.TrailResource, error) {
+	return findTrail(ctx, client, forge, owner, repo, func(t api.TrailResource) bool {
 		return t.Branch == branch
 	})
 }
 
 // findTrailByNumber looks up a trail by numeric identifier via the list API.
-func findTrailByNumber(ctx context.Context, client *api.Client, host, owner, repo string, number int) (*api.TrailResource, error) {
-	return findTrail(ctx, client, host, owner, repo, func(t api.TrailResource) bool {
+func findTrailByNumber(ctx context.Context, client *api.Client, forge, owner, repo string, number int) (*api.TrailResource, error) {
+	return findTrail(ctx, client, forge, owner, repo, func(t api.TrailResource) bool {
 		return t.Number == number
 	})
 }
 
-func findTrail(ctx context.Context, client *api.Client, host, owner, repo string, match func(api.TrailResource) bool) (*api.TrailResource, error) {
-	resp, err := client.Get(ctx, trailsBasePath(host, owner, repo))
+func findTrail(ctx context.Context, client *api.Client, forge, owner, repo string, match func(api.TrailResource) bool) (*api.TrailResource, error) {
+	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo))
 	if err != nil {
 		return nil, fmt.Errorf("list trails: %w", err)
 	}
@@ -922,17 +922,11 @@ func findTrail(ctx context.Context, client *api.Client, host, owner, repo string
 	return nil, nil //nolint:nilnil // nil, nil means "not found" — callers check both
 }
 
-// apiHostAlias maps git host domains to short aliases used by the trails API.
-var apiHostAlias = map[string]string{
-	"github.com": "gh",
-}
-
-// trailsBasePath returns the API path prefix for trails endpoints (e.g., "/api/v1/trails/gh/org/repo").
-func trailsBasePath(host, owner, repo string) string {
-	if alias, ok := apiHostAlias[host]; ok {
-		host = alias
-	}
-	return fmt.Sprintf("/api/v1/trails/%s/%s/%s", host, owner, repo)
+// trailsBasePath returns the API path prefix for trails endpoints
+// (e.g., "/api/v1/trails/gh/org/repo"). The forge identifier comes from
+// gitremote.Info.Forge; mapping from git remote to forge lives there.
+func trailsBasePath(forge, owner, repo string) string {
+	return fmt.Sprintf("/api/v1/trails/%s/%s/%s", forge, owner, repo)
 }
 
 // checkTrailResponse checks the API response and returns user-friendly errors.
