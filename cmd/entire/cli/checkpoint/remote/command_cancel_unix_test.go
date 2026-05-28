@@ -13,8 +13,7 @@ import (
 )
 
 // Not parallel: uses t.Setenv. Clearing ENTIRE_CHECKPOINT_TOKEN keeps the test
-// hermetic — with a token set, newCommand would resolve "origin" via GetRemoteURL
-// and spawn a git subprocess against the ambient repo.
+// hermetic — otherwise newCommand spawns git against the ambient repo.
 func TestKillProcessGroupOnCancel_SetsSetpgidAndCancel(t *testing.T) {
 	t.Setenv(CheckpointTokenEnvVar, "")
 
@@ -28,23 +27,17 @@ func TestKillProcessGroupOnCancel_SetsSetpgidAndCancel(t *testing.T) {
 	}
 }
 
-// TestTerminateOnCancel_KillsProcessGroup proves the fix end-to-end: a child that
-// backgrounds a grandchild which inherits (and holds open) the output pipe must
-// still be terminated when the context is cancelled. Without group-kill, the
-// backgrounded `sleep` keeps the pipe open and the read blocks for the full 60s;
-// with it, the whole group dies and the read returns promptly.
+// End-to-end: a backgrounded grandchild inherits stdout, so cancelling the parent
+// must kill the whole group — otherwise the read blocks for the full sleep.
 func TestTerminateOnCancel_KillsProcessGroup(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// `sleep 60 &` backgrounds a grandchild that inherits and holds stdout; the
-	// "ready" marker is printed only after it is backgrounded, so we can cancel
-	// strictly after the pipe-holding grandchild exists. A fixed timeout deadline
-	// could instead fire before the shell even spawns the grandchild (e.g. slow
-	// process start under load), silently turning this into a no-op pass. `wait`
-	// keeps the shell (the group leader) alive so only a group-wide kill ends both.
+	// `sleep 60 &` backgrounds a grandchild that holds stdout; "ready" prints after
+	// it backgrounds so we cancel strictly after it exists (no race). `wait` keeps
+	// the shell alive as group leader so only a group-wide kill ends both.
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "sleep 60 & echo ready; wait")
 	terminateOnCancel(cmd)
 
@@ -56,7 +49,7 @@ func TestTerminateOnCancel_KillsProcessGroup(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Block until the grandchild is alive and holding the pipe open.
+	// Wait for "ready" so the grandchild is up and holding the pipe.
 	br := bufio.NewReader(stdout)
 	if line, err := br.ReadString('\n'); err != nil || strings.TrimSpace(line) != "ready" {
 		t.Fatalf("did not observe ready marker: line=%q err=%v", line, err)
@@ -70,14 +63,8 @@ func TestTerminateOnCancel_KillsProcessGroup(t *testing.T) {
 
 	cancel()
 
-	// Group-kill closes the inherited pipe on cancellation, so the read returns well
-	// under the 60s sleep. Without it, the backgrounded grandchild keeps the pipe
-	// open and this would block for the full minute.
-	//
-	// The deadline must stay strictly below killWaitDelay: that WaitDelay backstop
-	// would itself force the pipe closed once it elapses, so a deadline >=
-	// killWaitDelay would let this test pass even with group-kill removed, silently
-	// turning it into a no-op. Halving keeps it comfortably inside that window.
+	// Deadline must stay strictly below killWaitDelay: that backstop would force
+	// the pipe closed on its own, letting this test pass even if group-kill regressed.
 	select {
 	case <-done:
 	case <-time.After(killWaitDelay / 2):
@@ -85,13 +72,11 @@ func TestTerminateOnCancel_KillsProcessGroup(t *testing.T) {
 	}
 }
 
-// The Cancel handler must return cleanly and actually terminate the process
-// group leader (the running shell), not just succeed silently.
+// Cancel must return cleanly *and* actually terminate the leader.
 func TestKillProcessGroupOnCancel_TerminatesLeader(t *testing.T) {
 	t.Parallel()
 
-	// exec requires CommandContext when Cancel is non-nil; the context stays
-	// open and we invoke Cancel directly to exercise the group-kill handler.
+	// exec requires CommandContext when Cancel is non-nil; we invoke Cancel directly.
 	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", "sleep 60 & wait")
 	killProcessGroupOnCancel(cmd)
 	if err := cmd.Start(); err != nil {
@@ -102,11 +87,8 @@ func TestKillProcessGroupOnCancel_TerminatesLeader(t *testing.T) {
 		t.Fatalf("Cancel returned %v; want nil", err)
 	}
 
-	// The leader was SIGKILLed, so Wait reports a non-nil (signal: killed) error
-	// rather than blocking on the 60s sleep. killProcessGroupOnCancel sets no
-	// WaitDelay backstop, so bound the wait ourselves: if the group-kill path ever
-	// regresses to a no-op, the shell would block on `sleep 60` and hang the suite
-	// for a full minute instead of failing fast.
+	// Bound the wait ourselves — no WaitDelay is set here, so a group-kill
+	// regression would block on the full 60s sleep instead of failing fast.
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 

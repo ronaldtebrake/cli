@@ -6,12 +6,8 @@ import (
 	"testing"
 )
 
-// newCommand must make every git subprocess it builds terminate on cancellation
-// so a hung transport can't block past the caller's context deadline.
-//
 // Not parallel: uses t.Setenv. Clearing ENTIRE_CHECKPOINT_TOKEN keeps the test
-// hermetic — with a token set, newCommand would resolve "origin" via GetRemoteURL
-// and spawn a git subprocess against the ambient repo.
+// hermetic — otherwise newCommand spawns git against the ambient repo.
 func TestNewCommand_TerminatesOnCancel(t *testing.T) {
 	t.Setenv(CheckpointTokenEnvVar, "")
 
@@ -25,7 +21,6 @@ func TestNewCommand_TerminatesOnCancel(t *testing.T) {
 	}
 }
 
-// terminateOnCancel sets the WaitDelay backstop on all platforms.
 func TestTerminateOnCancel_SetsWaitDelay(t *testing.T) {
 	t.Parallel()
 

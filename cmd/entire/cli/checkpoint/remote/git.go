@@ -358,9 +358,6 @@ func newCommand(ctx context.Context, args ...string) *exec.Cmd {
 	mkCmd := func(finalArgs []string) *exec.Cmd {
 		c := exec.CommandContext(ctx, "git", finalArgs...)
 		c.Stdin = nil // Disconnect stdin to prevent hanging in hook context
-		// Kill the process group on ctx-cancel and force pipes closed after
-		// WaitDelay, so a stuck transport helper can't outlive the caller's
-		// timeout (see terminateOnCancel).
 		terminateOnCancel(c)
 		return c
 	}
