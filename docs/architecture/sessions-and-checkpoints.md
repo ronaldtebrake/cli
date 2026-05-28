@@ -238,6 +238,8 @@ When condensing multiple concurrent sessions:
 - `sessions` array in `CheckpointSummary` maps each session to its file paths
 - `files_touched` is merged from all sessions
 
+Session-level metadata may include `skill_events_version` and `skill_events` sidecar annotations for explicit native skill signals. See [Skill Events Metadata](skill-events.md) for the wire format.
+
 ### Checkpoint ID Linking
 
 The checkpoint ID is the **stable identifier** that links user commits to metadata across branches.
