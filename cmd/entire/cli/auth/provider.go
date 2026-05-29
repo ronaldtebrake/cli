@@ -75,10 +75,10 @@ func resolveProvider(version string) Provider {
 // effectiveProviderVersion resolves the version string fed into
 // resolveProvider. Order: explicit env var > split-host auto-detect > v1.
 //
-// The split-host auto-detect can't extend to a default flip: as of
-// 2026-05 entire.io (the unset-env default data host) does not serve
-// the v2 OIDC surface, so picking v2 without an explicit split-host
-// signal would break login for every existing user.
+// The CLI is split-host by default (us.auth.entire.io for auth, entire.io
+// for data), so unset env vars take the auto-detect branch and resolve to
+// v2 — the OIDC surface us.auth.entire.io serves. v1 only kicks in when a
+// caller explicitly collapses both origins onto a single non-OIDC host.
 func effectiveProviderVersion() string {
 	if v := strings.TrimSpace(os.Getenv(ProviderVersionEnvVar)); v != "" {
 		return v

@@ -43,8 +43,9 @@ const (
 //
 // Both the auth and data API origins are checked: the bearer travels to the
 // auth host for login + auth-token management, and to the data host for
-// search/activity/dispatch/etc. Single-host deployments (ENTIRE_AUTH_BASE_URL
-// unset) skip the redundant second parse.
+// search/activity/dispatch/etc. When both origins resolve to the same host
+// (e.g. an explicitly collapsed single-host deployment) the redundant second
+// parse is skipped.
 //
 // When the opt-in flag is set, the tokenmanager's matching HTTP guard is
 // also relaxed via auth.EnableInsecureHTTP — otherwise an STS exchange

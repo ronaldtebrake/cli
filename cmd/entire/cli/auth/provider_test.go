@@ -90,14 +90,15 @@ func TestEffectiveProviderVersion_SameHostPicksV1(t *testing.T) {
 	}
 }
 
-// Entire.io default path — must not regress; most users hit this.
-func TestEffectiveProviderVersion_UnsetDefaultsToV1(t *testing.T) {
+// Default production path — split-host (entire.io + us.auth.entire.io)
+// resolves to v2 without any env vars set. Most users hit this.
+func TestEffectiveProviderVersion_UnsetDefaultsToV2(t *testing.T) {
 	t.Setenv(ProviderVersionEnvVar, "")
 	t.Setenv(api.BaseURLEnvVar, "")
 	t.Setenv(api.AuthBaseURLEnvVar, "")
 
-	if got := effectiveProviderVersion(); got != "v1" {
-		t.Errorf("unset env = %q, want v1 (entire.io default)", got)
+	if got := effectiveProviderVersion(); got != "v2" {
+		t.Errorf("unset env = %q, want v2 (split-host default)", got)
 	}
 }
 
