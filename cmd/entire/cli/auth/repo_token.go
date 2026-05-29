@@ -49,6 +49,19 @@ func SetRepoExchangeTransportForTest(rt http.RoundTripper) func() {
 // entire-cli), so a successful login implies a usable exchange. Errors
 // surface verbatim from the STS endpoint (e.g. invalid_target when no
 // mirror matches the slug+cluster).
+//
+// The subject token is the stored login access token read directly,
+// rather than routed through the refresh-aware tokenmanager. That's
+// deliberate for two reasons: (1) `entire login` (device flow) stores only
+// a bare access token — no refresh token — so there is nothing the manager
+// could refresh that this path can't equally use; an expired login token
+// fails both ways. (2) The manager's exchange also emits an RFC 8693
+// `resource` parameter alongside `audience`, whereas the data-plane gate
+// keys solely on `audience`; going direct keeps the wire form byte-for-byte
+// what git-remote-entire (and the standalone entiredb CLI) already send.
+// Each call performs a fresh exchange and does not cache — callers that
+// poll (e.g. the mirror clone wait) re-invoke on token expiry. If the CLI
+// gains refresh tokens, route this through the tokenmanager instead.
 func RepoScopedToken(ctx context.Context, clusterBaseURL, repoSlug, action string) (string, error) {
 	provider := CurrentProvider()
 	if strings.TrimSpace(provider.STSPath) == "" {
