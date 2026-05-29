@@ -1040,6 +1040,16 @@ func WarnIfCheckpointsV2Disallowed(ctx context.Context) {
 	s.WarnIfCheckpointsV2Disallowed()
 }
 
+// MirrorsToV1CustomRef reports whether the v1 custom-ref mirror is opted in.
+// Returns false if settings cannot be loaded.
+func MirrorsToV1CustomRef(ctx context.Context) bool {
+	s, err := Load(ctx)
+	if err != nil {
+		return false
+	}
+	return s.MirrorsToV1CustomRef()
+}
+
 // IsFilteredFetchesEnabled checks if filtered fetches should be used.
 // When enabled, filtered fetches always resolve remote names to URLs first so
 // git does not persist promisor settings onto named remotes in local config.
@@ -1157,6 +1167,17 @@ func (s *EntireSettings) CheckpointsVersion() int {
 	return 1
 }
 
+// MirrorsToV1CustomRef reports whether checkpoints_version opts into mirroring
+// committed metadata to the v1 custom ref (refs/entire/checkpoints/v1.1). v1
+// remains the source of truth; the v1 custom ref is a local-only mirror.
+// Returns false when unset or set to any other value.
+func (s *EntireSettings) MirrorsToV1CustomRef() bool {
+	if s.StrategyOptions == nil {
+		return false
+	}
+	return isV1CustomRefValue(s.StrategyOptions["checkpoints_version"])
+}
+
 // WarnIfCheckpointsV2Disallowed emits the v2 fallback warning when any legacy
 // settings key requests v2 writes or pushes.
 func (s *EntireSettings) WarnIfCheckpointsV2Disallowed() {
@@ -1190,7 +1211,20 @@ func warnCheckpointsV2Disallowed(val any) {
 	)
 }
 
+// isV1CustomRefValue reports whether a checkpoints_version value selects the v1
+// custom ref. Only the JSON string "1.1" opts in; the numeric form falls back
+// to v1 (and logs as unsupported, like any other unrecognized value).
+func isV1CustomRefValue(val any) bool {
+	s, ok := val.(string)
+	return ok && s == "1.1"
+}
+
 func parseCheckpointsVersion(val any) (int, bool) {
+	// "1.1" selects the v1 custom ref. It uses the v1 data format (major
+	// version 1), so map it to 1 and treat it as recognized, not unsupported.
+	if isV1CustomRefValue(val) {
+		return 1, true
+	}
 	v, ok := val.(int)
 	if ok && (v == 1 || v == 2) {
 		return v, true

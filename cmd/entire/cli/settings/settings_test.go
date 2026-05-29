@@ -856,6 +856,49 @@ func TestCheckpointsVersion(t *testing.T) {
 	}
 }
 
+func TestMirrorsToV1CustomRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts map[string]any
+		want bool
+	}{
+		{"unset", nil, false},
+		{"empty options", map[string]any{}, false},
+		{"string 1.1 opts in", map[string]any{"checkpoints_version": "1.1"}, true},
+		{"float 1.1 does not opt in (string only)", map[string]any{"checkpoints_version": 1.1}, false},
+		{"integer 1 does not mirror", map[string]any{"checkpoints_version": 1}, false},
+		{"string 1 does not mirror", map[string]any{"checkpoints_version": "1"}, false},
+		{"integer 2 does not mirror", map[string]any{"checkpoints_version": 2}, false},
+		{"unrelated string does not mirror", map[string]any{"checkpoints_version": "abc"}, false},
+		{"bool does not mirror", map[string]any{"checkpoints_version": true}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := &EntireSettings{StrategyOptions: tt.opts}
+			if got := s.MirrorsToV1CustomRef(); got != tt.want {
+				t.Errorf("MirrorsToV1CustomRef() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestV1CustomRefValueIsRecognized verifies the string "1.1" opt-in is treated
+// as a recognized checkpoints_version (so it does not trip the unsupported
+// warning), while the numeric form is not an opt-in and falls back to v1.
+func TestV1CustomRefValueIsRecognized(t *testing.T) {
+	t.Parallel()
+	if _, supported := parseCheckpointsVersion("1.1"); !supported {
+		t.Errorf(`parseCheckpointsVersion("1.1") reported unsupported, want recognized`)
+	}
+	if _, supported := parseCheckpointsVersion(1.1); supported {
+		t.Errorf("parseCheckpointsVersion(1.1 float) reported recognized, want unsupported (string-only opt-in)")
+	}
+}
+
 func TestWarnIfCheckpointsV2Disallowed(t *testing.T) {
 	tests := []struct {
 		name     string

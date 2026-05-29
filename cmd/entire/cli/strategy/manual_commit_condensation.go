@@ -262,6 +262,10 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	writeCommittedSpan.End()
 	writeV1Duration := time.Since(writeV1Start)
 
+	// Mirror the committed write to the v1 custom ref when opted in
+	// (local-only, never pushed; failures are logged, not fatal).
+	mirrorMetadataToV1CustomRef(ctx, repo)
+
 	logging.Debug(logCtx, "condense timings",
 		slog.String("session_id", state.SessionID),
 		slog.String("checkpoint_id", checkpointID.String()),
