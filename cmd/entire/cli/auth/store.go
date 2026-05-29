@@ -151,8 +151,9 @@ func (s *Store) DeleteTokens(profile string) error {
 
 // LookupCurrentToken retrieves the token for the current auth base URL.
 // Tokens are keyed by the auth issuer (api.AuthBaseURL()) since that's the
-// host that minted them; in single-host deployments AuthBaseURL falls back
-// to BaseURL so behaviour is unchanged.
+// host that minted them; AuthBaseURL defaults to DefaultAuthBaseURL when
+// the env override is unset, so a fresh install reads the production
+// us.auth.entire.io entry.
 func LookupCurrentToken() (string, error) {
 	return NewStore().GetToken(api.AuthBaseURL())
 }

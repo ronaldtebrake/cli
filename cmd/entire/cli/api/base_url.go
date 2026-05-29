@@ -15,14 +15,18 @@ const (
 	// DefaultBaseURL is the production Entire API origin.
 	DefaultBaseURL = "https://entire.io"
 
+	// DefaultAuthBaseURL is the production Entire auth origin (device flow,
+	// auth-token management, keyring key). The CLI is split-host by default:
+	// auth on us.auth.entire.io, data on entire.io.
+	DefaultAuthBaseURL = "https://us.auth.entire.io"
+
 	// BaseURLEnvVar overrides the Entire API origin for local development.
 	BaseURLEnvVar = "ENTIRE_API_BASE_URL"
 
 	// AuthBaseURLEnvVar overrides only the auth/login origin (device flow,
-	// auth-tokens management, keyring key). Falls back to BaseURLEnvVar when
-	// unset, which is the right behavior for single-host deployments. Split
-	// hosts (e.g. auth on us.console.partial.to, data on partial.to) set
-	// both.
+	// auth-tokens management, keyring key). Falls back to DefaultAuthBaseURL
+	// when unset; local-dev and single-host deployments must set this
+	// alongside ENTIRE_API_BASE_URL.
 	AuthBaseURLEnvVar = "ENTIRE_AUTH_BASE_URL"
 
 	schemeHTTP  = "http"
@@ -42,7 +46,7 @@ func BaseURL() string {
 // AuthBaseURL returns the origin used for the device-flow login, auth-token
 // management endpoints, and the keyring key under which the bearer token is
 // stored. ENTIRE_AUTH_BASE_URL takes precedence; otherwise it falls back to
-// BaseURL() so single-host deployments keep working unchanged.
+// DefaultAuthBaseURL (split-host by default).
 //
 // The result is canonicalised — lowercased scheme/host, default port stripped,
 // path/query/fragment dropped, trailing slash collapsed — so the value that
@@ -55,7 +59,7 @@ func BaseURL() string {
 func AuthBaseURL() string {
 	raw := strings.TrimSpace(os.Getenv(AuthBaseURLEnvVar))
 	if raw == "" {
-		raw = BaseURL()
+		raw = DefaultAuthBaseURL
 	}
 	return NormalizeOriginURL(raw)
 }
