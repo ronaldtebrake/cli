@@ -17,7 +17,7 @@ func newProjectCmd() *cobra.Command {
 		Short:  "Manage Entire projects",
 		Hidden: true,
 	}
-	addJSONFlag(cmd)
+	addControlPlaneFlags(cmd)
 	cmd.AddCommand(newProjectCreateCmd())
 	cmd.AddCommand(newProjectListCmd())
 	return cmd
@@ -47,6 +47,7 @@ func newProjectCreateCmd() *cobra.Command {
 			"  entire project create widgets --owner 01J0... --owner-type account",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			ot, err := parseProjectOwnerType(ownerType)
 			if err != nil {
 				return err
@@ -109,6 +110,8 @@ func parseProjectOwnerType(s string) (coreapi.CreateProjectInputBodyOwnerType, e
 	case "account":
 		return coreapi.CreateProjectInputBodyOwnerTypeAccount, nil
 	default:
-		return "", NewSilentError(fmt.Errorf("invalid --owner-type %q: must be \"org\" or \"account\"", s))
+		// Plain error: the create RunE sets SilenceUsage, and main.go
+		// prints plain errors (a SilentError would be swallowed).
+		return "", fmt.Errorf("invalid --owner-type %q: must be \"org\" or \"account\"", s)
 	}
 }

@@ -82,7 +82,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			owner, repo, err := parseGitHubURL(args[0])
 			if err != nil {
 				cmd.SilenceUsage = true
-				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
+				return fmt.Errorf("invalid <github-url>: %w", err)
 			}
 			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
@@ -183,7 +183,7 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 			owner, repo, err := parseGitHubURL(args[0])
 			if err != nil {
 				cmd.SilenceUsage = true
-				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
+				return fmt.Errorf("invalid <github-url>: %w", err)
 			}
 			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {

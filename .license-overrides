@@ -1,0 +1,13 @@
+# Per-package license overrides for the dependency license check.
+#
+# go-licenses can't always classify a module's LICENSE file and reports
+# "Unknown". When the license is in fact one of the allowed types (see
+# .allowed-licenses), record it here so the check uses the real license
+# instead of the undetected value. Format: one "module-path SPDX" pair per
+# line; comments start with #.
+#
+# The override applies to the module path and everything under it.
+
+# segmentio/asm ships under MIT (https://github.com/segmentio/asm/blob/main/LICENSE);
+# go-licenses fails to detect it and reports Unknown.
+github.com/segmentio/asm MIT

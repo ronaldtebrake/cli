@@ -30,7 +30,10 @@ const apiBasePath = "/api/v1"
 // the control-plane host.
 func New() (*Client, error) {
 	base := strings.TrimRight(api.AuthBaseURL(), "/")
-	src := &bearerSource{resourceBaseURL: base}
+	// The token exchange's resource must be the bare origin; api.OriginOnly
+	// strips any path/query so the audience the manager keys on matches
+	// what the server expects.
+	src := &bearerSource{resourceBaseURL: api.OriginOnly(base)}
 	client, err := NewClient(base+apiBasePath, src)
 	if err != nil {
 		return nil, fmt.Errorf("build core API client: %w", err)
@@ -50,7 +53,13 @@ type bearerSource struct {
 func (b *bearerSource) BearerAuth(ctx context.Context, _ OperationName) (BearerAuth, error) {
 	token, err := auth.TokenForResource(ctx, b.resourceBaseURL)
 	if err != nil {
-		return BearerAuth{}, fmt.Errorf("resolve control-plane token (run 'entire login'): %w", err)
+		// Only suggest login when the user genuinely isn't logged in.
+		// Other failures (STS rejection, network, malformed config) must
+		// surface verbatim rather than be masked by a login hint.
+		if errors.Is(err, auth.ErrNotLoggedIn) {
+			return BearerAuth{}, fmt.Errorf("not logged in — run 'entire login': %w", err)
+		}
+		return BearerAuth{}, fmt.Errorf("resolve control-plane token: %w", err)
 	}
 	return BearerAuth{Token: token}, nil
 }

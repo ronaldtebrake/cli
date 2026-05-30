@@ -18,7 +18,7 @@ func newRepoCmd() *cobra.Command {
 		Short:  "Manage Entire repositories",
 		Hidden: true,
 	}
-	addJSONFlag(cmd)
+	addControlPlaneFlags(cmd)
 	cmd.AddCommand(newRepoCreateCmd())
 	cmd.AddCommand(newRepoListCmd())
 	cmd.AddCommand(newRepoGetCmd())

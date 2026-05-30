@@ -11,15 +11,23 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/coreapi"
 )
 
-// addJSONFlag registers a persistent --json flag on a command group so its
-// read subcommands (list / get) can emit the raw wire JSON instead of the
-// default human table. Persistent so it's inherited by nested subcommands
-// (e.g. `entire repo mirror list`).
-func addJSONFlag(cmd *cobra.Command) {
+// addControlPlaneFlags registers the persistent flags shared by every
+// control-plane command group. Persistent so they're inherited by nested
+// subcommands (e.g. `entire repo mirror list`):
+//   - --json: emit the raw wire JSON instead of the default human table.
+//   - --insecure-http-auth: permit the token exchange over plain http://
+//     (local/dev deployments where the core isn't behind TLS). Hidden, as
+//     elsewhere in the CLI.
+func addControlPlaneFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().Bool("json", false, "output raw JSON instead of a table")
+	cmd.PersistentFlags().Bool("insecure-http-auth", false, "Allow authentication over plain HTTP (insecure, for local development only)")
+	if err := cmd.PersistentFlags().MarkHidden("insecure-http-auth"); err != nil {
+		panic(fmt.Sprintf("hide insecure-http-auth flag: %v", err))
+	}
 }
 
 // jsonRequested reports whether --json was set on cmd or an ancestor. A
@@ -27,6 +35,13 @@ func addJSONFlag(cmd *cobra.Command) {
 // treated as "not requested".
 func jsonRequested(cmd *cobra.Command) bool {
 	v, err := cmd.Flags().GetBool("json")
+	return err == nil && v
+}
+
+// insecureHTTPRequested reports whether --insecure-http-auth was set on cmd
+// or an ancestor.
+func insecureHTTPRequested(cmd *cobra.Command) bool {
+	v, err := cmd.Flags().GetBool("insecure-http-auth")
 	return err == nil && v
 }
 
@@ -217,6 +232,12 @@ func runCoreJSON(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi.Cli
 // client, map API errors — and leaves any success output to fn.
 func runCore(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi.Client) error) error {
 	cmd.SilenceUsage = true
+	// Opt into plain-HTTP token exchange before the client (and its lazily
+	// built token manager) is constructed — the manager freezes the
+	// setting on first use.
+	if insecureHTTPRequested(cmd) {
+		auth.EnableInsecureHTTP()
+	}
 	client, err := coreapi.New()
 	if err != nil {
 		return fmt.Errorf("connect to Entire control plane: %w", err)
@@ -239,17 +260,20 @@ func markRequired(cmd *cobra.Command, names ...string) {
 	}
 }
 
-// renderCoreError converts a Core API error into a user-facing SilentError
-// carrying the server's problem-detail message, falling back to the raw
-// error for transport/local failures. Commands wrap their client-call
-// errors with this so users see "organization name already taken" rather
-// than ogen's decode-wrapped string.
+// renderCoreError converts a Core API error into the server's
+// problem-detail message (so users see "organization name already taken"
+// rather than ogen's decode-wrapped string), falling back to the raw error
+// for transport/local failures. It returns a plain error, not a
+// SilentError: main.go prints plain errors, and runCore has already set
+// SilenceUsage, so the message reaches the user without a usage dump. (A
+// SilentError here would be swallowed — main.go skips printing those —
+// leaving e.g. a 409 conflict with no output.)
 func renderCoreError(err error) error {
 	if err == nil {
 		return nil
 	}
 	if msg := coreapi.APIError(err); msg != "" {
-		return NewSilentError(errors.New(msg))
+		return errors.New(msg)
 	}
 	return err
 }

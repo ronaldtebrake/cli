@@ -17,7 +17,7 @@ func newOrgCmd() *cobra.Command {
 		Short:  "Manage Entire organizations",
 		Hidden: true,
 	}
-	addJSONFlag(cmd)
+	addControlPlaneFlags(cmd)
 	cmd.AddCommand(newOrgCreateCmd())
 	cmd.AddCommand(newOrgListCmd())
 	return cmd

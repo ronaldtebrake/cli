@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,9 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 		defer cancel()
 	}
 
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
 	cloning := false
 	for {
 		ready, status := mirrorAdvertisesHead(ctx, checkURL, token)
@@ -97,8 +101,14 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(out)
+			// User cancellation (Ctrl+C) should exit quietly, not print a
+			// "timed out…: context canceled" line. NewSilentError signals
+			// main.go to skip printing; a real deadline still reports.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return NewSilentError(ctx.Err())
+			}
 			return fmt.Errorf("timed out waiting for initial clone: %w", ctx.Err())
-		case <-time.After(2 * time.Second):
+		case <-ticker.C:
 		}
 	}
 }

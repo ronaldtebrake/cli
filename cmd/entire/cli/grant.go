@@ -9,9 +9,10 @@ import (
 )
 
 // newGrantCmd is the hidden `entire grant` command group: manage access
-// grants and org membership on the Entire control plane. Mirrors the three
-// grantable resources — org, project, repo — each with add / list /
-// remove. Surfaced via `entire labs`.
+// grants and org membership on the Entire control plane. Surface follows
+// what the Core API exposes per resource: org and project support
+// add / list / remove, while repo supports only add (the API has no
+// repo-grant list or revoke route yet). Surfaced via `entire labs`.
 //
 // Grantees are addressed by their identity provider + provider user id
 // (e.g. --provider github --provider-user-id 12345), matching the control
@@ -22,7 +23,7 @@ func newGrantCmd() *cobra.Command {
 		Short:  "Manage Entire access grants and org membership",
 		Hidden: true,
 	}
-	addJSONFlag(cmd)
+	addControlPlaneFlags(cmd)
 	cmd.AddCommand(newGrantOrgCmd())
 	cmd.AddCommand(newGrantProjectCmd())
 	cmd.AddCommand(newGrantRepoCmd())
