@@ -4,13 +4,19 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/spf13/cobra"
 )
 
-// newAuthUseCmd switches the active login context — the one the
-// control-plane commands authenticate as. Clones resolve their context
-// per cluster, so this primarily affects org/project/repo operations.
+// newAuthUseCmd switches the active login context.
+//
+// The active context determines which login `git clone entire://…` prefers
+// when a cluster has several. Control-plane commands (auth status/list/
+// revoke, org/project/repo/grant) currently target the configured auth host
+// (ENTIRE_AUTH_BASE_URL / the default) regardless of the active context's
+// core, so switching to a context on a *different* core does not yet
+// retarget them — auth use warns when that's the case.
 func newAuthUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <context>",
@@ -21,8 +27,36 @@ func newAuthUseCmd() *cobra.Command {
 				return err //nolint:wrapcheck // already a user-facing message
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Now using context %q.\n", args[0])
+			warnIfCrossCoreContext(cmd.ErrOrStderr(), args[0])
 			return nil
 		},
+	}
+}
+
+// warnIfCrossCoreContext warns when the now-active context authenticates
+// against a different core than the control plane targets. Clone resolves
+// per-cluster and is unaffected, but auth status/list/revoke and the
+// org/project/repo/grant commands still hit the configured auth host —
+// switching cores there isn't wired up yet, so flag it rather than
+// silently authenticate against the wrong host.
+func warnIfCrossCoreContext(errW io.Writer, name string) {
+	all, _, err := auth.Contexts()
+	if err != nil {
+		return
+	}
+	authHost := api.AuthBaseURL()
+	for _, c := range all {
+		if c.Name != name {
+			continue
+		}
+		if c.CoreURL == "" || api.OriginOnly(c.CoreURL) == api.OriginOnly(authHost) {
+			return
+		}
+		fmt.Fprintf(errW,
+			"Note: %q authenticates against %s, but control-plane commands still target %s.\n"+
+				"Cross-core control-plane switching isn't supported yet; `git clone entire://…` uses this context regardless.\n",
+			name, c.CoreURL, authHost)
+		return
 	}
 }
 

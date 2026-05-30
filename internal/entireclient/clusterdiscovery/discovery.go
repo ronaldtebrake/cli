@@ -107,6 +107,8 @@ func RenderLoginHint(clusterHost string, coreURLs []string) string {
 	for _, u := range coreURLs {
 		fmt.Fprintf(&b, "  %s\n", u)
 	}
-	fmt.Fprint(&b, "\nRun `entire login` to authenticate (or `entire auth use <context>` to switch to an existing login), then re-run your command.")
+	fmt.Fprint(&b, "\nAuthenticate against one of those cores and re-run your command:\n"+
+		"  ENTIRE_AUTH_BASE_URL=<url> entire login\n"+
+		"or, if you already have a login there, switch to it with `entire auth use <context>`.")
 	return b.String()
 }

@@ -54,3 +54,35 @@ func TestRunAuthContexts(t *testing.T) {
 		t.Fatalf("listing = %q, want handle alice", got)
 	}
 }
+
+func TestWarnIfCrossCoreContext(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	t.Setenv("ENTIRE_AUTH_BASE_URL", "https://auth.example.com")
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(time.Hour).Unix()
+
+	// Same core as the configured auth host: no warning.
+	sameName, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://auth.example.com","handle":"alice","exp":%d}`, exp)), true)
+	if err != nil {
+		t.Fatalf("record same-core: %v", err)
+	}
+	var same bytes.Buffer
+	warnIfCrossCoreContext(&same, sameName)
+	if same.Len() != 0 {
+		t.Fatalf("same-core context should not warn, got: %q", same.String())
+	}
+
+	// Different core: warns that the control plane won't follow.
+	otherName, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://other.example.com","handle":"alice","exp":%d}`, exp)), true)
+	if err != nil {
+		t.Fatalf("record cross-core: %v", err)
+	}
+	var diff bytes.Buffer
+	warnIfCrossCoreContext(&diff, otherName)
+	if !strings.Contains(diff.String(), "other.example.com") || !strings.Contains(diff.String(), "control-plane") {
+		t.Fatalf("cross-core context should warn, got: %q", diff.String())
+	}
+}

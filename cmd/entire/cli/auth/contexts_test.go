@@ -216,6 +216,41 @@ func TestRemoveCurrentContext(t *testing.T) {
 	}
 }
 
+func TestRemoveCurrentContext_DoesNotSwitchToAnother(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(time.Hour).Unix()
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
+		t.Fatalf("record a: %v", err)
+	}
+	active, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"alice","exp":%d}`, exp)), true)
+	if err != nil {
+		t.Fatalf("record b: %v", err)
+	}
+
+	// Logging out of the active context must NOT silently switch to the
+	// surviving one — current_context is cleared.
+	if err := RemoveCurrentContext(); err != nil {
+		t.Fatalf("RemoveCurrentContext: %v", err)
+	}
+	f, err := contexts.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if f.CurrentContext != "" {
+		t.Fatalf("current_context = %q after logout, want empty (not switched)", f.CurrentContext)
+	}
+	if f.Find(active) != nil {
+		t.Fatalf("active context %q should have been removed", active)
+	}
+	if len(f.Contexts) != 1 {
+		t.Fatalf("want the other context to survive; got %d contexts", len(f.Contexts))
+	}
+}
+
 func TestSetCurrentContext(t *testing.T) {
 	cfgDir := t.TempDir()
 	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)

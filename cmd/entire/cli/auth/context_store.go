@@ -44,6 +44,10 @@ func RemoveCurrentContext() error {
 		}
 		svc, handle = current.KeychainService, current.Handle
 		f.Delete(current.Name)
+		// Delete advances current_context to a surviving context; for logout
+		// that would silently re-authenticate as another account. Leave no
+		// active context — logged out means logged out.
+		f.CurrentContext = ""
 		return true, nil
 	}); err != nil {
 		return fmt.Errorf("remove current context: %w", err)

@@ -132,4 +132,5 @@ func TestRenderLoginHint(t *testing.T) {
 	assert.Contains(t, hint, "\n  https://a.example\n", "missing indented URL line: %q", hint)
 	assert.Contains(t, hint, "\n  https://b.example\n", "missing indented URL line: %q", hint)
 	assert.Contains(t, hint, "entire login")
+	assert.Contains(t, hint, "ENTIRE_AUTH_BASE_URL")
 }
