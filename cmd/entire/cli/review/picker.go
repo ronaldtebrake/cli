@@ -255,26 +255,6 @@ func MergePickerResults(existing map[string]settings.ReviewConfig, offered map[s
 	return merged
 }
 
-// SaveReviewConfig persists the review map into clone-local preferences while
-// preserving other review preferences. A load error means the preferences file
-// exists but is malformed — we must NOT silently overwrite it with an empty
-// struct, or every unrelated review preference would be wiped. Return the
-// error so the caller can surface it instead.
-func SaveReviewConfig(ctx context.Context, review map[string]settings.ReviewConfig) error {
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return fmt.Errorf("load review preferences before save: %w", err)
-	}
-	if prefs == nil {
-		prefs = &settings.ClonePreferences{}
-	}
-	prefs.Review = review
-	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
-		return fmt.Errorf("save review preferences: %w", err)
-	}
-	return nil
-}
-
 func SaveReviewFixAgent(ctx context.Context, agentName string) error {
 	prefs, err := settings.LoadClonePreferences(ctx)
 	if err != nil {

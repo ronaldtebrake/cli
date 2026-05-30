@@ -227,7 +227,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	// 2. Load config. A load error means the settings file exists but is
 	// malformed (Load returns a default-filled object when the file is
 	// missing). Surface the error instead of silently opening the picker,
-	// which would cause SaveReviewConfig to write over the user's other
+	// which would cause the config writer to write over the user's other
 	// settings with an empty EntireSettings{}.
 	s, err := settings.Load(ctx)
 	if err != nil {

@@ -1259,8 +1259,10 @@ func TestAttachCmd_ReviewDoesNotInferSkillsFromConfig(t *testing.T) {
 `)
 
 	// Seed review config — the spawn-path default. Attach must ignore this.
-	if err := cliReview.SaveReviewConfig(context.Background(), map[string]settings.ReviewConfig{
-		"claude-code": {Skills: []string{"/pr-review-toolkit:review-pr"}},
+	if err := settings.SaveClonePreferences(context.Background(), &settings.ClonePreferences{
+		Review: map[string]settings.ReviewConfig{
+			"claude-code": {Skills: []string{"/pr-review-toolkit:review-pr"}},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
