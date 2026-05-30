@@ -33,28 +33,26 @@ func CurrentContextToken() (string, bool) {
 // its keyring token, advancing current_context to whatever remains. It is
 // a no-op (returns nil) when there is no current context. Used by logout.
 func RemoveCurrentContext() error {
-	cfgDir := contexts.DefaultConfigDir()
-	f, err := contexts.Load(cfgDir)
-	if err != nil {
-		return fmt.Errorf("load contexts: %w", err)
-	}
-	current := f.Find(f.CurrentContext)
-	if current == nil {
-		return nil
-	}
-	if current.KeychainService != "" && current.Handle != "" {
-		// Best-effort: a missing keyring entry is fine; the contexts.json
-		// removal below is what makes us "logged out".
-		_ = tokenstore.Delete(current.KeychainService, current.Handle) //nolint:errcheck // best-effort; contexts.json removal is the source of truth for logout
-	}
-	if err := contexts.Modify(cfgDir, func(f *contexts.File) (bool, error) {
-		if f.Find(current.Name) == nil {
+	// Read-modify-write in a single locked Modify so the context we delete
+	// is exactly the one we capture the keychain slot from (separate Load +
+	// Modify would race a concurrent `auth use`).
+	var svc, handle string
+	if err := contexts.Modify(contexts.DefaultConfigDir(), func(f *contexts.File) (bool, error) {
+		current := f.Find(f.CurrentContext)
+		if current == nil {
 			return false, nil
 		}
+		svc, handle = current.KeychainService, current.Handle
 		f.Delete(current.Name)
 		return true, nil
 	}); err != nil {
-		return fmt.Errorf("remove context %q: %w", current.Name, err)
+		return fmt.Errorf("remove current context: %w", err)
+	}
+	// Best-effort keychain cleanup, sequenced off the context just removed.
+	// A missing entry is fine — the contexts.json removal above is what makes
+	// us "logged out".
+	if svc != "" && handle != "" {
+		_ = tokenstore.Delete(svc, handle) //nolint:errcheck // best-effort; contexts.json removal is the source of truth for logout
 	}
 	return nil
 }
@@ -79,10 +77,10 @@ func SetCurrentContext(name string) error {
 
 // Contexts returns all stored login contexts and the current context name,
 // for listing/switching. Order matches on-disk order.
-func Contexts() (all []*contexts.Context, current string, err error) {
-	f, loadErr := contexts.Load(contexts.DefaultConfigDir())
-	if loadErr != nil {
-		return nil, "", fmt.Errorf("load contexts: %w", loadErr)
+func Contexts() ([]*contexts.Context, string, error) {
+	f, err := contexts.Load(contexts.DefaultConfigDir())
+	if err != nil {
+		return nil, "", fmt.Errorf("load contexts: %w", err)
 	}
 	return f.Contexts, f.CurrentContext, nil
 }
