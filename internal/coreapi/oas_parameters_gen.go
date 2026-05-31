@@ -20,7 +20,11 @@ type DeleteBindingParams struct {
 
 // DeleteMirrorParams is parameters of deleteMirror operation.
 type DeleteMirrorParams struct {
-	MirrorId string
+	Provider DeleteMirrorProvider
+	Owner    string
+	Repo     string
+	// Public host of the cluster serving the mirror.
+	ClusterHost string
 }
 
 // DeleteRepoParams is parameters of deleteRepo operation.
@@ -120,15 +124,6 @@ type ListServiceAccountGrantsParams struct {
 // ListServiceAccountsParams is parameters of listServiceAccounts operation.
 type ListServiceAccountsParams struct {
 	OrgId string
-}
-
-// LookupRepoByMirrorParams is parameters of lookupRepoByMirror operation.
-type LookupRepoByMirrorParams struct {
-	Provider string
-	Owner    string
-	Repo     string
-	// DNS host of the cluster to address the resolved repo on.
-	ClusterHost string
 }
 
 // LookupResourcesParams is parameters of lookupResources operation.

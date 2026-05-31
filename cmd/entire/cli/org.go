@@ -47,7 +47,7 @@ func newOrgCreateCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return sc.Response, nil
+				return sc, nil
 			})
 		},
 	}
@@ -66,7 +66,7 @@ func newOrgListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Response.Orgs, nil
+				return out.Orgs, nil
 			})
 		},
 	}

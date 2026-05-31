@@ -65,7 +65,7 @@ func newProjectCreateCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return sc.Response, nil
+				return sc, nil
 			})
 		},
 	}
@@ -92,7 +92,7 @@ func newProjectListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Response.Projects, nil
+				return out.Projects, nil
 			})
 		},
 	}

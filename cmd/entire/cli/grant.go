@@ -77,7 +77,7 @@ func newGrantOrgAddCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return sc.Response, nil
+				return sc, nil
 			})
 		},
 	}
@@ -97,7 +97,7 @@ func newGrantOrgListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Response.Members, nil
+				return out.Members, nil
 			})
 		},
 	}
@@ -111,7 +111,7 @@ func newGrantOrgRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				if _, err := c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
+				if err := c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
 					OrgId:          args[0],
 					Provider:       provider,
 					ProviderUserId: providerUserID,
@@ -160,7 +160,7 @@ func newGrantProjectAddCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return sc.Response, nil
+				return sc, nil
 			})
 		},
 	}
@@ -182,7 +182,7 @@ func newGrantProjectListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Response.Members, nil
+				return out.Members, nil
 			})
 		},
 	}
@@ -196,7 +196,7 @@ func newGrantProjectRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				if _, err := c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
+				if err := c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
 					ProjectId:   args[0],
 					GranteeType: granteeType,
 					GranteeId:   granteeID,
@@ -245,7 +245,7 @@ func newGrantRepoAddCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return sc.Response, nil
+				return sc, nil
 			})
 		},
 	}

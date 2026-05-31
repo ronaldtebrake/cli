@@ -6,14 +6,11 @@
 // committed artifact (core.gen.json) that ogen consumes; the upstream
 // file is never mutated, so a refresh is a clean `curl` overwrite.
 //
-// TEMPORARY: every transform here compensates for a bug in the upstream
-// OpenAPI document. The goal is to delete this whole command once the spec
-// is fixed at the source (the control-plane service's spec generation) and
-// generate ogen straight from core.openapi.json. Each transform below
-// names the spec bug it works around so the fix can be matched upstream
-// and the transform retired. The running checklist of upstream fixes
-// (these two plus the by-mirror id-naming gap) lives in
-// internal/coreapi/UPSTREAM.md.
+// Each transform below is documented with the reason it exists. Transform
+// (1) works around an upstream spec bug (nullable-array shorthand ogen
+// rejects) and retires when the spec is fixed; transform (2) is a
+// deliberate codegen-ergonomics fold, not a bug workaround. The running
+// checklist of upstream fixes lives in internal/coreapi/UPSTREAM.md.
 //
 //  1. Collapse JSON-Schema-2020-12 nullable shorthand — `"type": ["array",
 //     "null"]` — to the bare type. ogen models a schema's `type` as a
@@ -22,20 +19,19 @@
 //     as `[]`, never `null`), i.e. `"type": "array"`. Then this transform
 //     finds nothing to change and can be removed.
 //
-//  2. Collapse each operation's responses to one "2XX" success + one
-//     "default" error. The spec only enumerates 200, but creates answer
-//     201 and deletes 204; those unenumerated codes route to the error
-//     decoder and fail to decode a successful response. The 2XX range
-//     matches whatever 2xx the server returns. Folding the 4xx/5xx into a
-//     single default (all reference the same ErrorModel, so no shape is
-//     lost) also flips ogen into "convenient errors": `(*Success, error)`
-//     with any non-2xx as a typed `*ErrorModelStatusCode`.
-//     Spec fix: declare each operation's real success code (201 for POST
-//     creates, 204 for DELETEs, 200 for reads). With the true code
-//     declared, this collapse becomes unnecessary — and dropping it also
-//     removes the *…StatusCode wrapper the 2XX range forces, so the
-//     generated methods return `(*T, error)` directly again and the
-//     command fetch closures no longer unwrap `.Response`.
+//  2. Fold every operation's explicit error responses (4xx/5xx) into a
+//     single "default" error, leaving the real success response (200 for
+//     reads/creates, 204 for deletes) untouched. The spec declares
+//     accurate success codes but enumerates each error status separately
+//     with no "default"; ogen turns that into a per-operation sum type
+//     that forces a type switch at every call site. All error responses
+//     reference the same ErrorModel, so folding them into one "default" is
+//     lossless and flips ogen into "convenient errors": `(*T, error)` with
+//     any non-2xx as a typed `*ErrorModelStatusCode`. Keeping the literal
+//     success code (rather than the old "2XX" range) means ogen returns
+//     the success type directly — no `*…StatusCode` wrapper to unwrap.
+//     This is a deliberate ergonomics choice, not a bug workaround; it
+//     stays until/unless the spec grows a shared "default" response.
 //
 // Run via `go generate ./internal/coreapi/...` (the first generate step in
 // gen.go), or by hand after refreshing the spec:
@@ -80,7 +76,7 @@ func run() error {
 	}
 
 	collapsed := collapseTypeUnions(doc)
-	ops := collapseResponses(doc)
+	ops := foldErrorResponses(doc)
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -93,7 +89,7 @@ func run() error {
 		return fmt.Errorf("write spec: %w", err)
 	}
 
-	fmt.Printf("normalize: collapsed %d type-union(s), normalized responses on %d operation(s) → %s\n",
+	fmt.Printf("normalize: collapsed %d type-union(s), folded error responses on %d operation(s) → %s\n",
 		collapsed, ops, outPath)
 	return nil
 }
@@ -153,19 +149,18 @@ var httpMethods = map[string]bool{
 	"options": true, "head": true, "patch": true, "trace": true,
 }
 
-// collapseResponses rewrites each operation's responses to exactly two
-// entries: a single "2XX" success and a "default" error.
+// foldErrorResponses rewrites each operation's responses to its real 2xx
+// success entries plus a single "default" error, dropping the explicit
+// 4xx/5xx codes.
 //
-// Collapsing the success to the 2XX range (rather than the literal 200 the
-// spec declares) is load-bearing: several endpoints actually answer with
-// 201 Created or 204 No Content, codes the spec doesn't enumerate. Under
-// the literal-200 form ogen routes those to the error decoder and fails
-// with "unexpected Content-Type: application/json". 2XX matches whatever
-// 2xx the server sends and decodes it as the success type. The error
-// branch likewise folds every declared 4xx/5xx into one default (all
-// reference the same ErrorModel, so nothing is lost). Returns the number
-// of operations rewritten.
-func collapseResponses(doc map[string]any) int {
+// The spec declares accurate success codes (200 for reads/creates, 204 for
+// deletes), so those are kept verbatim — keeping the literal code (not a
+// "2XX" range) means ogen returns the success type directly, with no
+// `*…StatusCode` wrapper. Every explicit error status references the same
+// ErrorModel, so folding them all into one "default" is lossless and flips
+// ogen into "convenient errors": `(*T, error)` with any non-2xx as a typed
+// `*ErrorModelStatusCode`. Returns the number of operations rewritten.
+func foldErrorResponses(doc map[string]any) int {
 	paths, ok := doc["paths"].(map[string]any)
 	if !ok {
 		return 0
@@ -188,37 +183,17 @@ func collapseResponses(doc map[string]any) int {
 			if !ok {
 				continue
 			}
-			collapsed := map[string]any{"default": defaultErrorResponse()}
-			if success := pickSuccessResponse(responses); success != nil {
-				collapsed["2XX"] = success
+			folded := map[string]any{"default": defaultErrorResponse()}
+			for status, resp := range responses {
+				if len(status) > 0 && status[0] == '2' {
+					folded[status] = resp
+				}
 			}
-			operation["responses"] = collapsed
+			operation["responses"] = folded
 			count++
 		}
 	}
 	return count
-}
-
-// pickSuccessResponse returns the canonical 2xx response for an operation:
-// one that carries a content body if any 2xx does (so a 200-with-body
-// isn't shadowed by a bodyless 204), otherwise the first 2xx found. Returns
-// nil when the operation declares no 2xx response.
-func pickSuccessResponse(responses map[string]any) any {
-	var first any
-	for status, resp := range responses {
-		if len(status) == 0 || status[0] != '2' {
-			continue
-		}
-		if first == nil {
-			first = resp
-		}
-		if m, ok := resp.(map[string]any); ok {
-			if content, ok := m["content"].(map[string]any); ok && len(content) > 0 {
-				return resp
-			}
-		}
-	}
-	return first
 }
 
 func defaultErrorResponse() map[string]any {

@@ -95,7 +95,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				created := sc.Response
+				created := sc
 				out := cmd.OutOrStdout()
 				if created.Created {
 					fmt.Fprintf(out, "Registered mirror %s\n", created.MirrorId)
@@ -142,7 +142,7 @@ func newRepoMirrorListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Response.Mirrors, nil
+				return out.Mirrors, nil
 			})
 		},
 	}
@@ -163,7 +163,7 @@ func newRepoMirrorGetCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return &sc.Response, nil
+				return sc, nil
 			})
 		},
 	}
@@ -187,28 +187,18 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 			}
 			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				// Resolve the mirror's ULID from its GitHub coords, then
-				// delete by that id. The generated API offers no delete-by-
-				// coords route, so the by-mirror lookup is the only way to
-				// get an id — and its repoId IS the mirror id: server-side
-				// both come from the same mirror_repos row
-				// (FindMirrorByCoords returns MirrorRepoID, which create
-				// echoes as mirrorId and DELETE /mirrors/{id} resolves).
-				// Feeding repoId to DeleteMirror is therefore correct despite
-				// the field-name difference; verified live (by-mirror repoId
-				// == list mirrorId for the same repo). The client-contract
-				// ambiguity is tracked for an upstream fix in
-				// internal/coreapi/UPSTREAM.md (#3).
-				resolved, err := c.LookupRepoByMirror(ctx, coreapi.LookupRepoByMirrorParams{
-					Provider:    "github",
+				// Delete by upstream coords in one call. A 404 is a real
+				// error here, not idempotent success: the server only
+				// answers 204 when it actually removed a placement, so a
+				// 404 ("no such mirror / not visible / different cluster")
+				// surfaces verbatim via renderCoreError rather than being
+				// reported as a successful removal.
+				if err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{
+					Provider:    coreapi.DeleteMirrorProviderGithub,
 					Owner:       owner,
 					Repo:        repo,
 					ClusterHost: clusterHost,
-				})
-				if err != nil {
-					return err
-				}
-				if _, err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{MirrorId: resolved.Response.RepoId}); err != nil {
+				}); err != nil {
 					return err
 				}
 				cmd.Printf("Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)

@@ -38,7 +38,6 @@ const (
 	ListProjectsOperation                  OperationName = "ListProjects"
 	ListServiceAccountGrantsOperation      OperationName = "ListServiceAccountGrants"
 	ListServiceAccountsOperation           OperationName = "ListServiceAccounts"
-	LookupRepoByMirrorOperation            OperationName = "LookupRepoByMirror"
 	LookupResourcesOperation               OperationName = "LookupResources"
 	RemoveOrgMemberOperation               OperationName = "RemoveOrgMember"
 	ResolveHandleOperation                 OperationName = "ResolveHandle"

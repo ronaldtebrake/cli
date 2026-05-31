@@ -1323,32 +1323,6 @@
         ],
         "type": "object"
       },
-      "MirrorRepoPath": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "/api/v1/schemas/MirrorRepoPath.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "repoId": {
-            "type": "string"
-          },
-          "repoPath": {
-            "description": "Data-plane path of the mirror repo, e.g. \"gh/owner/repo\".",
-            "type": "string"
-          }
-        },
-        "required": [
-          "repoId",
-          "repoPath"
-        ],
-        "type": "object"
-      },
       "OIDCProvider": {
         "additionalProperties": false,
         "properties": {
@@ -1495,9 +1469,6 @@
           "id": {
             "type": "string"
           },
-          "mirror": {
-            "$ref": "#/components/schemas/RepoMirror"
-          },
           "name": {
             "type": "string"
           },
@@ -1534,33 +1505,6 @@
           "id",
           "owningProjectId",
           "name"
-        ],
-        "type": "object"
-      },
-      "RepoMirror": {
-        "additionalProperties": false,
-        "properties": {
-          "installationId": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "remoteOwner": {
-            "type": "string"
-          },
-          "remoteRepo": {
-            "type": "string"
-          },
-          "remoteUrl": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider",
-          "remoteOwner",
-          "remoteRepo"
         ],
         "type": "object"
       },
@@ -1771,7 +1715,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1840,7 +1784,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1879,7 +1823,7 @@
       "get": {
         "operationId": "listAuditEvents",
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1942,7 +1886,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1991,7 +1935,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2030,7 +1974,7 @@
       "get": {
         "operationId": "getMe",
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2066,6 +2010,82 @@
       }
     },
     "/mirrors": {
+      "delete": {
+        "operationId": "deleteMirror",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "github"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Public host of the cluster serving the mirror.",
+            "explode": false,
+            "in": "query",
+            "name": "clusterHost",
+            "required": true,
+            "schema": {
+              "description": "Public host of the cluster serving the mirror.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "summary": "Delete a mirror by upstream coords + cluster host",
+        "tags": [
+          "mirrors"
+        ]
+      },
       "get": {
         "operationId": "listMirrors",
         "parameters": [
@@ -2101,7 +2121,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2148,7 +2168,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2184,47 +2204,6 @@
       }
     },
     "/mirrors/{mirrorId}": {
-      "delete": {
-        "operationId": "deleteMirror",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "mirrorId",
-            "required": true,
-            "schema": {
-              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "2XX": {
-            "description": "No Content"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorModel"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "summary": "Delete mirror by id",
-        "tags": [
-          "mirrors"
-        ]
-      },
       "get": {
         "operationId": "getMirror",
         "parameters": [
@@ -2239,7 +2218,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2278,7 +2257,7 @@
       "get": {
         "operationId": "listOIDCProviders",
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2317,7 +2296,7 @@
       "get": {
         "operationId": "listOrgs",
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2364,7 +2343,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2414,7 +2393,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2472,7 +2451,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2540,7 +2519,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -2583,7 +2562,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2634,7 +2613,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2681,7 +2660,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2741,7 +2720,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2809,7 +2788,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -2870,7 +2849,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -2913,7 +2892,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2963,7 +2942,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3012,7 +2991,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3047,85 +3026,6 @@
         ]
       }
     },
-    "/repos/by-mirror/{provider}/{owner}/{repo}": {
-      "get": {
-        "operationId": "lookupRepoByMirror",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "owner",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "repo",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          {
-            "description": "DNS host of the cluster to address the resolved repo on.",
-            "explode": false,
-            "in": "query",
-            "name": "clusterHost",
-            "required": true,
-            "schema": {
-              "description": "DNS host of the cluster to address the resolved repo on.",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "2XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MirrorRepoPath"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorModel"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "summary": "Look up a repo by external mirror coords",
-        "tags": [
-          "repos"
-        ]
-      }
-    },
     "/repos/{repoId}": {
       "delete": {
         "operationId": "deleteRepo",
@@ -3141,7 +3041,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -3182,7 +3082,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3242,7 +3142,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3293,7 +3193,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3340,7 +3240,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3390,7 +3290,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -3431,7 +3331,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3481,7 +3381,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3539,7 +3439,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3598,7 +3498,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
@@ -3641,7 +3541,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3699,7 +3599,7 @@
           "required": true
         },
         "responses": {
-          "2XX": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3770,7 +3670,7 @@
           }
         ],
         "responses": {
-          "2XX": {
+          "204": {
             "description": "No Content"
           },
           "default": {
