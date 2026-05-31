@@ -73,11 +73,7 @@ func newGrantOrgAddCmd() *cobra.Command {
 				if role != "" {
 					body.Role = coreapi.NewOptAddOrgMemberInputBodyRole(coreapi.AddOrgMemberInputBodyRole(role))
 				}
-				sc, err := c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: args[0]})
-				if err != nil {
-					return nil, err
-				}
-				return sc, nil
+				return c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: args[0]})
 			})
 		},
 	}
@@ -156,11 +152,7 @@ func newGrantProjectAddCmd() *cobra.Command {
 				if granteeType != "" {
 					body.GranteeType = coreapi.NewOptGrantProjectAccessInputBodyGranteeType(coreapi.GrantProjectAccessInputBodyGranteeType(granteeType))
 				}
-				sc, err := c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: args[0]})
-				if err != nil {
-					return nil, err
-				}
-				return sc, nil
+				return c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: args[0]})
 			})
 		},
 	}
@@ -241,11 +233,7 @@ func newGrantRepoAddCmd() *cobra.Command {
 				if granteeType != "" {
 					body.GranteeType = coreapi.NewOptGrantRepoAccessInputBodyGranteeType(coreapi.GrantRepoAccessInputBodyGranteeType(granteeType))
 				}
-				sc, err := c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: args[0]})
-				if err != nil {
-					return nil, err
-				}
-				return sc, nil
+				return c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: args[0]})
 			})
 		},
 	}

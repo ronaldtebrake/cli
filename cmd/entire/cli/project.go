@@ -61,11 +61,7 @@ func newProjectCreateCmd() *cobra.Command {
 				if region != "" {
 					body.Region = coreapi.NewOptString(region)
 				}
-				sc, err := c.CreateProject(ctx, body)
-				if err != nil {
-					return nil, err
-				}
-				return sc, nil
+				return c.CreateProject(ctx, body)
 			})
 		},
 	}

@@ -86,7 +86,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			}
 			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				sc, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
+				created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
 					Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
 					Owner:       owner,
 					Repo:        repo,
@@ -95,7 +95,6 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				created := sc
 				out := cmd.OutOrStdout()
 				if created.Created {
 					fmt.Fprintf(out, "Registered mirror %s\n", created.MirrorId)
