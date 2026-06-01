@@ -22,6 +22,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
@@ -55,6 +56,15 @@ type attachOptions struct {
 	// transcript's first user prompt. Used by `entire review attach` when a
 	// pending-review marker has the exact prompt the user was asked to run.
 	ReviewPromptOverride string
+	// entireSettings, when non-nil, supplies already-resolved settings.
+	entireSettings *settings.EntireSettings
+}
+
+func (opts attachOptions) mirrorsToV1CustomRef(ctx context.Context) bool {
+	if opts.entireSettings != nil {
+		return opts.entireSettings.MirrorsToV1CustomRef()
+	}
+	return settings.MirrorsToV1CustomRef(ctx)
 }
 
 func newAttachCmd() *cobra.Command {
@@ -304,6 +314,12 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 
 	if err := store.WriteCommitted(ctx, writeOpts); err != nil {
 		return fmt.Errorf("failed to write checkpoint: %w", err)
+	}
+
+	if opts.mirrorsToV1CustomRef(ctx) {
+		if err := mirrorToV1CustomRef(repo); err != nil {
+			return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", paths.MetadataBranchName, paths.MetadataRefName, err)
+		}
 	}
 
 	// Create or update session state.

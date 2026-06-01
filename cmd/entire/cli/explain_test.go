@@ -21,6 +21,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/summarize"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -990,6 +991,84 @@ func TestGenerateCheckpointAISummary_PreservesClaudeErrorWhenCtxIsDone(t *testin
 	if ce.Kind != claudecode.ClaudeErrorAuth {
 		t.Errorf("Kind = %v; want auth", ce.Kind)
 	}
+}
+
+// Not parallel: uses t.Chdir() and package-level var stubs.
+func TestGenerateCheckpointSummary_MirrorsToV1CustomRefWhenOptedIn(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "init.txt", "init")
+	testutil.GitAdd(t, tmpDir, "init.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+	t.Chdir(tmpDir)
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	require.NoError(t, os.MkdirAll(entireDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entireDir, paths.SettingsFileName),
+		[]byte(`{"enabled":true,"strategy_options":{"checkpoints_version":"1.1"}}`),
+		0o644,
+	))
+
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+	store := checkpoint.NewGitStore(repo)
+	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
+	require.NoError(t, store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-001",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("transcript line\n")),
+		Prompts:      []string{"hello"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+		Agent:        agent.AgentTypeClaudeCode,
+	}))
+	cpSummary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, cpID)
+	require.NoError(t, err)
+	content, err := checkpoint.ReadLatestSessionContent(ctx, store, cpID, cpSummary)
+	require.NoError(t, err)
+
+	v1Before, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	require.NoError(t, err)
+
+	origLoad := loadSummarySettings
+	origGet := getSummaryAgent
+	origCLI := isSummaryCLIAvailable
+	origGen := generateTranscriptSummary
+	t.Cleanup(func() {
+		loadSummarySettings = origLoad
+		getSummaryAgent = origGet
+		isSummaryCLIAvailable = origCLI
+		generateTranscriptSummary = origGen
+	})
+	loadSummarySettings = func(context.Context) (*settings.EntireSettings, error) {
+		return &settings.EntireSettings{
+			Enabled: true,
+			SummaryGeneration: &settings.SummaryGenerationSettings{
+				Provider: string(agent.AgentNameClaudeCode),
+			},
+		}, nil
+	}
+	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
+		return &stubTextAgent{name: name, kind: agent.AgentTypeClaudeCode}, nil
+	}
+	isSummaryCLIAvailable = func(types.AgentName) bool { return true }
+	generateTranscriptSummary = func(context.Context, redact.RedactedBytes, []string, types.AgentType, summarize.Generator) (*checkpoint.Summary, error) {
+		return &checkpoint.Summary{Intent: "i", Outcome: "o"}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, generateCheckpointSummary(ctx, &stdout, &stderr, store, cpID, cpSummary, content, false, 0))
+
+	v1After, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	require.NoError(t, err)
+	require.NotEqual(t, v1Before.Hash(), v1After.Hash(), "v1 metadata branch must advance after UpdateSummary")
+
+	customRef, err := repo.Reference(plumbing.ReferenceName(paths.MetadataRefName), true)
+	require.NoError(t, err)
+	require.Equal(t, v1After.Hash(), customRef.Hash())
 }
 
 func TestGenerateCheckpointAISummary_ClampsLongParentDeadlineToDefaultTimeout(t *testing.T) {
