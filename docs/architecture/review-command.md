@@ -17,6 +17,8 @@ entire review attach --agent <name>    # Agent that created the session
 entire review attach --skills <s,...>  # Declare which skills were run
 ```
 
+When no profiles are configured, `entire review` creates an opinionated clone-local `general` profile from installed launchable agents and runs immediately — no first-run skills picker. The defaults are intentionally simple: Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude is preferred as master when available.
+
 When two or more launchable agents are configured in the selected profile and `--agent` is not set, `entire review` fans out to all configured workers. There is no per-run multi-picker: the profile is the fan-out contract. Profiles with multiple workers must set `master`; the master runs after workers finish and produces the canonical final report.
 
 ## Settings Schema
@@ -51,7 +53,7 @@ The profile-level `task` is the shared work item. Per-agent `skills` and `prompt
 
 ## How It Works (env-var handshake)
 
-1. `entire review` selects a profile (positional/`--profile` → `review_default_profile` → `general` → only configured profile), composes worker prompts via `review.ComposeReviewPrompt`, and computes scope (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
+1. `entire review` selects a profile (positional/`--profile` → `review_default_profile` → `general` → only configured profile). If no profiles exist, it writes an opinionated clone-local default profile from installed launchable agents and continues. It then composes worker prompts via `review.ComposeReviewPrompt` and computes scope (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
 2. **For launchable agents** (claude-code, codex, gemini-cli): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
 3. **For non-launchable agents** (cursor, opencode, factoryai-droid): `RunMarkerFallback` writes a `PendingReviewMarker` file and prints guidance — the user opens the agent themselves and runs the skills. Single shared file (`review/marker_fallback.go`); adding new non-launchable agents is a registry entry, not a new file.
 4. Worker agents run the selected profile's task; each session ends naturally.

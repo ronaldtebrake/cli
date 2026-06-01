@@ -203,24 +203,29 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 			"Fix your Entire settings or clone-local review preferences and re-run `entire review`.")
 		return silentErr(err)
 	}
-	if s == nil || len(s.ReviewProfiles) == 0 {
-		if !ConfirmFirstRunSetup(ctx, out) {
-			return nil
-		}
+	installed := deps.GetAgentsWithHooksInstalled(ctx)
+	if s == nil {
+		s = &settings.EntireSettings{}
+	}
+	if len(s.ReviewProfiles) == 0 {
 		profileForSetup := profileOverride
 		if profileForSetup == "" {
 			profileForSetup = DefaultProfileName
 		}
-		if _, pickErr := RunReviewProfileConfigPicker(ctx, out, deps.GetAgentsWithHooksInstalled, profileForSetup); pickErr != nil {
-			return pickErr
+		profile, defaultErr := defaultReviewProfileForInstalledAgents(ctx, profileForSetup, installed, deps.ReviewerFor)
+		if defaultErr != nil {
+			cmd.SilenceUsage = true
+			fmt.Fprintln(cmd.ErrOrStderr(), defaultErr.Error())
+			return silentErr(defaultErr)
 		}
-		var reloadErr error
-		s, reloadErr = settings.Load(ctx)
-		if reloadErr != nil {
-			return fmt.Errorf("reload review preferences: %w", reloadErr)
+		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
+			return saveErr
 		}
+		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
+		s.ReviewDefaultProfile = profileForSetup
+		fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
+		fmt.Fprintln(out, "Edit later with `entire review --edit`.")
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Setup complete — running review now.")
 	}
 
 	profileName, profile, err := selectReviewProfile(s, profileOverride)
@@ -232,7 +237,6 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	profile.Task = profileTask(profileName, profile)
 	profile.Agents = nonZeroAgentConfigs(profile.Agents)
 
-	installed := deps.GetAgentsWithHooksInstalled(ctx)
 	if agentOverride != "" {
 		cfg, ok := profile.Agents[agentOverride]
 		if !ok || cfg.IsZero() {

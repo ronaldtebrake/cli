@@ -1,11 +1,15 @@
 package review
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
@@ -108,4 +112,131 @@ func nonZeroAgentConfigs(in map[string]settings.ReviewConfig) map[string]setting
 		out[name] = cfg
 	}
 	return out
+}
+
+func sortedProfileAgentNames(profile settings.ReviewProfileConfig) []string {
+	names := make([]string, 0, len(profile.Agents))
+	for name := range profile.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func defaultReviewProfileForInstalledAgents(
+	ctx context.Context,
+	profileName string,
+	installed []types.AgentName,
+	reviewerFor func(string) reviewtypes.AgentReviewer,
+) (settings.ReviewProfileConfig, error) {
+	profileName = strings.TrimSpace(profileName)
+	if profileName == "" {
+		profileName = DefaultProfileName
+	}
+	installedNames := make([]string, 0, len(installed))
+	for _, name := range installed {
+		installedNames = append(installedNames, string(name))
+	}
+	sort.Strings(installedNames)
+
+	agents := make(map[string]settings.ReviewConfig, len(installedNames))
+	for _, name := range installedNames {
+		if reviewerFor != nil && reviewerFor(name) == nil {
+			continue
+		}
+		cfg := defaultReviewAgentConfig(profileName, name)
+		if cfg.IsZero() {
+			continue
+		}
+		agents[name] = cfg
+	}
+	if len(agents) == 0 {
+		return settings.ReviewProfileConfig{}, errors.New("no launchable agents with hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
+	}
+	return settings.ReviewProfileConfig{
+		Task:   profileTask(profileName, settings.ReviewProfileConfig{}),
+		Agents: agents,
+		Master: defaultReviewMaster(ctx, agents),
+	}, nil
+}
+
+func defaultReviewAgentConfig(profileName, agentName string) settings.ReviewConfig {
+	focus := defaultProfileFocus(profileName)
+	switch agentName {
+	case string(agent.AgentNameClaudeCode):
+		if strings.EqualFold(profileName, "security") {
+			return settings.ReviewConfig{Skills: []string{"/security-review"}}
+		}
+		return settings.ReviewConfig{Skills: []string{"/review"}, Prompt: focus}
+	case string(agent.AgentNameCodex):
+		return settings.ReviewConfig{Skills: []string{"/review"}, Prompt: focus}
+	case string(agent.AgentNameGemini):
+		prompt := "Review the change according to the profile task."
+		if focus != "" {
+			prompt += " " + focus
+		}
+		return settings.ReviewConfig{Prompt: prompt}
+	default:
+		return settings.ReviewConfig{}
+	}
+}
+
+func defaultProfileFocus(profileName string) string {
+	switch strings.ToLower(strings.TrimSpace(profileName)) {
+	case "security":
+		return "Focus specifically on security issues."
+	case "accessibility", "a11y":
+		return "Focus specifically on accessibility issues."
+	default:
+		return ""
+	}
+}
+
+func defaultReviewMaster(ctx context.Context, configured map[string]settings.ReviewConfig) string {
+	for _, preferred := range []string{string(agent.AgentNameClaudeCode), string(agent.AgentNameCodex), string(agent.AgentNameGemini)} {
+		if _, ok := configured[preferred]; ok && agentSupportsTextGeneration(ctx, preferred) {
+			return preferred
+		}
+	}
+	names := make([]string, 0, len(configured))
+	for name := range configured {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if agentSupportsTextGeneration(ctx, name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func agentSupportsTextGeneration(_ context.Context, name string) bool {
+	ag, err := agent.Get(types.AgentName(name))
+	if err != nil {
+		return false
+	}
+	_, ok := agent.AsTextGenerator(ag)
+	return ok
+}
+
+func saveDefaultReviewProfile(ctx context.Context, profileName string, profile settings.ReviewProfileConfig) error {
+	prefs, err := settings.LoadClonePreferences(ctx)
+	if err != nil {
+		return fmt.Errorf("load review preferences before save: %w", err)
+	}
+	if prefs == nil {
+		prefs = &settings.ClonePreferences{}
+	}
+	if prefs.ReviewProfiles == nil {
+		prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{}
+	}
+	prefs.ReviewProfiles[profileName] = profile
+	if prefs.ReviewDefaultProfile == "" {
+		prefs.ReviewDefaultProfile = profileName
+	}
+	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+		return fmt.Errorf("save review preferences: %w", err)
+	}
+	return nil
 }
