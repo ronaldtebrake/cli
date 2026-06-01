@@ -6,4 +6,4 @@ set -eu
 export GOBIN=${GOPATH:-$HOME/go}/bin
 echo "NOTE: we're overriding \$GOBIN: $GOBIN" 1>&2
 
-go install ./cmd/entire
+go install ./cmd/entire ./cmd/git-remote-entire
