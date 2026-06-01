@@ -1207,3 +1207,142 @@ func TestInfoRefsWarmAndColdBothFailSurfacesBoth(t *testing.T) {
 	assert.Contains(t, msg, "all 2 nodes failed")
 	assert.Contains(t, msg, "entry domain")
 }
+
+// --- Off-cluster credential-leak protection -------------------------------
+//
+// These tests cover the trust boundary that keeps the repo-scoped bearer
+// token from reaching hosts outside the cluster the user addressed. The
+// attack: a malicious entry domain (or a poisoned nodes.json) advertises
+// replica/Location URLs on attacker-controlled hosts; without scoping, the
+// helper would POST git-upload-pack to them with the core-minted JWT
+// attached. httptest servers all bind 127.0.0.1, so off-cluster hosts are
+// fabricated URL strings — the point is precisely that they are never
+// dialed.
+
+const offClusterReplica = "https://attacker-log-collector.example.com"
+
+func TestSetAuthOrErrorRefusesOutOfClusterHost(t *testing.T) {
+	t.Parallel()
+	var attached int
+	p := &Proxy{
+		clusterHost: "cluster.example",
+		setAuth: func(req *http.Request) error {
+			attached++
+			req.Header.Set("Authorization", "Bearer scoped-token")
+			return nil
+		},
+	}
+
+	off, err := http.NewRequestWithContext(t.Context(), http.MethodGet, offClusterReplica+"/et/alice/repo/info/refs", nil)
+	require.NoError(t, err)
+	require.Error(t, p.setAuthOrError(off), "must refuse to stamp a token onto an off-cluster request")
+	assert.Empty(t, off.Header.Get("Authorization"))
+	assert.Zero(t, attached, "SetAuth must not even be invoked for an off-cluster host")
+
+	in, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://n1.cluster.example/et/alice/repo/info/refs", nil)
+	require.NoError(t, err)
+	require.NoError(t, p.setAuthOrError(in))
+	assert.Equal(t, "Bearer scoped-token", in.Header.Get("Authorization"))
+}
+
+func TestNewFiltersOutOfClusterCachedNodes(t *testing.T) {
+	t.Parallel()
+	p := New(Config{
+		Nodes: replicas.NodeConfig{
+			InitialNodes: []string{"https://n1.cluster.example", offClusterReplica, "https://n2.cluster.example"},
+			EntryURL:     "https://cluster.example",
+			ClusterHost:  "cluster.example",
+			RepoPath:     "alice/repo",
+		},
+		Path: "/et/alice/repo",
+	})
+	assert.Equal(t, []string{"https://n1.cluster.example", "https://n2.cluster.example"}, p.nodes,
+		"poisoned cache entry pointing off-cluster must be dropped on load")
+}
+
+func TestRefreshReplicasDropsOutOfClusterReplicas(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+
+	const cluster = "cluster.example"
+	const repo = "alice/repo"
+
+	u, err := url.Parse("https://n1.cluster.example/et/alice/repo/info/refs?service=git-upload-pack")
+	require.NoError(t, err)
+	resp := &http.Response{
+		Request: &http.Request{URL: u},
+		Header: http.Header{
+			"X-Entire-Replicas": {buildReplicasHeader("https://n1.cluster.example", offClusterReplica, "https://canarytokens.com/foo")},
+		},
+	}
+	p := &Proxy{clusterHost: cluster, cacheHost: cluster, repoPath: repo}
+	p.refreshReplicas(resp)
+
+	assert.Equal(t, []string{"https://n1.cluster.example"}, p.nodes,
+		"off-cluster entries from X-Entire-Replicas must be dropped")
+	assert.Equal(t, []string{"https://n1.cluster.example"}, replicas.LoadFresh(cluster, repo),
+		"only in-cluster replicas may be persisted to disk")
+}
+
+func TestRefreshReplicasResponseURLFallbackIgnoresOutOfClusterHost(t *testing.T) {
+	t.Parallel()
+	// Cold start, no header, but the request landed on an off-cluster host
+	// (e.g. an auth-stripped redirect). It must not become the node set.
+	u, err := url.Parse(offClusterReplica + "/et/alice/repo/info/refs")
+	require.NoError(t, err)
+	resp := &http.Response{Request: &http.Request{URL: u}, Header: http.Header{}}
+	p := &Proxy{clusterHost: "cluster.example"}
+	p.refreshReplicas(resp)
+	assert.Empty(t, p.nodes, "off-cluster responder must not be adopted as the node set")
+}
+
+func TestColdPathDropsOutOfClusterReplicasFromHeader(t *testing.T) {
+	t.Parallel()
+	var aliveURL string
+	alive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Entire-Replicas", buildReplicasHeader(aliveURL))
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "refs from in-cluster replica")
+	}))
+	defer alive.Close()
+	aliveURL = alive.URL
+
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Advertise a legit in-cluster replica next to an attacker host.
+		w.Header().Set("X-Entire-Replicas", buildReplicasHeader(aliveURL, offClusterReplica))
+		http.Redirect(w, r, aliveURL+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+	}))
+	defer entry.Close()
+
+	// clusterHost = 127.0.0.1 makes the httptest hosts in-cluster while the
+	// fabricated attacker host stays out.
+	p := proxyWithClient(nil, "/et/alice/repo", entry.URL, "127.0.0.1", entry.Client())
+
+	body, err := p.InfoRefs(context.Background(), "git-upload-pack")
+	require.NoError(t, err)
+	got, err := io.ReadAll(body)
+	require.NoError(t, err)
+	_ = body.Close()
+
+	assert.Equal(t, "refs from in-cluster replica", string(got))
+	assert.NotContains(t, p.nodes, offClusterReplica, "attacker replica must never enter the node set")
+}
+
+func TestColdPathRefusesOutOfClusterLocationSalvage(t *testing.T) {
+	t.Parallel()
+	deadReplica := closedServerURL() // in-cluster (127.0.0.1) but unreachable
+
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The only replica is dead, forcing the salvage path; Location points
+		// off-cluster, which the salvage path must refuse rather than dial
+		// with the token attached.
+		w.Header().Set("X-Entire-Replicas", buildReplicasHeader(deadReplica))
+		http.Redirect(w, r, offClusterReplica+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+	}))
+	defer entry.Close()
+
+	p := proxyWithClient(nil, "/et/alice/repo", entry.URL, "127.0.0.1", entry.Client())
+
+	_, err := p.InfoRefs(context.Background(), "git-upload-pack")
+	require.Error(t, err, "must not salvage to an off-cluster Location")
+}

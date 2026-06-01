@@ -119,7 +119,7 @@ func (p *Proxy) coldInfoRefs(ctx context.Context, suffix string, setHeaders func
 		return p.handleInfoRefsResponse(resp)
 	}
 
-	rs := discovery.ParseReplicas(resp.Header.Get("X-Entire-Replicas"))
+	rs := p.filterReplicas(discovery.ParseReplicas(resp.Header.Get("X-Entire-Replicas")))
 	location := resp.Header.Get("Location")
 	_ = resp.Body.Close()
 
@@ -141,6 +141,13 @@ func (p *Proxy) coldInfoRefs(ctx context.Context, suffix string, setHeaders func
 	}
 
 	if location == "" {
+		return nil, fmt.Errorf("fetching info/refs after entry-domain redirect: %w", err)
+	}
+	// The Location target is server-controlled. Salvaging the request means
+	// dialing it with the token attached, so it must be in-cluster — an
+	// off-cluster Location is an exfiltration target, not a fallback node.
+	if !p.replicaInCluster(location) {
+		debuglog.Printf("all advertised replicas failed and redirect Location %s is out-of-cluster; refusing credentialed fallback", location)
 		return nil, fmt.Errorf("fetching info/refs after entry-domain redirect: %w", err)
 	}
 	debuglog.Printf("all advertised replicas failed; trying redirect Location %s as last-ditch fallback: %v", location, err)
