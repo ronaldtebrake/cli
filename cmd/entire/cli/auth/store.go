@@ -158,9 +158,12 @@ func LookupCurrentToken() (string, error) {
 }
 
 // keyringBackend persists tokens in the OS keyring. Every operation is
-// wrapped in callKeyringWithTimeout because the underlying D-Bus /
-// Secret Service call can block indefinitely on headless Linux hosts
-// where no provider (gnome-keyring, kwalletd, KeePassXC, …) is running.
+// wrapped in callKeyringWithContext because the underlying keyring call
+// can block indefinitely when no provider is reachable — most commonly
+// a headless Linux host with no Secret Service running (gnome-keyring,
+// kwalletd, KeePassXC), but the same hang shape exists on macOS when
+// the Keychain prompt is suppressed or on Windows when Credential
+// Manager misbehaves.
 type keyringBackend struct{}
 
 func (keyringBackend) save(service, key, value string) error {
