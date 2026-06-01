@@ -14,6 +14,8 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/entireio/auth-go v0.4.0
+	github.com/go-faster/errors v0.7.1
+	github.com/go-faster/jx v1.2.0
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.1.0.20260519112248-0095b064a6c6
 	github.com/go-git/go-git/v6 v6.0.0-alpha.4.0.20260521161150-3af8745c291b
 	github.com/go-git/x/plugin/objectsigner/auto v0.1.0
@@ -21,6 +23,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/muesli/termenv v0.16.0
+	github.com/ogen-go/ogen v1.20.3
 	github.com/posthog/posthog-go v1.13.1
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
@@ -69,9 +72,12 @@ require (
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/fatih/semgroup v1.2.0 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
+	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/gitleaks/go-gitdiff v0.9.1 // indirect
+	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/go-git/gcfg/v2 v2.0.2 // indirect
 	github.com/go-git/x/plugin/objectsigner/gpg v0.1.0 // indirect
 	github.com/go-git/x/plugin/objectsigner/ssh v0.1.0 // indirect
@@ -115,6 +121,8 @@ require (
 	github.com/rs/zerolog v1.33.0 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/githubv4 v0.0.0-20260209031235-2402fdf4a9ed // indirect
 	github.com/shurcooL/graphql v0.0.0-20240915155400-7ee5256398cf // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
@@ -128,6 +136,7 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
@@ -138,4 +147,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

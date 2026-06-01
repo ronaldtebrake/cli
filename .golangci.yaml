@@ -82,6 +82,14 @@ linters:
     errcheck:
       check-type-assertions: true
       check-blank: true
+    wrapcheck:
+      # Errors from the generated control-plane client are mapped centrally
+      # by renderCoreError (cmd/entire/cli/corecmd.go), which extracts the
+      # RFC 7807 problem detail via errors.As. Per-call-site wrapping would
+      # only be unwrapped again, so the command closures return coreapi
+      # errors verbatim.
+      ignore-package-globs:
+        - github.com/entireio/cli/internal/coreapi
     forbidigo:
       analyze-types: true
       forbid:
