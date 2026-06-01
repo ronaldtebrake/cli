@@ -178,10 +178,8 @@ func TestNewCommittedReadStore_SelectsRefByVersion(t *testing.T) {
 	assert.Equal(t, customRef(), NewCommittedReadStore(context.Background(), repo).CommittedReadRef())
 }
 
-// TestNewCommittedReadStore_V11Reads checks that v1.1 mode always reads through
-// the custom ref (never falling back to v1): it finds a checkpoint when the ref
-// can be synced to v1, and finds nothing when it cannot.
-//
+// v1.1 reads always go through the custom ref (no v1 fallback): a checkpoint is
+// found when the ref can be synced to v1, and not found when it can't.
 // Not parallel: subtests use t.Chdir().
 func TestNewCommittedReadStore_V11Reads(t *testing.T) {
 	tests := []struct {
@@ -211,6 +209,7 @@ func TestNewCommittedReadStore_V11Reads(t *testing.T) {
 			writeV1Checkpoint(t, repo, cpID)
 			tt.mutate(t, dir, repo)
 
+			SyncCommittedReadRef(context.Background(), repo)
 			store := NewCommittedReadStore(context.Background(), repo)
 			require.Equal(t, customRef(), store.CommittedReadRef(), "must read the custom ref, not fall back to v1")
 

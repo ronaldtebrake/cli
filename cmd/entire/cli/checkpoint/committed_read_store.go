@@ -13,22 +13,30 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
-// NewCommittedReadStore returns a GitStore for reading committed checkpoints.
-// With checkpoints_version 1.1 it binds reads to the local-only v1.1 custom ref
-// (never falling back to v1) after best-effort syncing it to the v1 tip. Writes
-// still use NewGitStore (v1); only `entire explain` reads through this today.
+// NewCommittedReadStore returns a GitStore for reading committed checkpoints:
+// the local-only v1.1 custom ref when checkpoints_version 1.1 is enabled (no v1
+// fallback), else the v1 branch. Pure — callers run SyncCommittedReadRef first
+// to bring the v1.1 ref up to date.
 func NewCommittedReadStore(ctx context.Context, repo *git.Repository) *GitStore {
 	if !settings.MirrorsToV1CustomRef(ctx) {
 		return NewGitStore(repo)
 	}
-	syncV1CustomRefForRead(ctx, repo)
 	return NewGitStoreWithRef(repo, plumbing.ReferenceName(paths.MetadataRefName))
 }
 
-// syncV1CustomRefForRead best-effort advances the v1.1 custom ref to the v1 tip
-// (local v1 branch, or origin's on a fresh clone): seed when missing, advance
-// when an ancestor, no-op when equal, leave a diverged ref as-is. Failures are
-// logged, not returned — reads proceed against the ref regardless.
+// SyncCommittedReadRef advances the v1.1 custom ref to the v1 tip before a read,
+// a no-op unless checkpoints_version 1.1 is enabled. The ref is local-only, so a
+// git pull updates v1 but not v1.1; this keeps it current. Best-effort.
+func SyncCommittedReadRef(ctx context.Context, repo *git.Repository) {
+	if !settings.MirrorsToV1CustomRef(ctx) {
+		return
+	}
+	syncV1CustomRefForRead(ctx, repo)
+}
+
+// syncV1CustomRefForRead advances the v1.1 custom ref to the v1 tip (local v1
+// branch, or origin's on a fresh clone): seed when missing, advance when an
+// ancestor, no-op when equal, leave a diverged ref as-is. Failures are logged.
 func syncV1CustomRefForRead(ctx context.Context, repo *git.Repository) {
 	v1Hash, ok := resolveV1Tip(repo)
 	if !ok {

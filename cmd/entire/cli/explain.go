@@ -684,6 +684,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		}
 		// Reload to get the updated summary.
 		stopLoad = startSpinner(errW, fmt.Sprintf("Reloading checkpoint %s", fullCheckpointID))
+		checkpoint.SyncCommittedReadRef(ctx, lookup.repo)
 		lookup.store = checkpoint.NewCommittedReadStore(ctx, lookup.repo)
 		lookup.store.SetBlobFetcher(FetchBlobsByHash)
 		content, err = checkpoint.ReadLatestSessionContent(ctx, lookup.store, fullCheckpointID, summary)
@@ -848,6 +849,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	// `git fetch` fails against partial-clone repos with "did not send all
 	// necessary objects"). Falls back to a full metadata-branch fetch if
 	// fetch-pack also can't reach the blobs.
+	checkpoint.SyncCommittedReadRef(ctx, repo)
 	store := checkpoint.NewCommittedReadStore(ctx, repo)
 	store.SetBlobFetcher(FetchBlobsByHash)
 
@@ -1996,6 +1998,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	// Warn (once per process) if metadata branches are disconnected
 	strategy.WarnIfMetadataDisconnected()
 
+	checkpoint.SyncCommittedReadRef(ctx, repo)
 	store := checkpoint.NewCommittedReadStore(ctx, repo)
 
 	// Get all committed checkpoints for lookup.
