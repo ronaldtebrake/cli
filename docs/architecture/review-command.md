@@ -45,7 +45,8 @@ Review profiles are configured in clone-local preferences (or settings) under `r
       "task": "Review this change for correctness, regressions, tests, and maintainability.",
       "agents": {
         "claude-code": {"skills": ["/review"]},
-        "codex": {"skills": ["/review"]}
+        "codex": {"skills": ["/review"]},
+        "pi": {"model": "anthropic/claude-sonnet", "prompt": "Review the change according to the profile task."}
       },
       "master": "claude-code"
     },
@@ -62,14 +63,14 @@ Review profiles are configured in clone-local preferences (or settings) under `r
 }
 ```
 
-`entire review --models` lists the models each review-runner agent advertises via the optional `agent.ModelLister` capability (`cmd/entire/cli/agent/model_lister.go`). Agents whose CLI has no enumeration command (claude-code, codex, gemini) return a curated, non-exhaustive list of common models/aliases; the `--model` flag still forwards any value the agent CLI accepts. Agents whose CLI can enumerate live (e.g. Pi's `pi --list-models`) may implement `ListModels` by shelling out.
+`entire review --models` lists the models each review-runner agent advertises via the optional `agent.ModelLister` capability (`cmd/entire/cli/agent/model_lister.go`). claude-code returns a curated list of real aliases (opus/sonnet/haiku); Pi enumerates live by shelling out to `pi --list-models`. Agents whose CLI has no enumeration command (codex, gemini) do not implement `ListModels`, so the picker offers only Default + Custom. The `--model` flag still forwards any value the agent CLI accepts.
 
-The profile-level `task` is the shared work item. Each `agents` map entry is a worker id. For simple entries the worker id is also the agent name; to run the same agent more than once, use aliases and set `agent` plus `model`. Per-worker `skills`, `prompt`, and `model` adapt that task to agent-specific mechanics. Settings fields: `EntireSettings.ReviewProfiles` and `EntireSettings.ReviewDefaultProfile` in `cmd/entire/cli/settings/settings.go`. The old top-level `review` map is no longer used by `entire review`.
+The profile-level `task` is the shared work item. Each `agents` map entry is a worker id. For simple entries the worker id is also the agent name; to run the same agent more than once, use aliases and set `agent` plus `model`. Per-worker `skills`, `prompt`, and `model` adapt that task to agent-specific mechanics. Pi is a prompt/model-driven worker (`pi --mode json --print [--model ...]`) rather than a slash-command worker. Settings fields: `EntireSettings.ReviewProfiles` and `EntireSettings.ReviewDefaultProfile` in `cmd/entire/cli/settings/settings.go`. The old top-level `review` map is no longer used by `entire review`.
 
 ## How It Works (env-var handshake)
 
 1. `entire review` selects a profile (positional/`--profile` → `review_default_profile` → `general` → only configured profile). If no profiles exist, it runs simple guided setup in an interactive terminal and asks before starting agents, or writes an opinionated clone-local default profile in non-interactive mode. It then composes worker prompts via `review.ComposeReviewPrompt` and computes scope (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
-2. **For agents with review-runner adapters** (claude-code, codex, gemini-cli): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
+2. **For agents with review-runner adapters** (claude-code, codex, gemini-cli, pi): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
 3. **For agents without review-runner adapters yet**: `RunMarkerFallback` writes a `PendingReviewMarker` file and prints guidance — the user opens the agent themselves and runs the skills. This is an adapter backlog path, not a statement that the agent cannot be launched headlessly.
 4. Worker agents run the selected profile's task; each session ends naturally.
 5. In multi-worker profiles, the configured master agent receives all worker reports and produces one critical final report. The master prompt asks it to reject unsupported claims, resolve contradictions, merge duplicates, and prioritize evidence-backed findings.
@@ -133,7 +134,7 @@ The redesign eliminated several constructs from the prior implementation. None s
 - `cmd/entire/cli/review/synthesis_sink.go` / `synthesis_prompt.go` — profile master adjudication (runs automatically for multi-worker profiles) plus the legacy opt-in synthesis path
 - `cmd/entire/cli/review/types/{reviewer,sink,template}.go` — interface contracts (CU2 + CU4 + CU5b)
 - `cmd/entire/cli/review/env.go` — `ENTIRE_REVIEW_*` constants + `EncodeSkills`/`DecodeSkills` + `AppendReviewEnv`
-- `cmd/entire/cli/agent/{claudecode,codex,geminicli}/reviewer.go` — per-agent `AgentReviewer` implementations (claude-code, codex, gemini-cli)
+- `cmd/entire/cli/agent/{claudecode,codex,geminicli,pi}/reviewer.go` — per-agent `AgentReviewer` implementations (claude-code, codex, gemini-cli, pi)
 - `cmd/entire/cli/agent/claudecode/discovery.go` — skill discovery + `pickLatestVersion` plugin-cache dedupe
 - `cmd/entire/cli/lifecycle.go` — `adoptReviewEnv` reads `ENTIRE_REVIEW_*` from process env; replaces marker-file adoption
 - `cmd/entire/cli/review_bridge.go` / `review_helpers.go` — bridge code in `cli` package for cycle-bound functions (`headHasReviewCheckpoint`, `launchableReviewerFor`, `newReviewAttachCmd`)

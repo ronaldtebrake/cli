@@ -370,6 +370,59 @@ func TestBuildLocalReviewManifestFromSummary_GroupsAgentSessionsAndAggregate(t *
 	}
 }
 
+func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameAgentByModel(t *testing.T) {
+	started := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	summary := reviewtypes.RunSummary{
+		StartedAt: started,
+		AgentRuns: []reviewtypes.AgentRun{
+			{
+				Name:      "pi-sonnet",
+				AgentName: "pi",
+				Model:     "anthropic/claude-sonnet:high",
+				Status:    reviewtypes.AgentStatusSucceeded,
+				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "Sonnet finding"}},
+			},
+			{
+				Name:      "pi-opus",
+				AgentName: "pi",
+				Model:     "opus",
+				Status:    reviewtypes.AgentStatusSucceeded,
+				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "Opus finding"}},
+			},
+		},
+	}
+	states := []*session.State{
+		{
+			SessionID:    "opus-session",
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    started.Add(time.Second),
+			ModelName:    "claude-opus-4-1",
+		},
+		{
+			SessionID:    "sonnet-session",
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    started.Add(2 * time.Second),
+			ModelName:    "claude-sonnet-4-5",
+		},
+	}
+
+	manifest := buildLocalReviewManifestFromSummary("/repo", "abc123", summary, states, "")
+
+	if len(manifest.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2: %#v", len(manifest.Sources), manifest.Sources)
+	}
+	if manifest.Sources[0].SessionID != "sonnet-session" || manifest.Sources[0].Label != "pi-sonnet" {
+		t.Fatalf("sonnet source mismatch: %#v", manifest.Sources[0])
+	}
+	if manifest.Sources[1].SessionID != "opus-session" || manifest.Sources[1].Label != "pi-opus" {
+		t.Fatalf("opus source mismatch: %#v", manifest.Sources[1])
+	}
+}
+
 func TestWarnManifestNotWritten_PrintsReasonAndDiagnosticHints(t *testing.T) {
 	var b strings.Builder
 

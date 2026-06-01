@@ -2,7 +2,7 @@
 //
 // cmd.go provides NewCommand(), the cobra entry point for `entire review`.
 // It routes through the new AgentReviewer / Sink / Run architecture for
-// agents with review-runner adapters (claude-code, codex, gemini) and falls
+// agents with review-runner adapters (claude-code, codex, gemini, pi) and falls
 // back to RunMarkerFallback for agents that are not yet wired into that review
 // runner contract.
 package review
