@@ -206,3 +206,14 @@ func AsSubagentAwareExtractor(ag Agent) (SubagentAwareExtractor, bool) {
 	}
 	return sae, true
 }
+
+// AsSkillEventExtractor returns the agent as SkillEventExtractor if it implements
+// the interface. Skill-event extraction is currently built-in only; external
+// agents do not expose this optional interface through declared capabilities.
+func AsSkillEventExtractor(ag Agent) (SkillEventExtractor, bool) {
+	if ag == nil {
+		return nil, false
+	}
+	see, ok := ag.(SkillEventExtractor)
+	return see, ok
+}

@@ -235,6 +235,11 @@ type State struct {
 	// Token usage tracking (accumulated across all checkpoints in this session)
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
 
+	// SkillEvents records explicit native skill signals observed during this session.
+	// Stored as sidecar metadata so consumers can collapse skill-related transcript events
+	// without mutating the raw agent transcript.
+	SkillEvents []agent.SkillEvent `json:"skill_events,omitempty"`
+
 	// Hook-provided session metrics (for agents like Cursor that report via hooks)
 	SessionDurationMs int64 `json:"session_duration_ms,omitempty"`
 	SessionTurnCount  int   `json:"session_turn_count,omitempty"`

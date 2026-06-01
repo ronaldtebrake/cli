@@ -282,6 +282,9 @@ type WriteCommittedOptions struct {
 	// TokenUsage contains the token usage for this checkpoint
 	TokenUsage *agent.TokenUsage
 
+	// SkillEvents records explicit native skill signals observed in this session.
+	SkillEvents []agent.SkillEvent
+
 	// SessionMetrics contains hook-provided session metrics (duration, turns, context usage)
 	SessionMetrics *SessionMetrics
 
@@ -362,6 +365,9 @@ type UpdateCommittedOptions struct {
 
 	// Agent identifies the agent type (needed for transcript chunking)
 	Agent types.AgentType
+
+	// SkillEvents replaces the session metadata skill_events when non-empty.
+	SkillEvents []agent.SkillEvent
 
 	// PrecomputedBlobs, if non-nil, provides chunk blob hashes and the
 	// content-hash blob hash computed once for this transcript. When set,
@@ -486,6 +492,11 @@ type CommittedMetadata struct {
 
 	// Token usage for this checkpoint
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
+
+	// SkillEvents records explicit native skill signals observed in this session.
+	// Consumers use these anchors to collapse skill-related raw transcript events.
+	SkillEventsVersion int                `json:"skill_events_version,omitempty"`
+	SkillEvents        []agent.SkillEvent `json:"skill_events,omitempty"`
 
 	// SessionMetrics contains hook-provided session metrics (duration, turns, context usage).
 	// Populated for agents that provide these metrics via hooks (e.g., Cursor).

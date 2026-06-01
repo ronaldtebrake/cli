@@ -451,6 +451,8 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 		CheckpointTranscriptStart:   opts.CheckpointTranscriptStart,
 		TranscriptLinesAtStart:      opts.CheckpointTranscriptStart, // Deprecated: kept for backward compat
 		TokenUsage:                  opts.TokenUsage,
+		SkillEventsVersion:          skillEventsVersion(opts.SkillEvents),
+		SkillEvents:                 opts.SkillEvents,
 		SessionMetrics:              opts.SessionMetrics,
 		InitialAttribution:          opts.InitialAttribution,
 		PromptAttributions:          opts.PromptAttributionsJSON,
@@ -666,6 +668,13 @@ func checkpointCreatedAt(opts WriteCommittedOptions) time.Time {
 		return time.Now().UTC()
 	}
 	return opts.CreatedAt.UTC()
+}
+
+func skillEventsVersion(events []agent.SkillEvent) int {
+	if len(events) == 0 {
+		return 0
+	}
+	return 1
 }
 
 // readJSONFromBlob reads JSON from a blob hash and decodes it to the given type.
@@ -1526,6 +1535,12 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 		}
 	}
 
+	if len(opts.SkillEvents) > 0 {
+		if err := s.replaceSkillEvents(opts.SkillEvents, sessionPath, entries); err != nil {
+			return fmt.Errorf("failed to replace skill events: %w", err)
+		}
+	}
+
 	// Build checkpoint subtree and splice into root (O(depth) tree surgery)
 	newTreeHash, err := s.spliceCheckpointSubtree(ctx, rootTreeHash, opts.CheckpointID, basePath, entries)
 	if err != nil {
@@ -1549,6 +1564,36 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 		return fmt.Errorf("failed to set branch reference: %w", err)
 	}
 
+	return nil
+}
+
+func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPath string, entries map[string]object.TreeEntry) error {
+	metadataPath := sessionPath + paths.MetadataFileName
+	entry, exists := entries[metadataPath]
+	if !exists {
+		return fmt.Errorf("session metadata not found at %s", metadataPath)
+	}
+
+	metadata, err := s.readMetadataFromBlob(entry.Hash)
+	if err != nil {
+		return fmt.Errorf("read session metadata: %w", err)
+	}
+	metadata.SkillEventsVersion = skillEventsVersion(skillEvents)
+	metadata.SkillEvents = skillEvents
+
+	metadataJSON, err := jsonutil.MarshalIndentWithNewline(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal session metadata: %w", err)
+	}
+	metadataHash, err := CreateBlobFromContent(s.repo, metadataJSON)
+	if err != nil {
+		return err
+	}
+	entries[metadataPath] = object.TreeEntry{
+		Name: metadataPath,
+		Mode: filemode.Regular,
+		Hash: metadataHash,
+	}
 	return nil
 }
 

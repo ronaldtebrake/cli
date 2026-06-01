@@ -2744,6 +2744,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		prompts = readPromptsFromFilesystem(ctx, state.SessionID)
 	}
 
+	ag, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil for unknown agent types; ExtractSkillEvents handles nil
+	skillEvents := mergeSkillEvents(state.SkillEvents, withSkillEventTurnID(agent.ExtractSkillEvents(ctx, ag, fullTranscript, 0), state.TurnID))
+
 	// Redact secrets before writing. Checkpoint store methods require
 	// pre-redacted in-memory transcript content from callers. The live
 	// transcript on disk is still treated as raw/untrusted input, so redact it
@@ -2789,6 +2792,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			Transcript:       redactedTranscript,
 			Prompts:          prompts,
 			Agent:            state.AgentType,
+			SkillEvents:      skillEvents,
 			PrecomputedBlobs: precomputed,
 		}
 
