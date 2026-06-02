@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-06-02
+
+### Fixed
+
+- macOS release binaries are Developer ID signed and notarized again. Adding the `git-remote-entire` binary in 0.7.0 gave the release builds explicit ids that no longer matched the notarization step's default filter, so 0.7.0 shipped ad-hoc-signed binaries that macOS Gatekeeper refused to run — surfacing as Homebrew shell-completion errors and `killed` on launch ([#1324](https://github.com/entireio/cli/pull/1324))
+
+### Housekeeping
+
+- The release workflow now fails closed when any macOS binary is not Developer ID signed, so an un-notarized build can no longer ship silently ([#1324](https://github.com/entireio/cli/pull/1324))
+
 ## [0.7.0] - 2026-06-02
 
 ### Added
