@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -217,4 +219,92 @@ func TestMirrorAdvertisesHead_ReusesConnection(t *testing.T) {
 	require.Equal(t, int64(1), newConns.Load(),
 		"expected the drained body to let all %d probes share one connection; got %d new connections (body not drained to EOF?)",
 		probes, newConns.Load())
+}
+
+// pktLine encodes s as a git pkt-line (4-hex length prefix including the
+// prefix itself), mirroring what a smart-HTTP server writes.
+func pktLine(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+// uploadPackAdvertisement returns a minimal but valid git-upload-pack
+// info/refs body: the "# service" banner, a flush, a HEAD line carrying the
+// symref capability, a refs/heads/main line, and a trailing flush. It decodes
+// to an AdvRefs whose HEAD resolves to refs/heads/main.
+func uploadPackAdvertisement() string {
+	const sha = "d9a69831082341eab799c062e10ad28b3204c08a"
+	return pktLine("# service=git-upload-pack\n") +
+		"0000" +
+		pktLine(sha+" HEAD\x00symref=HEAD:refs/heads/main\n") +
+		pktLine(sha+" refs/heads/main\n") +
+		"0000"
+}
+
+// TestMirrorAdvertisesHead_FollowsNodeRedirect is the regression test for the
+// infinite cloning-dots bug. The cluster front door 307-redirects info/refs to
+// the node holding the mirror; git follows that to clone. The probe used to
+// refuse all redirects (http.ErrUseLastResponse), so it saw the 307 as "not
+// 200, not ready" and printed cloning-dots forever even after the clone had
+// landed. With checkProbeRedirect the probe follows same-host redirects and
+// reaches the advertisement, so it reports ready.
+func TestMirrorAdvertisesHead_FollowsNodeRedirect(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/node/info/refs" {
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			_, _ = w.Write([]byte(uploadPackAdvertisement())) //nolint:errcheck // test server write
+			return
+		}
+		// Front door: route to the backing node on the same host, the way the
+		// real cluster front door 307s to bishop.<cluster-host>.
+		http.Redirect(w, r, "/node/info/refs", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	// srv.Client() trusts the test cert; layer on the production redirect
+	// policy so we exercise the real follow path.
+	client := srv.Client()
+	client.CheckRedirect = checkProbeRedirect
+
+	ready, status := mirrorAdvertisesHead(context.Background(), client, srv.URL+"/info/refs", "tok")
+	require.True(t, ready, "probe should follow the node redirect and see HEAD")
+	require.Equal(t, http.StatusOK, status)
+}
+
+func TestCheckProbeRedirect(t *testing.T) {
+	t.Parallel()
+
+	orig := mustReq(t, "https://aws-us-east-2.entire.io/gh/o/r/info/refs")
+	tests := []struct {
+		name    string
+		target  string
+		via     int
+		wantErr bool
+	}{
+		{name: "same host", target: "https://aws-us-east-2.entire.io/node/info/refs", via: 1},
+		{name: "subdomain node", target: "https://bishop.aws-us-east-2.entire.io/gh/o/r/info/refs", via: 1},
+		{name: "cross host leaks token", target: "https://evil.example.com/info/refs", via: 1, wantErr: true},
+		{name: "sibling suffix trick", target: "https://aws-us-east-2.entire.io.evil.com/x", via: 1, wantErr: true},
+		{name: "non-https", target: "http://bishop.aws-us-east-2.entire.io/x", via: 1, wantErr: true},
+		{name: "too many hops", target: "https://bishop.aws-us-east-2.entire.io/x", via: maxProbeRedirects, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			via := make([]*http.Request, tt.via)
+			via[0] = orig
+			err := checkProbeRedirect(mustReq(t, tt.target), via)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func mustReq(t *testing.T, rawURL string) *http.Request {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	return &http.Request{URL: u}
 }

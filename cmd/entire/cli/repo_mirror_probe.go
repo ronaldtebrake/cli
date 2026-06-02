@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 )
 
 // gitHubHTTPSRe / gitHubSSHRe / gitHubBareRe parse the GitHub URL shapes
@@ -98,12 +99,35 @@ var probeClient = &http.Client{
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 	},
-	// info/refs is a single GET; a redirect would indicate misconfiguration
-	// (e.g. cluster host fronted by something that 30x's to a login page).
-	// Surface it as an error rather than silently following.
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
+	// The cluster front door 307-redirects info/refs to the node holding the
+	// mirror (e.g. bishop.<cluster-host>); git follows these to clone, so the
+	// probe must too. Refusing them (the old http.ErrUseLastResponse) made
+	// mirrorAdvertisesHead read the 307 as "not 200, not ready" and spin the
+	// cloning-dots forever even after the clone had landed.
+	CheckRedirect: checkProbeRedirect,
+}
+
+// maxProbeRedirects bounds redirect-following during the clone probe.
+// One front-door→node hop is expected; the cap is headroom against a
+// misconfigured loop, not snugness.
+const maxProbeRedirects = 5
+
+// checkProbeRedirect confines the clone probe's redirect-following to the
+// cluster trust domain, over https. The 307 the front door issues carries the
+// pull token in the Location userinfo; following it out of the cluster would
+// hand that token to whoever the redirect named. discovery.HostInCluster is
+// the same boundary the entire:// transport enforces on its own redirects.
+func checkProbeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxProbeRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxProbeRedirects)
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing non-https redirect to %s", req.URL.Redacted())
+	}
+	if !discovery.HostInCluster(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return fmt.Errorf("refusing cross-host redirect to %s", req.URL.Redacted())
+	}
+	return nil
 }
 
 // waitForMirrorClone blocks until the mirror at /gh/<owner>/<repo> on
