@@ -559,6 +559,8 @@ func mirrorMetadataBranchToV11Ref(t *testing.T, repo *git.Repository) {
 func enableResumeV11(t *testing.T, repoRoot string) {
 	t.Helper()
 
+	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(repoRoot, "claude-projects"))
+
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".entire"), 0o755); err != nil {
 		t.Fatalf("create settings dir: %v", err)
 	}
@@ -715,7 +717,6 @@ func TestResolveLatestCheckpointUsesV1Checkpoint(t *testing.T) {
 func TestResumeFromCurrentBranch_UsesV11MetadataOnly(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
-	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(tmpDir, "claude-projects"))
 
 	repo, worktree, _ := setupResumeTestRepo(t, tmpDir, false)
 	enableResumeV11(t, tmpDir)
@@ -777,7 +778,6 @@ func TestResolveLatestCheckpoint_V11DoesNotFallbackToStaleV1(t *testing.T) {
 func TestResumeFromCurrentBranch_V11DoesNotSeedFromV1(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
-	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(tmpDir, "claude-projects"))
 
 	repo, worktree, _ := setupResumeTestRepo(t, tmpDir, false)
 	enableResumeV11(t, tmpDir)
@@ -811,7 +811,6 @@ func TestResumeFromCurrentBranch_V11DoesNotSeedFromV1(t *testing.T) {
 func TestResumeFromCurrentBranch_V11SquashUsesLatestMetadataTimestamp(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
-	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(tmpDir, "claude-projects"))
 
 	repo, worktree, _ := setupResumeTestRepo(t, tmpDir, false)
 	enableResumeV11(t, tmpDir)
