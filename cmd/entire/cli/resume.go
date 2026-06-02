@@ -247,12 +247,6 @@ func resolveLatestCheckpoint(ctx context.Context, store *checkpoint.GitStore, ch
 	for _, cpID := range checkpointIDs {
 		metadata, readErr := readCheckpointInfoFromStore(ctx, store, cpID)
 		if readErr != nil {
-			logging.Debug(ctx, "checkpoint store metadata read failed",
-				slog.String("checkpoint_id", cpID.String()),
-				slog.String("error", readErr.Error()),
-			)
-		}
-		if readErr != nil {
 			logging.Debug(ctx, "resolveLatestCheckpoint: checkpoint metadata read failed",
 				slog.String("checkpoint_id", cpID.String()),
 				slog.String("error", readErr.Error()),
@@ -599,9 +593,8 @@ func promptResumeFromOlderCheckpoint() (bool, error) {
 	return confirmed, nil
 }
 
-// checkRemoteMetadata checks if checkpoint metadata exists on the remote and
-// automatically fetches it if available. When a checkpoint_remote is configured,
-// fetches from there. Otherwise falls back to origin.
+// checkRemoteMetadata checks if v1 checkpoint metadata exists on the remote and
+// fetches it if available. Custom committed read refs are local-only.
 func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
