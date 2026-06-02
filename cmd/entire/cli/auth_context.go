@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"sort"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
@@ -12,25 +11,25 @@ import (
 
 // newAuthUseCmd switches the active login context.
 //
-// For `git clone entire://…` the active context is only a fallback: a
-// cluster already bound to a context (cluster_contexts) keeps using that
-// binding, and the active context is consulted only the first time a
-// not-yet-bound cluster is resolved. Control-plane commands (auth status/
-// list/revoke, org/project/repo/grant) currently target the configured auth
-// host (ENTIRE_AUTH_BASE_URL / the default) regardless of the active
-// context's core, so switching to a context on a *different* core does not
-// yet retarget them — auth use warns when that's the case.
+// For `git clone entire://…` the active context is the preferred identity:
+// it authenticates any cluster fronted by its login server, and switching
+// here takes effect on the next operation (resolution recomputes the account
+// every time). Control-plane commands (auth status/list/revoke, org/project/
+// repo/grant) currently target the configured auth host (ENTIRE_AUTH_BASE_URL
+// / the default) regardless of the active context's login server, so
+// switching to a context on a *different* login server does not yet retarget
+// them — auth use warns when that's the case.
 func newAuthUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <context>",
 		Short: "Switch the active login context",
 		Long: "Switch the active login context.\n\n" +
-			"For `git clone entire://…` the active context is only a fallback: a cluster\n" +
-			"already bound to a context keeps using that binding, so switching here affects\n" +
-			"only clusters not yet bound (and same-core tie-breaking on first resolve).\n\n" +
+			"For `git clone entire://…` the active context is the preferred identity: it\n" +
+			"authenticates any cluster fronted by its login server, and the switch takes\n" +
+			"effect on the next operation.\n\n" +
 			"Control-plane commands (auth status/list/revoke, org/project/repo/grant) still\n" +
 			"target the configured auth host (ENTIRE_AUTH_BASE_URL / the default), so\n" +
-			"switching to a context on a different core does not retarget them yet.",
+			"switching to a context on a different login server does not retarget them yet.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := auth.SetCurrentContext(args[0]); err != nil {
@@ -63,9 +62,9 @@ func warnIfCrossCoreContext(errW io.Writer, name string) {
 			return
 		}
 		fmt.Fprintf(errW,
-			"Note: %q authenticates against %s, but control-plane commands still target %s — cross-core control-plane switching isn't supported yet.\n"+
-				"For `git clone entire://…`, a cluster already bound to another context keeps using it; the active context applies only to clusters not yet bound.\n",
-			name, c.CoreURL, authHost)
+			"Note: %q authenticates against %s, but control-plane commands still target %s — switching the active context doesn't retarget control-plane commands yet.\n"+
+				"For `git clone entire://…`, this context now authenticates any cluster fronted by %s.\n",
+			name, c.CoreURL, authHost, c.CoreURL)
 		return
 	}
 }
@@ -75,7 +74,7 @@ func warnIfCrossCoreContext(errW io.Writer, name string) {
 func newAuthContextsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "contexts",
-		Short: "List stored login contexts and cluster bindings",
+		Short: "List stored login contexts",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runAuthContexts(cmd.OutOrStdout())
@@ -88,70 +87,16 @@ func runAuthContexts(w io.Writer) error {
 	if err != nil {
 		return err //nolint:wrapcheck // already a user-facing message
 	}
-	// Print login contexts (or the empty-state hint), then always fall
-	// through to cluster bindings — a binding can outlive every context
-	// (manual edits, partial cleanup, a deleted context), and that orphan
-	// is exactly the kind of thing the audit path must surface.
 	if len(all) == 0 {
 		fmt.Fprintln(w, "No login contexts. Run 'entire login' to authenticate.")
-	} else {
-		for _, c := range all {
-			marker := " "
-			if c.Name == current {
-				marker = "*"
-			}
-			fmt.Fprintf(w, "%s %s\t%s\t%s\n", marker, c.Name, c.Handle, c.CoreURL)
-		}
-	}
-	return printClusterBindings(w)
-}
-
-// printClusterBindings lists any cluster_contexts bindings so users can
-// audit which hosts auto-authenticate git operations with a stored
-// context. A binding means future ops against that host mint
-// identity-bearing JWTs without re-checking the host's /.well-known, so an
-// unrecognised entry is worth revoking with `entire auth unbind`.
-func printClusterBindings(w io.Writer) error {
-	bindings, err := auth.ClusterBindings()
-	if err != nil {
-		return err //nolint:wrapcheck // already a user-facing message
-	}
-	if len(bindings) == 0 {
 		return nil
 	}
-	hosts := make([]string, 0, len(bindings))
-	for h := range bindings {
-		hosts = append(hosts, h)
+	for _, c := range all {
+		marker := " "
+		if c.Name == current {
+			marker = "*"
+		}
+		fmt.Fprintf(w, "%s %s\t%s\t%s\n", marker, c.Name, c.Handle, c.CoreURL)
 	}
-	sort.Strings(hosts)
-	fmt.Fprintln(w, "\nCluster bindings (these hosts auto-authenticate with a stored context):")
-	for _, h := range hosts {
-		fmt.Fprintf(w, "  %s\t-> %s\n", h, bindings[h])
-	}
-	fmt.Fprintln(w, "\nRevoke a binding you don't recognise with 'entire auth unbind <host>'.")
 	return nil
-}
-
-// newAuthUnbindCmd removes a cluster→context binding. Purely local.
-func newAuthUnbindCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unbind <cluster-host>",
-		Short: "Remove a cluster→context binding",
-		Long: "Remove the stored binding that makes git operations against a cluster host\n" +
-			"auto-authenticate with a saved context. The login context itself is left\n" +
-			"intact. List current bindings with 'entire auth contexts'.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			existed, err := auth.UnbindCluster(args[0])
-			if err != nil {
-				return err //nolint:wrapcheck // already a user-facing message
-			}
-			if !existed {
-				fmt.Fprintf(cmd.OutOrStdout(), "No cluster binding for %q.\n", args[0])
-				return nil
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed cluster binding for %q.\n", args[0])
-			return nil
-		},
-	}
 }

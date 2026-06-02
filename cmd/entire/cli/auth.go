@@ -154,7 +154,6 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newAuthRevokeCmd())
 	cmd.AddCommand(newAuthContextsCmd())
 	cmd.AddCommand(newAuthUseCmd())
-	cmd.AddCommand(newAuthUnbindCmd())
 	return cmd
 }
 

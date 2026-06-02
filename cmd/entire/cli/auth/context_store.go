@@ -30,8 +30,8 @@ func CurrentContextToken() (string, bool) {
 }
 
 // RemoveCurrentContext deletes the active context from contexts.json and
-// its keyring token, advancing current_context to whatever remains. It is
-// a no-op (returns nil) when there is no current context. Used by logout.
+// its keyring token, clearing current_context. It is a no-op (returns nil)
+// when there is no current context. Used by logout.
 func RemoveCurrentContext() error {
 	// Read-modify-write in a single locked Modify so the context we delete
 	// is exactly the one we capture the keychain slot from (separate Load +
@@ -43,11 +43,9 @@ func RemoveCurrentContext() error {
 			return false, nil
 		}
 		svc, handle = current.KeychainService, current.Handle
+		// Delete clears current_context because we're deleting the active
+		// one — logged out means logged out, no switch to another identity.
 		f.Delete(current.Name)
-		// Delete advances current_context to a surviving context; for logout
-		// that would silently re-authenticate as another account. Leave no
-		// active context — logged out means logged out.
-		f.CurrentContext = ""
 		return true, nil
 	}); err != nil {
 		return fmt.Errorf("remove current context: %w", err)
@@ -61,15 +59,14 @@ func RemoveCurrentContext() error {
 	return nil
 }
 
-// RemoveAllContexts deletes every stored context, its keyring token, and all
-// cluster bindings — a full local logout. Returns the number of contexts
-// removed. Best-effort on the keyring deletes; the contexts.json clear is
-// what makes the CLI fully logged out (no surviving binding can authenticate
-// a clone afterward).
+// RemoveAllContexts deletes every stored context and its keyring token — a
+// full local logout. Returns the number of contexts removed. Best-effort on
+// the keyring deletes; the contexts.json clear is what makes the CLI fully
+// logged out.
 func RemoveAllContexts() (int, error) {
 	var removed int
 	if err := contexts.Modify(contexts.DefaultConfigDir(), func(f *contexts.File) (bool, error) {
-		if len(f.Contexts) == 0 && f.CurrentContext == "" && len(f.ClusterContexts) == 0 {
+		if len(f.Contexts) == 0 && f.CurrentContext == "" {
 			return false, nil
 		}
 		for _, c := range f.Contexts {
@@ -80,7 +77,6 @@ func RemoveAllContexts() (int, error) {
 		}
 		f.Contexts = nil
 		f.CurrentContext = ""
-		f.ClusterContexts = nil
 		return true, nil
 	}); err != nil {
 		return 0, fmt.Errorf("remove all contexts: %w", err)
@@ -114,36 +110,6 @@ func Contexts() ([]*contexts.Context, string, error) {
 		return nil, "", fmt.Errorf("load contexts: %w", err)
 	}
 	return f.Contexts, f.CurrentContext, nil
-}
-
-// ClusterBindings returns the cluster_host → context_name map from
-// contexts.json. Surfaced by `entire auth contexts` so users can audit
-// which cluster hosts auto-authenticate git operations with a stored
-// context — and spot any they don't recognise.
-func ClusterBindings() (map[string]string, error) {
-	f, err := contexts.Load(contexts.DefaultConfigDir())
-	if err != nil {
-		return nil, fmt.Errorf("load contexts: %w", err)
-	}
-	return f.ClusterContexts, nil
-}
-
-// UnbindCluster removes the cluster→context binding for host, reporting
-// whether one existed. Used by `entire auth unbind` to revoke a binding
-// without touching the underlying login context.
-func UnbindCluster(host string) (bool, error) {
-	var existed bool
-	if err := contexts.Modify(contexts.DefaultConfigDir(), func(f *contexts.File) (bool, error) {
-		if _, ok := f.ClusterContexts[host]; !ok {
-			return false, nil
-		}
-		delete(f.ClusterContexts, host)
-		existed = true
-		return true, nil
-	}); err != nil {
-		return false, fmt.Errorf("unbind cluster: %w", err)
-	}
-	return existed, nil
 }
 
 // ContextStore wraps the legacy keyring Store so token *reads* prefer the

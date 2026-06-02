@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
-	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
 
@@ -53,113 +52,6 @@ func TestRunAuthContexts(t *testing.T) {
 	}
 	if !strings.Contains(got, "alice") {
 		t.Fatalf("listing = %q, want handle alice", got)
-	}
-}
-
-// TestRunAuthContextsSurfacesClusterBindings: cluster_contexts entries are
-// listed so a user can audit (and then revoke) any host that
-// auto-authenticates with a stored context.
-func TestRunAuthContextsSurfacesClusterBindings(t *testing.T) {
-	cfgDir := t.TempDir()
-	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
-	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
-	t.Cleanup(restore)
-
-	exp := time.Now().Add(time.Hour).Unix()
-	token := makeContextJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := auth.RecordLoginContext(token, true); err != nil {
-		t.Fatalf("RecordLoginContext: %v", err)
-	}
-	if err := contexts.BindCluster(cfgDir, "evil.example.com", "core.example.com"); err != nil {
-		t.Fatalf("BindCluster: %v", err)
-	}
-
-	var out bytes.Buffer
-	if err := runAuthContexts(&out); err != nil {
-		t.Fatalf("runAuthContexts: %v", err)
-	}
-	got := out.String()
-	if !strings.Contains(got, "Cluster bindings") {
-		t.Fatalf("listing = %q, want a 'Cluster bindings' section", got)
-	}
-	if !strings.Contains(got, "evil.example.com") || !strings.Contains(got, "auth unbind") {
-		t.Fatalf("listing = %q, want the bound host and an unbind hint", got)
-	}
-}
-
-// TestRunAuthContextsSurfacesOrphanedBinding: a binding can outlive every
-// login context (manual edit, deleted context). The audit path must still
-// list it even though there are no contexts to print.
-func TestRunAuthContextsSurfacesOrphanedBinding(t *testing.T) {
-	cfgDir := t.TempDir()
-	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
-	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
-	t.Cleanup(restore)
-
-	// Written directly: BindCluster refuses a binding to a missing context,
-	// so an orphan only arises via manual edits or partial cleanup.
-	if err := contexts.Save(cfgDir, &contexts.File{
-		ClusterContexts: map[string]string{"evil.example.com": "deleted-ctx"},
-	}); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	var out bytes.Buffer
-	if err := runAuthContexts(&out); err != nil {
-		t.Fatalf("runAuthContexts: %v", err)
-	}
-	got := out.String()
-	if !strings.Contains(got, "No login contexts") {
-		t.Fatalf("listing = %q, want the empty-state hint", got)
-	}
-	if !strings.Contains(got, "Cluster bindings") || !strings.Contains(got, "evil.example.com") {
-		t.Fatalf("listing = %q, want the orphaned binding surfaced", got)
-	}
-}
-
-// TestUnbindCluster: removing a binding leaves the underlying context
-// intact and is idempotent.
-func TestUnbindCluster(t *testing.T) {
-	cfgDir := t.TempDir()
-	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
-	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
-	t.Cleanup(restore)
-
-	exp := time.Now().Add(time.Hour).Unix()
-	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
-		t.Fatalf("RecordLoginContext: %v", err)
-	}
-	if err := contexts.BindCluster(cfgDir, "evil.example.com", "core.example.com"); err != nil {
-		t.Fatalf("BindCluster: %v", err)
-	}
-
-	existed, err := auth.UnbindCluster("evil.example.com")
-	if err != nil {
-		t.Fatalf("UnbindCluster: %v", err)
-	}
-	if !existed {
-		t.Fatal("UnbindCluster reported no binding, want existed=true")
-	}
-
-	// Binding gone, context preserved.
-	f, err := contexts.Load(cfgDir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, ok := f.ClusterContexts["evil.example.com"]; ok {
-		t.Fatal("binding still present after unbind")
-	}
-	if f.Find("core.example.com") == nil {
-		t.Fatal("login context must survive unbind")
-	}
-
-	// Idempotent: second unbind reports no binding.
-	existed, err = auth.UnbindCluster("evil.example.com")
-	if err != nil {
-		t.Fatalf("UnbindCluster (second): %v", err)
-	}
-	if existed {
-		t.Fatal("second unbind reported existed=true, want false")
 	}
 }
 

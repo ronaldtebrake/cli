@@ -5,10 +5,9 @@
 //
 //   - a list of named contexts, each pairing a core URL, principal handle,
 //     and OS-keychain slot where the access + refresh tokens live;
-//   - cluster_contexts, a map from entire-server cluster host to the
-//     context name that should authenticate ops against that cluster;
-//   - current_context, the fallback for clusters with no binding and the
-//     default for direct CLI commands not tied to a cluster.
+//   - current_context, the active login: the preferred identity for cluster
+//     operations and the default for direct CLI commands not tied to a
+//     cluster.
 //
 // File invariants: 0600, atomic temp+rename, exclusive flock under load.
 // Both CLIs share the same file so a login from either is visible to the
@@ -46,13 +45,10 @@ type Context struct {
 
 // File is the on-disk shape of contexts.json.
 type File struct {
-	// CurrentContext is the fallback for unbound clusters and the default
-	// for direct CLI commands. Empty until the first login.
+	// CurrentContext is the active login; preferred identity for cluster
+	// operations (used when its CoreURL is eligible for the target cluster)
+	// and the default for direct CLI commands. Empty until the first login.
 	CurrentContext string `json:"current_context,omitempty"`
-	// ClusterContexts maps entire-server cluster host → context name.
-	// Populated lazily after a successful op against the cluster, or
-	// explicitly via `entire-core context bind HOST NAME`.
-	ClusterContexts map[string]string `json:"cluster_contexts,omitempty"`
 	// Contexts is the list of stored credentials. Order is preserved on
 	// disk so list output stays stable across saves.
 	Contexts []*Context `json:"contexts,omitempty"`
@@ -149,25 +145,6 @@ func (f *File) Find(name string) *Context {
 	return nil
 }
 
-// Resolve picks the context to use for an entire-server cluster. The
-// binding wins when present and points at an existing context;
-// otherwise we fall back to the current context. Returns nil when
-// neither resolves.
-func (f *File) Resolve(clusterHost string) *Context {
-	if f == nil {
-		return nil
-	}
-	if name, ok := f.ClusterContexts[clusterHost]; ok && name != "" {
-		if c := f.Find(name); c != nil {
-			return c
-		}
-		// Stale binding (context deleted out from under it). Treat as
-		// no binding rather than erroring — the current_context fallback
-		// is the safer behaviour.
-	}
-	return f.Find(f.CurrentContext)
-}
-
 // Upsert replaces the context with matching Name, or appends. Sets the
 // current context when there isn't one already (first login).
 func (f *File) Upsert(c *Context) {
@@ -189,9 +166,10 @@ func (f *File) Upsert(c *Context) {
 	}
 }
 
-// Delete drops the context with the given name, plus any cluster
-// bindings that pointed at it. If the deleted context was current, the
-// current pointer advances to whatever remains (or empty).
+// Delete drops the context with the given name. If it was the current
+// context, current_context is cleared — never reassigned to another
+// context, so deleting your active login never silently switches you to a
+// different identity.
 func (f *File) Delete(name string) {
 	if f == nil || name == "" {
 		return
@@ -200,16 +178,8 @@ func (f *File) Delete(name string) {
 	if idx >= 0 {
 		f.Contexts = slices.Delete(f.Contexts, idx, idx+1)
 	}
-	for host, target := range f.ClusterContexts {
-		if target == name {
-			delete(f.ClusterContexts, host)
-		}
-	}
 	if f.CurrentContext == name {
 		f.CurrentContext = ""
-		if len(f.Contexts) > 0 {
-			f.CurrentContext = f.Contexts[0].Name
-		}
 	}
 }
 
@@ -217,7 +187,7 @@ func (f *File) Delete(name string) {
 // exclusive flock — load, mutate, write all happen with the lock held.
 // Use this for any read-modify-write sequence; calling Load and Save
 // separately releases the lock between them and races concurrent
-// writers (e.g. a parallel git push triggering BindCluster).
+// writers (e.g. a parallel login recording a context).
 //
 // fn returns (changed, err). When changed is false the file isn't
 // rewritten — useful for idempotent operations that often have
@@ -245,28 +215,6 @@ func Modify(configDir string, fn func(*File) (changed bool, err error)) error {
 		return nil
 	}
 	return writeNoLock(path, f)
-}
-
-// BindCluster sets cluster_contexts[host] = name atomically. Errors
-// when the named context doesn't exist (a stale binding is a foot-gun).
-// Idempotent.
-func BindCluster(configDir, host, name string) error {
-	if host == "" || name == "" {
-		return errors.New("BindCluster requires non-empty host and context name")
-	}
-	return Modify(configDir, func(f *File) (bool, error) {
-		if f.Find(name) == nil {
-			return false, fmt.Errorf("no context named %q", name)
-		}
-		if f.ClusterContexts == nil {
-			f.ClusterContexts = map[string]string{}
-		}
-		if f.ClusterContexts[host] == name {
-			return false, nil
-		}
-		f.ClusterContexts[host] = name
-		return true, nil
-	})
 }
 
 func lockFile(path string) (func(), error) {

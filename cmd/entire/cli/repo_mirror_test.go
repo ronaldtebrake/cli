@@ -1,7 +1,18 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/internal/coreapi"
 )
@@ -41,6 +52,11 @@ func TestParseGitHubURL(t *testing.T) {
 		{name: "repo with encoded slash", url: "octocat/repo%2fevil", wantErr: true},
 		{name: "owner with dot-dot", url: "../repo", wantErr: true},
 		{name: "owner with underscore (not a GitHub login)", url: "oct_cat/repo", wantErr: true},
+		// Dot-only repo names pass the gitHubRepoPat charset (which allows
+		// dots) but would embed a literal "." or ".." in the audience and
+		// probe URL — reject at the boundary.
+		{name: "dot-only repo", url: "github.com/owner/..", wantErr: true},
+		{name: "single-dot repo", url: "github.com/owner/.", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,6 +135,10 @@ func TestValidateClusterHost(t *testing.T) {
 		{name: "host with port", host: "localhost:8080"},
 		{name: "ipv4", host: "10.0.0.1"},
 		{name: "ipv4 with port", host: "10.0.0.1:8080"},
+		// IPv6 takes a different path through validateClusterHost: the
+		// host must be bracketed for url.Parse to round-trip, and
+		// u.Hostname() strips the brackets before net.ParseIP sees it.
+		{name: "ipv6 with port", host: "[::1]:8080"},
 		// The token-leak primitive: userinfo demotes the real cluster so the
 		// request (and basic-auth token) targets evil.com.
 		{name: "userinfo smuggle", host: "aws-us-east-2.entire.io@evil.com", wantErr: true},
@@ -143,4 +163,148 @@ func TestValidateClusterHost(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMirrorAdvertisesHead_ReusesConnection is the regression test for the
+// body drain in mirrorAdvertisesHead. The probe runs every 2s for up to 30m,
+// and probeClient keeps a small idle pool specifically to reuse the TLS
+// session across ticks — but Go only returns a connection to that pool when
+// the response body is read to EOF before Close. If the drain is removed (or
+// re-capped shorter than the body), the body is left partially read and the
+// transport closes the connection instead, so every probe pays a fresh
+// handshake.
+//
+// We serve a non-200 with a non-empty body: mirrorAdvertisesHead returns at
+// the status check without reading the body itself, so the deferred drain is
+// the *only* thing that consumes it. Counting StateNew transitions then
+// distinguishes "drained → one reused connection" from "not drained → a new
+// connection per call".
+func TestMirrorAdvertisesHead_ReusesConnection(t *testing.T) {
+	t.Parallel()
+
+	// Larger than any plausible "small cap" someone might reintroduce, so a
+	// capped drain would stop before EOF and fail this test too.
+	body := strings.Repeat("x", 64<<10)
+
+	var newConns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// 503 = mirror reachable but not ready; the function returns at the
+		// status check below http.StatusOK without touching the body.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(body)) //nolint:errcheck // test server write; failure surfaces as a client error
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	// Isolated client (not the package-global probeClient) so the idle pool
+	// is private to this test and the assertion stays deterministic under
+	// t.Parallel(). Keep-alives and idle pooling are on by default.
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{MaxIdleConns: 2, MaxIdleConnsPerHost: 2, IdleConnTimeout: 90 * time.Second},
+	}
+
+	const probes = 5
+	for range probes {
+		ready, status := mirrorAdvertisesHead(context.Background(), client, srv.URL, "tok")
+		require.False(t, ready)
+		require.Equal(t, http.StatusServiceUnavailable, status)
+	}
+
+	require.Equal(t, int64(1), newConns.Load(),
+		"expected the drained body to let all %d probes share one connection; got %d new connections (body not drained to EOF?)",
+		probes, newConns.Load())
+}
+
+// pktLine encodes s as a git pkt-line (4-hex length prefix including the
+// prefix itself), mirroring what a smart-HTTP server writes.
+func pktLine(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+// uploadPackAdvertisement returns a minimal but valid git-upload-pack
+// info/refs body: the "# service" banner, a flush, a HEAD line carrying the
+// symref capability, a refs/heads/main line, and a trailing flush. It decodes
+// to an AdvRefs whose HEAD resolves to refs/heads/main.
+func uploadPackAdvertisement() string {
+	const sha = "d9a69831082341eab799c062e10ad28b3204c08a"
+	return pktLine("# service=git-upload-pack\n") +
+		"0000" +
+		pktLine(sha+" HEAD\x00symref=HEAD:refs/heads/main\n") +
+		pktLine(sha+" refs/heads/main\n") +
+		"0000"
+}
+
+// TestMirrorAdvertisesHead_FollowsNodeRedirect is the regression test for the
+// infinite cloning-dots bug. The cluster front door 307-redirects info/refs to
+// the node holding the mirror; git follows that to clone. The probe used to
+// refuse all redirects (http.ErrUseLastResponse), so it saw the 307 as "not
+// 200, not ready" and printed cloning-dots forever even after the clone had
+// landed. With checkProbeRedirect the probe follows same-host redirects and
+// reaches the advertisement, so it reports ready.
+func TestMirrorAdvertisesHead_FollowsNodeRedirect(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/node/info/refs" {
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			_, _ = w.Write([]byte(uploadPackAdvertisement())) //nolint:errcheck // test server write
+			return
+		}
+		// Front door: route to the backing node on the same host, the way the
+		// real cluster front door 307s to bishop.<cluster-host>.
+		http.Redirect(w, r, "/node/info/refs", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	// srv.Client() trusts the test cert; layer on the production redirect
+	// policy so we exercise the real follow path.
+	client := srv.Client()
+	client.CheckRedirect = checkProbeRedirect
+
+	ready, status := mirrorAdvertisesHead(context.Background(), client, srv.URL+"/info/refs", "tok")
+	require.True(t, ready, "probe should follow the node redirect and see HEAD")
+	require.Equal(t, http.StatusOK, status)
+}
+
+func TestCheckProbeRedirect(t *testing.T) {
+	t.Parallel()
+
+	orig := mustReq(t, "https://aws-us-east-2.entire.io/gh/o/r/info/refs")
+	tests := []struct {
+		name    string
+		target  string
+		via     int
+		wantErr bool
+	}{
+		{name: "same host", target: "https://aws-us-east-2.entire.io/node/info/refs", via: 1},
+		{name: "subdomain node", target: "https://bishop.aws-us-east-2.entire.io/gh/o/r/info/refs", via: 1},
+		{name: "cross host leaks token", target: "https://evil.example.com/info/refs", via: 1, wantErr: true},
+		{name: "sibling suffix trick", target: "https://aws-us-east-2.entire.io.evil.com/x", via: 1, wantErr: true},
+		{name: "non-https", target: "http://bishop.aws-us-east-2.entire.io/x", via: 1, wantErr: true},
+		{name: "too many hops", target: "https://bishop.aws-us-east-2.entire.io/x", via: maxProbeRedirects, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			via := make([]*http.Request, tt.via)
+			via[0] = orig
+			err := checkProbeRedirect(mustReq(t, tt.target), via)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func mustReq(t *testing.T, rawURL string) *http.Request {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	return &http.Request{URL: u}
 }

@@ -2,11 +2,31 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/entireio/cli/internal/coreapi"
 )
+
+// parseOrgRole maps the --role flag for `entire grant org add` to the
+// generated enum, rejecting unknown values at the CLI boundary so the
+// user gets a clear message instead of a server 422. Mirrors
+// parseProjectOwnerType. The empty string means "use the server default
+// (member)" and is the caller's signal to omit the field entirely; it is
+// not handled here.
+func parseOrgRole(s string) (coreapi.AddOrgMemberInputBodyRole, error) {
+	switch s {
+	case "owner":
+		return coreapi.AddOrgMemberInputBodyRoleOwner, nil
+	case "admin":
+		return coreapi.AddOrgMemberInputBodyRoleAdmin, nil
+	case "member":
+		return coreapi.AddOrgMemberInputBodyRoleMember, nil
+	default:
+		return "", fmt.Errorf("invalid --role %q: must be \"owner\", \"admin\", or \"member\"", s)
+	}
+}
 
 // newGrantCmd is the hidden `entire grant` command group: manage access
 // grants and org membership on the Entire control plane. Surface follows
@@ -65,14 +85,19 @@ func newGrantOrgAddCmd() *cobra.Command {
 		Short: "Add a member to an org",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			body := &coreapi.AddOrgMemberInputBody{
+				Provider:       provider,
+				ProviderUserId: providerUserID,
+			}
+			if role != "" {
+				r, err := parseOrgRole(role)
+				if err != nil {
+					cmd.SilenceUsage = true
+					return err
+				}
+				body.Role = coreapi.NewOptAddOrgMemberInputBodyRole(r)
+			}
 			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
-				body := &coreapi.AddOrgMemberInputBody{
-					Provider:       provider,
-					ProviderUserId: providerUserID,
-				}
-				if role != "" {
-					body.Role = coreapi.NewOptAddOrgMemberInputBodyRole(coreapi.AddOrgMemberInputBodyRole(role))
-				}
 				return c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: args[0]})
 			})
 		},

@@ -40,8 +40,8 @@ func newLogoutCmd() *cobra.Command {
 		Short: "Log out of Entire",
 		Long: "Log out of Entire.\n\n" +
 			"By default this removes the active login only. Other saved logins (contexts)\n" +
-			"remain and can still authenticate `git clone entire://…` against clusters they\n" +
-			"are bound to. Use --all to remove every saved login and its cluster bindings.",
+			"remain and can still authenticate `git clone entire://…` against any cluster\n" +
+			"fronted by their login server. Use --all to remove every saved login.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
 				return err
@@ -61,7 +61,7 @@ func newLogoutCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "Remove all saved logins (contexts) and their cluster bindings, not just the active one")
+	cmd.Flags().BoolVar(&all, "all", false, "Remove all saved logins (contexts), not just the active one")
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 	return cmd
 }

@@ -223,17 +223,12 @@ func TestRemoveAllContexts(t *testing.T) {
 	t.Cleanup(restore)
 
 	exp := time.Now().Add(time.Hour).Unix()
-	a, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), true)
-	if err != nil {
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
 		t.Fatalf("record a: %v", err)
 	}
 	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"bob","exp":%d}`, exp)), true); err != nil {
 		t.Fatalf("record b: %v", err)
 	}
-	if err := contexts.BindCluster(cfgDir, "cluster.example.com", a); err != nil {
-		t.Fatalf("bind cluster: %v", err)
-	}
-
 	n, err := RemoveAllContexts()
 	if err != nil {
 		t.Fatalf("RemoveAllContexts: %v", err)
@@ -245,8 +240,8 @@ func TestRemoveAllContexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(f.Contexts) != 0 || f.CurrentContext != "" || len(f.ClusterContexts) != 0 {
-		t.Fatalf("expected fully cleared, got contexts=%d current=%q bindings=%d", len(f.Contexts), f.CurrentContext, len(f.ClusterContexts))
+	if len(f.Contexts) != 0 || f.CurrentContext != "" {
+		t.Fatalf("expected fully cleared, got contexts=%d current=%q", len(f.Contexts), f.CurrentContext)
 	}
 
 	// Idempotent.

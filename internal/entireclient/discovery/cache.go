@@ -55,16 +55,9 @@ func LoadCache(cacheDir string) (ClusterCache, error) {
 
 // SaveCache writes the cache to disk atomically under an exclusive flock.
 func SaveCache(cacheDir string, cache ClusterCache) error {
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return fmt.Errorf("create cache dir: %w", err)
-	}
-	path := filepath.Join(cacheDir, cacheFileName)
-	unlock, err := lockCache(path)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	return writeCacheNoLock(path, cache)
+	return withCacheFileLock(cacheDir, cacheFileName, func(path string) error {
+		return writeCacheNoLock(path, cache)
+	})
 }
 
 // ModifyCache atomically applies fn to the node cache under a single
@@ -74,24 +67,51 @@ func SaveCache(cacheDir string, cache ClusterCache) error {
 // (e.g. two parallel clone/fetch/push processes updating nodes.json), losing
 // each other's entries.
 func ModifyCache(cacheDir string, fn func(ClusterCache) error) error {
+	return modifyCacheFile(cacheDir, cacheFileName, readCacheNoLock, writeCacheNoLock, fn)
+}
+
+func readCacheNoLock(path string) (ClusterCache, error) {
+	cache := make(ClusterCache)
+	err := loadCacheFile(path, &cache, func() ClusterCache { return make(ClusterCache) })
+	return cache, err
+}
+
+func writeCacheNoLock(path string, cache ClusterCache) error {
+	return writeCacheFile(path, cache)
+}
+
+// --- shared cache-file primitives (used by every cache file in this
+// package: nodes.json, cluster_cores.json) ---
+
+// withCacheFileLock ensures cacheDir exists, takes the exclusive flock for
+// the named cache file, and runs fn with the file's path.
+func withCacheFileLock(cacheDir, fileName string, fn func(path string) error) error {
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
-	path := filepath.Join(cacheDir, cacheFileName)
+	path := filepath.Join(cacheDir, fileName)
 	unlock, err := lockCache(path)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return fn(path)
+}
 
-	cache, err := readCacheNoLock(path)
-	if err != nil {
-		return err
-	}
-	if err := fn(cache); err != nil {
-		return err
-	}
-	return writeCacheNoLock(path, cache)
+// modifyCacheFile runs a load → mutate → write cycle for one cache file with
+// the file's flock held throughout, so concurrent processes filling the same
+// entry don't clobber each other.
+func modifyCacheFile[T any](cacheDir, fileName string, read func(string) (T, error), write func(string, T) error, fn func(T) error) error {
+	return withCacheFileLock(cacheDir, fileName, func(path string) error {
+		c, err := read(path)
+		if err != nil {
+			return err
+		}
+		if err := fn(c); err != nil {
+			return err
+		}
+		return write(path, c)
+	})
 }
 
 func lockCache(path string) (func(), error) {
@@ -109,27 +129,51 @@ func lockCache(path string) (func(), error) {
 	return func() { _ = fl.Unlock() }, nil //nolint:errcheck // unlock failure is non-fatal
 }
 
-func readCacheNoLock(path string) (ClusterCache, error) {
-	data, err := os.ReadFile(path) // #nosec G304
+// loadCacheFile reads path and unmarshals it into dst. A missing file leaves
+// dst at its caller-initialized (empty) value; a corrupt file resets dst via
+// newEmpty so a damaged cache self-heals on the next write instead of wedging
+// callers. Returns an error only on a genuine read failure. Returning error
+// (rather than the cache value itself) keeps this generic helper off the
+// ireturn linter while still sharing the read/unmarshal logic across caches.
+func loadCacheFile[T any](path string, dst *T, newEmpty func() T) error {
+	data, exists, err := readCacheBytes(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return make(ClusterCache), nil
-		}
-		return nil, fmt.Errorf("read cache: %w", err)
+		return err
 	}
-	var cache ClusterCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		// Corrupted cache — start fresh.
-		return make(ClusterCache), nil //nolint:nilerr // intentional: treat corrupt cache as empty
+	if !exists {
+		return nil
 	}
-	return cache, nil
+	if json.Unmarshal(data, dst) != nil {
+		*dst = newEmpty() // corrupt → start fresh
+	}
+	return nil
 }
 
-func writeCacheNoLock(path string, cache ClusterCache) error {
-	data, err := json.MarshalIndent(cache, "", "  ")
+// writeCacheFile marshals v and writes it atomically (tmp + rename).
+func writeCacheFile[T any](path string, v T) error {
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal cache: %w", err)
 	}
+	return writeCacheBytesAtomic(path, data)
+}
+
+// readCacheBytes returns the file contents and whether the file exists. A
+// missing file is (nil, false, nil); other read errors propagate.
+func readCacheBytes(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("read cache: %w", err)
+	}
+	return data, true, nil
+}
+
+// writeCacheBytesAtomic writes data via a tmp file + rename so a reader never
+// observes a half-written cache.
+func writeCacheBytesAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return fmt.Errorf("write cache tmp: %w", err)

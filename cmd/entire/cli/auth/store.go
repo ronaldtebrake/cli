@@ -157,20 +157,40 @@ func LookupCurrentToken() (string, error) {
 	return NewContextStore().GetToken(api.AuthBaseURL())
 }
 
+// keyringBackend persists tokens in the OS keyring. Every operation is
+// wrapped in callKeyringWithContext because the underlying keyring call
+// can block indefinitely when no provider is reachable — most commonly
+// a headless Linux host with no Secret Service running (gnome-keyring,
+// kwalletd, KeePassXC), but the same hang shape exists on macOS when
+// the Keychain prompt is suppressed or on Windows when Credential
+// Manager misbehaves.
 type keyringBackend struct{}
 
 func (keyringBackend) save(service, key, value string) error {
-	if err := keyring.Set(service, key, value); err != nil {
+	ctx, cancel := newKeyringContext()
+	defer cancel()
+	_, err := callKeyringWithContext(ctx, "save", func() (string, error) {
+		return "", keyring.Set(service, key, value)
+	})
+	if err != nil {
 		return fmt.Errorf("save token to keyring: %w", err)
 	}
 	return nil
 }
 
 func (keyringBackend) get(service, key string) (string, error) {
-	token, err := keyring.Get(service, key)
-	if errors.Is(err, keyring.ErrNotFound) {
-		return "", nil
-	}
+	ctx, cancel := newKeyringContext()
+	defer cancel()
+	token, err := callKeyringWithContext(ctx, "get", func() (string, error) {
+		v, err := keyring.Get(service, key)
+		if errors.Is(err, keyring.ErrNotFound) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("keyring.Get: %w", err)
+		}
+		return v, nil
+	})
 	if err != nil {
 		return "", fmt.Errorf("get token from keyring: %w", err)
 	}
@@ -178,10 +198,14 @@ func (keyringBackend) get(service, key string) (string, error) {
 }
 
 func (keyringBackend) delete(service, key string) error {
-	err := keyring.Delete(service, key)
-	if errors.Is(err, keyring.ErrNotFound) {
-		return nil
-	}
+	ctx, cancel := newKeyringContext()
+	defer cancel()
+	_, err := callKeyringWithContext(ctx, "delete", func() (string, error) {
+		if err := keyring.Delete(service, key); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			return "", fmt.Errorf("keyring.Delete: %w", err)
+		}
+		return "", nil
+	})
 	if err != nil {
 		return fmt.Errorf("delete token from keyring: %w", err)
 	}

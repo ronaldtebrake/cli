@@ -17,10 +17,11 @@ import (
 )
 
 // DefaultDialTimeout is the per-host TCP connect timeout. Short by default
-// so failover paths skip dead nodes quickly; override via
-// ENTIRE_CONNECT_TIMEOUT_SECONDS on slow links where the dial trips before
-// the node can answer.
-const DefaultDialTimeout = 500 * time.Millisecond
+// so failover paths skip dead nodes quickly, but long enough to absorb a
+// slow initial connect (cold DNS, TLS-fronting LB, distant region) that a
+// tighter budget would trip; override via ENTIRE_CONNECT_TIMEOUT_SECONDS on
+// slow links where even this trips before the node can answer.
+const DefaultDialTimeout = 2 * time.Second
 
 // DialTimeout returns the configured dial timeout, honoring
 // ENTIRE_CONNECT_TIMEOUT_SECONDS. Invalid values fall back to

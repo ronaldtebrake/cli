@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ogen-go/ogen/ogenerrors"
+
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 )
@@ -44,8 +46,11 @@ func New() (*Client, error) {
 // bearerSource implements the generated SecuritySource, supplying the
 // logged-in user's bearer token for every request. The control plane
 // only uses bearerAuth from the CLI; the sessionAuth (browser cookie)
-// scheme is satisfied with an empty value so ogen's two-scheme security
-// requirement is met without sending a cookie.
+// scheme is reported as ErrSkipClientSecurity so ogen's middleware
+// satisfies the "bearerAuth OR sessionAuth" requirement via the bearer
+// alone — without adding a stray `Cookie: entire_session=` header.
+// (Returning an empty SessionAuth would not skip the cookie: the
+// generated securitySessionAuth unconditionally calls req.AddCookie.)
 type bearerSource struct {
 	resourceBaseURL string
 }
@@ -66,9 +71,10 @@ func (b *bearerSource) BearerAuth(ctx context.Context, _ OperationName) (BearerA
 
 func (b *bearerSource) SessionAuth(context.Context, OperationName) (SessionAuth, error) {
 	// The CLI authenticates with a bearer token, never the browser
-	// session cookie. Returning an empty value lets ogen satisfy the
-	// "bearerAuth OR sessionAuth" requirement via the bearer alone.
-	return SessionAuth{}, nil
+	// session cookie. ErrSkipClientSecurity tells ogen to drop this
+	// scheme entirely for the request (no Cookie header added); the
+	// bearerAuth path alone satisfies the OR-requirement.
+	return SessionAuth{}, ogenerrors.ErrSkipClientSecurity
 }
 
 // APIError reports the title/detail/status of a control-plane RFC 7807

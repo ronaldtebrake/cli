@@ -1,96 +1,42 @@
 package clusterdiscovery
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 )
 
-// TestResolveContextForClusterBindingShortCircuits: an explicit
-// cluster_contexts binding is used directly — no /.well-known hit.
-func TestResolveContextForClusterBindingShortCircuits(t *testing.T) {
-	configDir := t.TempDir()
-	require.NoError(t, contexts.Save(configDir, &contexts.File{
-		CurrentContext: "current",
-		ClusterContexts: map[string]string{
-			"bound.example.com": "us",
-		},
-		Contexts: []*contexts.Context{
-			{Name: "current", CoreURL: "https://current.example", Handle: "alice", KeychainService: "kc:current"},
-			{Name: "us", CoreURL: "https://us.auth.entire.io", Handle: "bob", KeychainService: "kc:us"},
-		},
-	}))
-
-	// Fail-loud HTTP client: any actual request is a bug.
-	failClient := &http.Client{Transport: failTransport(t)}
-
-	c, err := ResolveContextForCluster(t.Context(), configDir, "bound.example.com", failClient, t.Logf)
+// coresHandler serves a fixed core_urls list and counts how many times
+// /.well-known was hit, so tests can assert cache hits vs live fetches.
+func coresHandler(t *testing.T, calls *int32, coreURLs ...string) http.HandlerFunc {
+	t.Helper()
+	body, err := json.Marshal(Response{CoreURLs: coreURLs})
 	require.NoError(t, err)
-	assert.Equal(t, "us", c.Name)
-}
-
-// TestResolveContextForClusterDiscoversEphemerally: no binding, no
-// fallback to current_context — instead we hit /.well-known, match the
-// first advertised core URL against a local context, and resolve it for
-// this invocation only. We deliberately do NOT persist a binding: a
-// drive-by clone of an attacker host must not establish a durable,
-// silent auth channel, so every call re-evaluates the live /.well-known.
-func TestResolveContextForClusterDiscoversEphemerally(t *testing.T) {
-	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if calls != nil {
+			atomic.AddInt32(calls, 1)
+		}
 		assert.Equal(t, Path, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"core_urls":["https://eu.auth.entire.io","https://us.auth.entire.io"]}`)) //nolint:errcheck // test
-	}))
-	defer srv.Close()
-
-	configDir := t.TempDir()
-	require.NoError(t, contexts.Save(configDir, &contexts.File{
-		// current_context points at a STAGING login — the bug we're
-		// fixing is that this used to silently get reused against a
-		// prod cluster host. The PROD login below should be the one
-		// discovery picks via the well-known match.
-		CurrentContext: "staging-eu",
-		Contexts: []*contexts.Context{
-			{Name: "staging-eu", CoreURL: "https://eu.auth.partial.to", Handle: "paul", KeychainService: "kc:staging"},
-			{Name: "prod-eu", CoreURL: "https://eu.auth.entire.io", Handle: "paul", KeychainService: "kc:prod-eu"},
-		},
-	}))
-
-	c, err := ResolveContextForCluster(t.Context(), configDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
-	require.NoError(t, err)
-	assert.Equal(t, "prod-eu", c.Name, "should pick the prod context, NOT current_context")
-	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "first call hits discovery once")
-
-	// No binding was persisted — the resolution is ephemeral.
-	f, err := contexts.Load(configDir)
-	require.NoError(t, err)
-	assert.Empty(t, f.ClusterContexts, "discovery must not persist a cluster binding")
-
-	// Second call re-discovers (no short-circuit), keeping the trust
-	// decision fresh and revocable.
-	c2, err := ResolveContextForCluster(t.Context(), configDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
-	require.NoError(t, err)
-	assert.Equal(t, "prod-eu", c2.Name)
-	assert.Equal(t, int32(2), atomic.LoadInt32(&calls), "ephemeral resolution re-hits discovery each call")
+		_, _ = w.Write(body) //nolint:errcheck // test
+	}
 }
 
-// TestResolveContextForClusterPrefersCurrentAmongSameCoreMatches: when a
-// core has several accounts (alice@core, bob@core) and bob is the active
-// context, discovery must resolve to bob, not to whichever was saved
-// first — otherwise a clone silently authenticates as the wrong user.
-func TestResolveContextForClusterPrefersCurrentAmongSameCoreMatches(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"core_urls":["https://eu.auth.entire.io"]}`)) //nolint:errcheck // test
-	}))
+// TestResolve_ActiveContextWinsWhenEligible: the active context is issued
+// by one of the cluster's cores, so it is used even though another eligible
+// context exists for the same core.
+func TestResolve_ActiveContextWinsWhenEligible(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(coresHandler(t, nil, "https://eu.auth.entire.io"))
 	defer srv.Close()
 
 	configDir := t.TempDir()
@@ -102,20 +48,64 @@ func TestResolveContextForClusterPrefersCurrentAmongSameCoreMatches(t *testing.T
 		},
 	}))
 
-	c, err := ResolveContextForCluster(t.Context(), configDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
+	c, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
 	require.NoError(t, err)
-	assert.Equal(t, "bob@eu", c.Name, "should prefer the active context among same-core matches")
+	assert.Equal(t, "bob@eu", c.Name, "active eligible context must win over other same-core accounts")
 }
 
-// TestResolveContextForClusterNoMatchReturnsLoginHint: discovery
-// succeeds but the user has no context for any of the advertised core
-// URLs. Error message tells them which login URL to use — that's the
-// whole point of having /.well-known.
-func TestResolveContextForClusterNoMatchReturnsLoginHint(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"core_urls":["https://eu.auth.entire.io"]}`)) //nolint:errcheck // test
+// TestResolve_SoleEligibleContextUsedDespiteUnrelatedActive: the active
+// context is on an unrelated core, but the user has exactly one context
+// eligible for the cluster — use it (the 99% single-account case).
+func TestResolve_SoleEligibleContextUsedDespiteUnrelatedActive(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(coresHandler(t, nil, "https://eu.auth.entire.io"))
+	defer srv.Close()
+
+	configDir := t.TempDir()
+	require.NoError(t, contexts.Save(configDir, &contexts.File{
+		CurrentContext: "paul@unrelated",
+		Contexts: []*contexts.Context{
+			{Name: "paul@unrelated", CoreURL: "https://eu.auth.partial.to", Handle: "paul", KeychainService: "kc:unrelated"},
+			{Name: "prod-eu", CoreURL: "https://eu.auth.entire.io", Handle: "paul", KeychainService: "kc:prod"},
+		},
 	}))
+
+	c, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
+	require.NoError(t, err)
+	assert.Equal(t, "prod-eu", c.Name)
+}
+
+// TestResolve_AmbiguousMultipleEligibleErrors: two same-core accounts are
+// eligible and neither is active — refuse to guess, list both, and tell the
+// user to pick. This is the footgun this redesign closes.
+func TestResolve_AmbiguousMultipleEligibleErrors(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(coresHandler(t, nil, "https://core-us.entire.io"))
+	defer srv.Close()
+
+	configDir := t.TempDir()
+	require.NoError(t, contexts.Save(configDir, &contexts.File{
+		CurrentContext: "paul@unrelated",
+		Contexts: []*contexts.Context{
+			{Name: "alice@core-us", CoreURL: "https://core-us.entire.io", Handle: "alice", KeychainService: "kc:alice"},
+			{Name: "admin@core-us", CoreURL: "https://core-us.entire.io", Handle: "admin", KeychainService: "kc:admin"},
+			{Name: "paul@unrelated", CoreURL: "https://eu.auth.partial.to", Handle: "paul", KeychainService: "kc:unrelated"},
+		},
+	}))
+
+	_, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "cluster1.entire.io", hostPinningClient(t, srv), t.Logf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple login contexts")
+	assert.Contains(t, err.Error(), "admin@core-us")
+	assert.Contains(t, err.Error(), "alice@core-us")
+	assert.Contains(t, err.Error(), "entire auth use")
+}
+
+// TestResolve_NoEligibleContextReturnsLoginHint: discovery succeeds but the
+// user has no context for any advertised core.
+func TestResolve_NoEligibleContextReturnsLoginHint(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(coresHandler(t, nil, "https://eu.auth.entire.io"))
 	defer srv.Close()
 
 	configDir := t.TempDir()
@@ -126,7 +116,7 @@ func TestResolveContextForClusterNoMatchReturnsLoginHint(t *testing.T) {
 		},
 	}))
 
-	_, err := ResolveContextForCluster(t.Context(), configDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
+	_, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no auth context for cluster aws-eu-central-1.entire.io")
 	assert.Contains(t, err.Error(), "https://eu.auth.entire.io")
@@ -134,38 +124,79 @@ func TestResolveContextForClusterNoMatchReturnsLoginHint(t *testing.T) {
 	assert.Contains(t, err.Error(), "ENTIRE_AUTH_BASE_URL")
 }
 
-// TestResolveContextForClusterStaleBindingFallsThrough: a binding that
-// names a non-existent context is treated as if no binding exists —
-// we discover and match a real context for this invocation (without
-// rewriting the binding).
-func TestResolveContextForClusterStaleBindingFallsThrough(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"core_urls":["https://eu.auth.entire.io"]}`)) //nolint:errcheck // test
-	}))
+// TestResolve_CoresCachedAcrossCalls: the first call hits /.well-known and
+// caches the cores; the second is served from cluster_cores.json with no
+// network hit.
+func TestResolve_CoresCachedAcrossCalls(t *testing.T) {
+	t.Parallel()
+	var calls int32
+	srv := httptest.NewServer(coresHandler(t, &calls, "https://eu.auth.entire.io"))
 	defer srv.Close()
 
 	configDir := t.TempDir()
+	cacheDir := t.TempDir()
 	require.NoError(t, contexts.Save(configDir, &contexts.File{
-		CurrentContext: "current",
-		ClusterContexts: map[string]string{
-			"aws-eu-central-1.entire.io": "deleted",
-		},
+		CurrentContext: "prod-eu",
 		Contexts: []*contexts.Context{
-			{Name: "current", CoreURL: "https://eu.auth.entire.io", Handle: "paul", KeychainService: "kc:current"},
+			{Name: "prod-eu", CoreURL: "https://eu.auth.entire.io", Handle: "paul", KeychainService: "kc:prod"},
 		},
 	}))
 
-	c, err := ResolveContextForCluster(t.Context(), configDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
+	c, err := ResolveContextForCluster(t.Context(), configDir, cacheDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
 	require.NoError(t, err)
-	assert.Equal(t, "current", c.Name)
+	assert.Equal(t, "prod-eu", c.Name)
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "first call fetches /.well-known")
+
+	c2, err := ResolveContextForCluster(t.Context(), configDir, cacheDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)
+	require.NoError(t, err)
+	assert.Equal(t, "prod-eu", c2.Name)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "second call is served from the cores cache")
+
+	// The cores fact is persisted; the account choice is not.
+	cache, err := discovery.LoadClusterCores(cacheDir)
+	require.NoError(t, err)
+	urls, fresh, ok := cache.Get("aws-eu-central-1.entire.io")
+	require.True(t, ok)
+	assert.True(t, fresh)
+	assert.Equal(t, []string{"https://eu.auth.entire.io"}, urls)
 }
 
-// TestResolveContextForClusterUnreachable: transport failure surfaces
-// the "doesn't look like a cluster" message — the user can't tell a
-// typo from a real-but-down cluster, and either way the next step is
-// the same.
-func TestResolveContextForClusterUnreachable(t *testing.T) {
+// TestResolve_StaleCacheFallbackOnDiscoveryFailure: an expired cache entry
+// is used when the live re-fetch fails, so a brief cluster outage doesn't
+// break an operation whose cores we already knew.
+func TestResolve_StaleCacheFallbackOnDiscoveryFailure(t *testing.T) {
+	t.Parallel()
+	// Server is closed immediately so any discovery attempt fails.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	client := hostPinningClient(t, srv)
+	srv.Close()
+
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+	require.NoError(t, contexts.Save(configDir, &contexts.File{
+		CurrentContext: "prod-eu",
+		Contexts: []*contexts.Context{
+			{Name: "prod-eu", CoreURL: "https://eu.auth.entire.io", Handle: "paul", KeychainService: "kc:prod"},
+		},
+	}))
+	// Seed an EXPIRED cores entry.
+	require.NoError(t, discovery.ModifyClusterCores(cacheDir, func(c discovery.ClusterCoresCache) error {
+		c["aws-eu-central-1.entire.io"] = &discovery.CoresEntry{
+			CoreURLs:  []string{"https://eu.auth.entire.io"},
+			FetchedAt: time.Now().Add(-discovery.ClusterCoresTTL - time.Hour),
+		}
+		return nil
+	}))
+
+	c, err := ResolveContextForCluster(t.Context(), configDir, cacheDir, "aws-eu-central-1.entire.io", client, t.Logf)
+	require.NoError(t, err, "should fall back to stale cores when re-fetch fails")
+	assert.Equal(t, "prod-eu", c.Name)
+}
+
+// TestResolve_Unreachable: transport failure with no cached cores surfaces
+// the "doesn't look like a cluster" message.
+func TestResolve_Unreachable(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	client := hostPinningClient(t, srv)
 	srv.Close()
@@ -178,15 +209,15 @@ func TestResolveContextForClusterUnreachable(t *testing.T) {
 		},
 	}))
 
-	_, err := ResolveContextForCluster(t.Context(), configDir, "missing.example.com", client, t.Logf)
+	_, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "missing.example.com", client, t.Logf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing.example.com doesn't look like a cluster, or it is unreachable")
 }
 
-// TestResolveContextForCluster503: HTTP 503 from /.well-known is a
-// distinct operator surface — the cluster is up but has no trusted
-// issuers configured. The error must point at the admin, not the user.
-func TestResolveContextForCluster503(t *testing.T) {
+// TestResolve_503: HTTP 503 from /.well-known points at the admin, not the
+// user.
+func TestResolve_503(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "no issuers", http.StatusServiceUnavailable)
 	}))
@@ -197,23 +228,8 @@ func TestResolveContextForCluster503(t *testing.T) {
 		Contexts: []*contexts.Context{{Name: "x", CoreURL: "https://x.example", Handle: "x", KeychainService: "kc:x"}},
 	}))
 
-	_, err := ResolveContextForCluster(t.Context(), configDir, "rc.partial.to", hostPinningClient(t, srv), t.Logf)
+	_, err := ResolveContextForCluster(t.Context(), configDir, t.TempDir(), "rc.partial.to", hostPinningClient(t, srv), t.Logf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not advertise any trusted login servers")
 	assert.Contains(t, err.Error(), "cluster administrator")
 }
-
-// failTransport returns a RoundTripper that fails the test if invoked —
-// used by the binding-short-circuit test to prove we never hit the
-// network.
-func failTransport(t *testing.T) http.RoundTripper {
-	t.Helper()
-	return roundTripFunc(func(*http.Request) (*http.Response, error) {
-		t.Fatal("unexpected HTTP call: binding should have short-circuited discovery")
-		return nil, nil
-	})
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

@@ -12,16 +12,17 @@
 // ENTIRE_DEBUG-gated debuglog).
 //
 // Authentication resolves the login context for the target cluster from the
-// shared contexts.json (an explicit cluster binding, else
-// /.well-known discovery matched against local contexts), then mints
-// repo-scoped tokens by exchanging that context's login JWT. A
-// pre-contexts.json login is migrated at read-time so existing users don't
-// have to re-authenticate.
+// shared contexts.json: the cluster's cores come from the cluster_cores.json
+// cache (or a live /.well-known fetch on miss), then the account is selected
+// from local contexts. It then mints repo-scoped tokens by exchanging that
+// context's login JWT. A pre-contexts.json login is migrated at read-time so
+// existing users don't have to re-authenticate.
 package main
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 	"github.com/entireio/cli/internal/entireclient/httpclient"
 	"github.com/entireio/cli/internal/entireclient/repocreds"
 	"github.com/entireio/cli/internal/remotehelper"
@@ -93,11 +95,13 @@ func run(args []string) int {
 		debuglog.Printf("legacy login migration: %v", err)
 	}
 
-	// Resolve which login context authenticates this cluster: an explicit
-	// cluster_contexts binding wins, otherwise the cluster's
-	// /.well-known/entire-cluster.json is matched against local contexts.
+	// Resolve which login context authenticates this cluster: the cluster's
+	// cores are taken from the cluster_cores.json cache (or a live
+	// /.well-known fetch on miss/expiry), then the account is selected from
+	// local contexts — active context if eligible, else the sole eligible
+	// one, else an explicit-choice error.
 	cfgDir := contexts.DefaultConfigDir()
-	clusterCtx, err := clusterdiscovery.ResolveContextForCluster(ctx, cfgDir, parsedURL.Host, httpClient, debuglog.Printf)
+	clusterCtx, err := clusterdiscovery.ResolveContextForCluster(ctx, cfgDir, discovery.DefaultCacheDir(), parsedURL.Host, httpClient, debuglog.Printf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		return 128
@@ -135,16 +139,44 @@ func run(args []string) int {
 		OnNodeFailed: onNodeFailed,
 	})
 
-	mode := githelper.ModeConnect
-	if os.Getenv("ENTIRE_STATELESS") == "true" {
-		mode = githelper.ModeStateless
-	}
+	protocolVersion := resolveProtocolVersion()
+	debuglog.Printf("git protocol.version=%d (v2 advertises stateless-connect + push; v0/v1 advertises connect)", protocolVersion)
 
-	if err := githelper.Run(ctx, proxy, mode, os.Stdin, os.Stdout); err != nil {
+	if err := githelper.Run(ctx, proxy, protocolVersion, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		return 128
 	}
 	return 0
+}
+
+// resolveProtocolVersion reads the effective protocol.version from
+// the GIT_PROTOCOL environment variable. The value is a colon-
+// separated list of key=value pairs (e.g. "version=2"). We accept
+// 0, 1, or 2; any other value emits a stderr warning and falls
+// back to 2 — upstream Git's default since 2.26.
+func resolveProtocolVersion() int {
+	return parseProtocolVersion(os.Getenv("GIT_PROTOCOL"), os.Stderr)
+}
+
+func parseProtocolVersion(raw string, warn io.Writer) int {
+	const defaultVersion = 2
+	for kv := range strings.SplitSeq(raw, ":") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k != "version" {
+			continue
+		}
+		switch v {
+		case "0":
+			return 0
+		case "1":
+			return 1
+		case "2":
+			return 2
+		}
+		fmt.Fprintf(warn, "git-remote-entire: ignoring unrecognised protocol.version=%q; defaulting to %d\n", v, defaultVersion)
+		return defaultVersion
+	}
+	return defaultVersion
 }
 
 // gitActionFromRequest classifies a smart-HTTP request as "pull" or "push"
