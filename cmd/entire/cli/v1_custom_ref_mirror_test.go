@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 )
 
@@ -23,6 +25,13 @@ type setReferenceErrorStorer struct {
 
 func (s setReferenceErrorStorer) SetReference(*plumbing.Reference) error {
 	return s.err
+}
+
+// v1CustomRefs returns the v1.1 mirror topology these tests exercise.
+func v1CustomRefs() checkpoint.CommittedRefs {
+	return checkpoint.ResolveCommittedRefsFromSettings(&settings.EntireSettings{
+		StrategyOptions: map[string]any{"checkpoints_version": "1.1"},
+	})
 }
 
 func setupCustomRefRepo(t *testing.T) *git.Repository {
@@ -62,7 +71,7 @@ func TestMirrorToV1CustomRef_CreatesRef(t *testing.T) {
 	repo := setupCustomRefRepo(t)
 	v1Hash := pointV1MetadataBranchAtHead(t, repo)
 
-	require.NoError(t, mirrorToV1CustomRef(repo))
+	require.NoError(t, mirrorToV1CustomRef(v1CustomRefs(), repo))
 
 	got, ok := readCustomRefHash(t, repo)
 	require.True(t, ok, "expected %s to exist", paths.MetadataRefName)
@@ -84,7 +93,7 @@ func TestMirrorToV1CustomRef_AdvancesExistingRef(t *testing.T) {
 	newHash := pointV1MetadataBranchAtHead(t, repo)
 	require.NotEqual(t, oldHash, newHash)
 
-	require.NoError(t, mirrorToV1CustomRef(repo))
+	require.NoError(t, mirrorToV1CustomRef(v1CustomRefs(), repo))
 
 	got, ok := readCustomRefHash(t, repo)
 	require.True(t, ok)
@@ -107,7 +116,7 @@ func TestMirrorToV1CustomRef_ReplacesLocallyAheadRef(t *testing.T) {
 	require.NoError(t, repo.Storer.SetReference(
 		plumbing.NewHashReference(plumbing.ReferenceName(paths.MetadataRefName), head.Hash())))
 
-	require.NoError(t, mirrorToV1CustomRef(repo))
+	require.NoError(t, mirrorToV1CustomRef(v1CustomRefs(), repo))
 
 	got, ok := readCustomRefHash(t, repo)
 	require.True(t, ok)
@@ -118,7 +127,7 @@ func TestMirrorToV1CustomRef_ReplacesLocallyAheadRef(t *testing.T) {
 func TestMirrorToV1CustomRef_V1MissingErrors(t *testing.T) {
 	repo := setupCustomRefRepo(t) // no v1 metadata branch created
 
-	err := mirrorToV1CustomRef(repo)
+	err := mirrorToV1CustomRef(v1CustomRefs(), repo)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), paths.MetadataBranchName)
 
@@ -133,7 +142,7 @@ func TestMirrorToV1CustomRef_SetReferenceErrorNamesTarget(t *testing.T) {
 	storerErr := errors.New("set failed")
 	repo.Storer = setReferenceErrorStorer{Storer: repo.Storer, err: storerErr}
 
-	err := mirrorToV1CustomRef(repo)
+	err := mirrorToV1CustomRef(v1CustomRefs(), repo)
 	require.ErrorIs(t, err, storerErr)
 	assert.Contains(t, err.Error(), paths.MetadataRefName)
 	assert.Contains(t, err.Error(), v1Hash.String())

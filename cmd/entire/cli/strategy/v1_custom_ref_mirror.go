@@ -5,42 +5,36 @@ import (
 	"log/slog"
 
 	git "github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
-// mirrorMetadataToV1CustomRef advances the v1 custom ref
-// (refs/entire/checkpoints/v1.1) to the v1 metadata branch's current commit
-// when checkpoints_version "1.1" is opted in.
-//
-// sharing v1's exact commit — it is never pushed. Call
-// only after a successful v1 committed write; a mirror failure must not affect
-// that write, so problems are logged, not returned.
+// mirrorMetadataToV1CustomRef advances the topology's mirror to the primary's
+// commit when a mirror is configured. Call after a successful primary write; a
+// mirror failure must not affect that write, so problems are logged, not returned.
 func mirrorMetadataToV1CustomRef(ctx context.Context, repo *git.Repository) {
-	if !settings.MirrorsToV1CustomRef(ctx) {
+	refs := checkpoint.ResolveCommittedRefs(ctx)
+	if !refs.HasMirror() {
 		return
 	}
 
-	v1Ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	primaryRef, err := repo.Reference(refs.Primary, true)
 	if err != nil {
-		// No v1 metadata branch yet — nothing to mirror. Expected on first use.
-		logging.Debug(ctx, "v1 custom-ref mirror skipped: v1 metadata branch unavailable",
+		// No primary metadata ref yet — nothing to mirror. Expected on first use.
+		logging.Debug(ctx, "committed-ref mirror skipped: primary metadata ref unavailable",
 			slog.String("error", err.Error()))
 		return
 	}
 
-	v1CustomRef := plumbing.ReferenceName(paths.MetadataRefName)
-	if err := SafelyAdvanceLocalRef(ctx, repo, v1CustomRef, v1Ref.Hash()); err != nil {
-		logging.Warn(ctx, "v1 custom-ref mirror failed",
-			slog.String("ref", paths.MetadataRefName),
+	if err := SafelyAdvanceLocalRef(ctx, repo, refs.Mirror, primaryRef.Hash()); err != nil {
+		logging.Warn(ctx, "committed-ref mirror failed",
+			slog.String("ref", refs.Mirror.String()),
 			slog.String("error", err.Error()))
 		return
 	}
 
-	logging.Debug(ctx, "v1 custom-ref mirror updated",
-		slog.String("ref", paths.MetadataRefName),
-		slog.String("hash", v1Ref.Hash().String()))
+	logging.Debug(ctx, "committed-ref mirror updated",
+		slog.String("ref", refs.Mirror.String()),
+		slog.String("hash", primaryRef.Hash().String()))
 }

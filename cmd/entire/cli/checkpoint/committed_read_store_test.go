@@ -108,7 +108,7 @@ func TestGitStore_CommittedReadRef(t *testing.T) {
 	assert.Equal(t, customRef(), NewGitStoreWithRef(nil, customRef()).CommittedReadRef())
 }
 
-func TestSyncV1CustomRefForRead(t *testing.T) {
+func TestSyncMirrorForRead(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
@@ -154,7 +154,11 @@ func TestSyncV1CustomRefForRead(t *testing.T) {
 			dir, repo, init := newTestRepo(t)
 			want, exists := tt.setup(t, dir, repo, init)
 
-			syncV1CustomRefForRead(context.Background(), repo)
+			syncMirrorForRead(context.Background(), repo, CommittedRefs{
+				Primary: v1BranchRef(),
+				Read:    customRef(),
+				Mirror:  customRef(),
+			})
 
 			got, ok := customRefHash(t, repo)
 			require.Equal(t, exists, ok)
