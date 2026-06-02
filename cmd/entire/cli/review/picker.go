@@ -230,17 +230,12 @@ func promptForSimpleReviewModels(ctx context.Context, profileName string, profil
 
 	for _, workerName := range sortedProfileAgentNames(*profile) {
 		cfg := profile.Agents[workerName]
-		model := strings.TrimSpace(cfg.Model)
-		modelForm := newAccessibleForm(huh.NewGroup(
-			huh.NewInput().
-				Title("Model for " + labelForSimpleAgent(reviewAgentName(workerName, cfg))).
-				Description("Optional; any value accepted by the agent CLI.").
-				Value(&model),
-		))
-		if err := modelForm.RunWithContext(ctx); err != nil {
+		agentName := reviewAgentName(workerName, cfg)
+		model, err := promptForModelChoice(ctx, labelForSimpleAgent(agentName), agentName, strings.TrimSpace(cfg.Model))
+		if err != nil {
 			return fmt.Errorf("review model picker for %s: %w", workerName, err)
 		}
-		cfg.Model = strings.TrimSpace(model)
+		cfg.Model = model
 		profile.Agents[workerName] = cfg
 	}
 
@@ -275,17 +270,10 @@ func promptForSimpleReviewModels(ctx context.Context, profileName string, profil
 				return fmt.Errorf("review model variant agent picker: %w", err)
 			}
 		}
-		model := ""
-		modelForm := newAccessibleForm(huh.NewGroup(
-			huh.NewInput().
-				Title("Additional model for " + labelForSimpleAgent(agentName)).
-				Description("Example: sonnet, opus, gpt-5-codex, gemini-2.5-pro").
-				Value(&model),
-		))
-		if err := modelForm.RunWithContext(ctx); err != nil {
+		model, err := promptForModelChoice(ctx, labelForSimpleAgent(agentName), agentName, "")
+		if err != nil {
 			return fmt.Errorf("review model variant value: %w", err)
 		}
-		model = strings.TrimSpace(model)
 		if model == "" {
 			continue
 		}
@@ -303,6 +291,98 @@ func labelForSimpleAgent(name string) string {
 		return name
 	}
 	return string(ag.Type())
+}
+
+// reviewModelCustomSentinel is the select value for "type a custom model".
+// It cannot collide with a real model id (which never contains spaces).
+const reviewModelCustomSentinel = "__custom__"
+
+// promptForModelChoice asks for a worker's model. When the agent advertises
+// models (agent.ModelLister) it shows a select of those plus "Default" and
+// "Custom…"; otherwise it falls back to a free-text input. current pre-selects
+// the existing value. Returns the chosen model ("" means the agent default).
+func promptForModelChoice(ctx context.Context, displayLabel, agentName, current string) (string, error) {
+	models := listAgentModelOptions(ctx, agentName)
+	if len(models) == 0 {
+		model := current
+		form := newAccessibleForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Model for " + displayLabel).
+				Description("Optional; any value accepted by the agent CLI.").
+				Value(&model),
+		))
+		if err := form.RunWithContext(ctx); err != nil {
+			return "", fmt.Errorf("model input: %w", err)
+		}
+		return strings.TrimSpace(model), nil
+	}
+
+	options := make([]huh.Option[string], 0, len(models)+2)
+	options = append(options, huh.NewOption("Default (agent's own default model)", ""))
+	for _, m := range models {
+		label := m.ID
+		if m.Note != "" {
+			label = m.ID + "  — " + m.Note
+		}
+		options = append(options, huh.NewOption(label, m.ID))
+	}
+	options = append(options, huh.NewOption("Custom… (type any value)", reviewModelCustomSentinel))
+
+	picked := current
+	if current != "" && !modelInList(current, models) {
+		picked = reviewModelCustomSentinel
+	}
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Model for " + displayLabel).
+			Description("Pick a model, Default, or Custom… to type any value.").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("model picker: %w", err)
+	}
+	if picked != reviewModelCustomSentinel {
+		return picked, nil
+	}
+
+	model := current
+	customForm := newAccessibleForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Custom model for " + displayLabel).
+			Description("Any value accepted by the agent CLI.").
+			Value(&model),
+	))
+	if err := customForm.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("custom model input: %w", err)
+	}
+	return strings.TrimSpace(model), nil
+}
+
+func listAgentModelOptions(ctx context.Context, agentName string) []agent.ModelInfo {
+	ag, err := agent.Get(types.AgentName(agentName))
+	if err != nil {
+		return nil
+	}
+	lister, ok := agent.AsModelLister(ag)
+	if !ok {
+		return nil
+	}
+	models, err := lister.ListModels(ctx)
+	if err != nil {
+		return nil
+	}
+	return models
+}
+
+func modelInList(id string, models []agent.ModelInfo) bool {
+	for _, m := range models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func promptForSimpleReviewMaster(ctx context.Context, profile settings.ReviewProfileConfig) (string, error) {

@@ -4,9 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
+
+func TestModelInList(t *testing.T) {
+	models := []agent.ModelInfo{{ID: "opus"}, {ID: "sonnet"}}
+	if !modelInList("opus", models) {
+		t.Error("expected opus to be in list")
+	}
+	if modelInList("gpt-5", models) {
+		t.Error("gpt-5 should not be in list")
+	}
+}
 
 func configureTestDeps(adapter ...string) Deps {
 	set := map[string]struct{}{}

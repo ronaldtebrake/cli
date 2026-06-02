@@ -26,7 +26,7 @@ entire review attach --agent <name>    # Agent that created the session
 entire review attach --skills <s,...>  # Declare which skills were run
 ```
 
-When no profiles are configured, `entire review` uses a simple guided setup: choose review type, choose worker agents, optionally choose models/model variants, save the profile, then explicitly confirm whether to start agents. `entire review --configure` is the configuration entry point:
+When no profiles are configured, `entire review` uses a simple guided setup: choose review type, choose worker agents, optionally choose models/model variants (a select of each agent's advertised models via `agent.ModelLister`, with a `Custom…` option to type any value), save the profile, then explicitly confirm whether to start agents. `entire review --configure` is the configuration entry point:
 - With `--set-agents` / `--set-master` / `--set-task` / `--set-model agent=model`, it writes the profile non-interactively (no TUI). `--set-*` writes preserve profile-level fields the flags don't touch (custom `task`, `master_model`).
 - With no `--set-*` flags in an interactive terminal, it opens the guided wizard (which already lists the selectable agents).
 - With no `--set-*` flags in a non-interactive context, it prints the discovery view: the **available review agents** (those with review-runner adapters, marking which have hooks installed) and the **currently configured profiles**, plus an example `--set-*` command. In non-interactive output, first run falls back to the default `general` profile automatically. Defaults are intentionally simple: Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude is preferred as master when available.
