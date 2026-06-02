@@ -274,8 +274,8 @@ func resolveFileAttribution(ctx context.Context, file string, fetchOnMiss bool) 
 				}
 				continue
 			}
-			if ctx, ok := resolver.checkpointCache[candidate.CheckpointID]; ok {
-				result.Checkpoints[candidate.CheckpointID] = ctx
+			if checkpointCtx, ok := resolver.checkpointCache[candidate.CheckpointID]; ok {
+				result.Checkpoints[candidate.CheckpointID] = checkpointCtx
 			}
 		}
 	}
@@ -545,7 +545,7 @@ func runGitBlame(ctx context.Context, repoRoot, file string) ([]rawBlameLine, er
 	return parseBlamePorcelain(string(out))
 }
 
-var blameHeaderRe = regexp.MustCompile(`^([0-9a-f]{40})\s+\d+\s+(\d+)(?:\s+\d+)?$`)
+var blameHeaderRe = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})\s+\d+\s+(\d+)(?:\s+\d+)?$`)
 
 func parseBlamePorcelain(output string) ([]rawBlameLine, error) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -1061,7 +1061,7 @@ func appendUniqueString(values []string, value string) []string {
 }
 
 func isZeroCommit(sha string) bool {
-	return sha == "" || sha == plumbing.ZeroHash.String()
+	return sha == "" || strings.Trim(sha, "0") == ""
 }
 
 func writeJSON(w io.Writer, value any) error {

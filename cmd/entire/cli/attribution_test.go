@@ -49,6 +49,30 @@ func TestParseBlamePorcelain(t *testing.T) {
 	require.Equal(t, 2, lines[1].LineNumber)
 }
 
+func TestParseBlamePorcelainSupportsSHA256ObjectIDs(t *testing.T) {
+	sha256ID := strings.Repeat("a", 64)
+	output := strings.Join([]string{
+		fmt.Sprintf("%s 1 1 1", sha256ID),
+		"author Ada Lovelace",
+		"author-time 1700000000",
+		"\tprint('hello')",
+		"",
+	}, "\n")
+
+	lines, err := parseBlamePorcelain(output)
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	require.Equal(t, sha256ID, lines[0].CommitSHA)
+	require.Equal(t, 1, lines[0].LineNumber)
+	require.Equal(t, "print('hello')", lines[0].Content)
+}
+
+func TestIsZeroCommitSupportsSHA256ObjectIDs(t *testing.T) {
+	require.True(t, isZeroCommit(strings.Repeat("0", 40)))
+	require.True(t, isZeroCommit(strings.Repeat("0", 64)))
+	require.False(t, isZeroCommit(strings.Repeat("0", 63)+"1"))
+}
+
 func TestParseAttributionLineRange(t *testing.T) {
 	got, err := parseAttributionLineRange("12-20")
 	require.NoError(t, err)
