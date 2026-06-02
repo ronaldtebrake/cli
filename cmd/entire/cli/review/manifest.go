@@ -435,9 +435,39 @@ func reviewRunModelMatches(want, got string) bool {
 	if want == got {
 		return true
 	}
-	wantCompact := strings.ReplaceAll(want, "-", "")
-	gotCompact := strings.ReplaceAll(got, "-", "")
-	return strings.Contains(gotCompact, wantCompact)
+	wantCompact := compactReviewModelID(want)
+	gotCompact := compactReviewModelID(got)
+	if wantCompact == "" || gotCompact == "" {
+		return true
+	}
+	return strings.Contains(gotCompact, wantCompact) || strings.Contains(wantCompact, gotCompact)
+}
+
+// compactReviewModelID normalizes a model string for fuzzy comparison between a
+// configured profile model (e.g. "anthropic/claude-sonnet:high") and the model
+// recorded on a session (e.g. "claude-sonnet-4-5"). It drops the provider
+// prefix (before the last "/") so the prefix does not skew matching, drops the
+// trailing thinking-level suffix (after ":"), and keeps only alphanumerics.
+//
+// Session model names do not carry the thinking-level suffix, so two workers
+// that share a model but differ only by thinking level ("...:high" vs
+// "...:low") normalize to the same id. Disambiguating those is left to the
+// start-time + used-session fallback in matchReviewSessionState, which still
+// links each worker to a distinct session.
+func compactReviewModelID(s string) string {
+	if slash := strings.LastIndexByte(s, '/'); slash >= 0 && slash < len(s)-1 {
+		s = s[slash+1:]
+	}
+	if colon := strings.IndexByte(s, ':'); colon >= 0 {
+		s = s[:colon]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func agentTypeForReviewAgent(agentName string) agenttypes.AgentType {
