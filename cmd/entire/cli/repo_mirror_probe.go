@@ -142,7 +142,7 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 
 	cloning := false
 	for {
-		ready, status := mirrorAdvertisesHead(ctx, checkURL, token)
+		ready, status := mirrorAdvertisesHead(ctx, probeClient, checkURL, token)
 		switch {
 		case ready:
 			if cloning {
@@ -198,13 +198,13 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 // 0 for transport/build/decode failures, treated as "not ready, keep
 // waiting". Auth is the repo-scoped token as HTTP basic-auth password, the
 // same shape git presents over the entire:// transport.
-func mirrorAdvertisesHead(ctx context.Context, checkURL, token string) (ready bool, status int) {
+func mirrorAdvertisesHead(ctx context.Context, client *http.Client, checkURL, token string) (ready bool, status int) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false, 0
 	}
 	req.SetBasicAuth("entire-cli", token)
-	resp, err := probeClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false, 0
 	}

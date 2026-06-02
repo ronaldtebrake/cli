@@ -1,7 +1,16 @@
 package cli
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/internal/coreapi"
 )
@@ -152,4 +161,60 @@ func TestValidateClusterHost(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMirrorAdvertisesHead_ReusesConnection is the regression test for the
+// body drain in mirrorAdvertisesHead. The probe runs every 2s for up to 30m,
+// and probeClient keeps a small idle pool specifically to reuse the TLS
+// session across ticks — but Go only returns a connection to that pool when
+// the response body is read to EOF before Close. If the drain is removed (or
+// re-capped shorter than the body), the body is left partially read and the
+// transport closes the connection instead, so every probe pays a fresh
+// handshake.
+//
+// We serve a non-200 with a non-empty body: mirrorAdvertisesHead returns at
+// the status check without reading the body itself, so the deferred drain is
+// the *only* thing that consumes it. Counting StateNew transitions then
+// distinguishes "drained → one reused connection" from "not drained → a new
+// connection per call".
+func TestMirrorAdvertisesHead_ReusesConnection(t *testing.T) {
+	t.Parallel()
+
+	// Larger than any plausible "small cap" someone might reintroduce, so a
+	// capped drain would stop before EOF and fail this test too.
+	body := strings.Repeat("x", 64<<10)
+
+	var newConns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// 503 = mirror reachable but not ready; the function returns at the
+		// status check below http.StatusOK without touching the body.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(body)) //nolint:errcheck // test server write; failure surfaces as a client error
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	// Isolated client (not the package-global probeClient) so the idle pool
+	// is private to this test and the assertion stays deterministic under
+	// t.Parallel(). Keep-alives and idle pooling are on by default.
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{MaxIdleConns: 2, MaxIdleConnsPerHost: 2, IdleConnTimeout: 90 * time.Second},
+	}
+
+	const probes = 5
+	for range probes {
+		ready, status := mirrorAdvertisesHead(context.Background(), client, srv.URL, "tok")
+		require.False(t, ready)
+		require.Equal(t, http.StatusServiceUnavailable, status)
+	}
+
+	require.Equal(t, int64(1), newConns.Load(),
+		"expected the drained body to let all %d probes share one connection; got %d new connections (body not drained to EOF?)",
+		probes, newConns.Load())
 }
