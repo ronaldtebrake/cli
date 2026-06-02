@@ -19,21 +19,16 @@ import (
 //  2. Discovery via /.well-known/entire-cluster.json on the cluster
 //     itself, matched against existing local contexts by the
 //     advertised core_urls. The first advertised URL with a local
-//     context wins. This match applies to the current invocation only:
-//     this helper does not persist a cluster→context binding.
+//     context wins.
 //
-//     Resolving fresh on each call is a correctness choice, not a
-//     credential-safety one. The login JWT is only ever sent to the
-//     resolved context's CoreURL — a core the user already holds a local
-//     context for — never to clusterHost; the token clusterHost receives
-//     is repo-scoped and audience-pinned to clusterHost itself (see
-//     repocreds.exchange). A hostile clusterHost can at most steer us
-//     toward a core we already trust; it cannot introduce a new core or
-//     capture an identity-bearing token. What resolving fresh buys is
-//     immediacy: `entire auth use` and context deletion take effect on
-//     the next fetch with no stale binding to unbind, and no
-//     host→core mapping derived from a host-controlled /.well-known
-//     lingers in contexts.json.
+//     A discovery match is NOT persisted here. The caller binds the
+//     clusterHost→context mapping into contexts.json only after the
+//     first scoped-token exchange against the cluster succeeds (see
+//     makeBindHook in cmd/git-remote-entire). Binding post-success
+//     rather than on the bare /.well-known match means a host that
+//     advertises a core we hold a context for, but then can't actually
+//     authenticate us, never leaves a stale binding behind. Once bound,
+//     subsequent invocations short-circuit at step 1 and skip discovery.
 //
 //  3. No local context matches any advertised URL — return a
 //     fatal-ready error with the login hint listing the cluster's
@@ -77,9 +72,11 @@ func ResolveContextForCluster(ctx context.Context, configDir, clusterHost string
 		// otherwise a core with several accounts (alice@core, bob@core) would
 		// resolve to whichever was saved first, silently authenticating as the
 		// wrong user. Fall back to the first match when the current context
-		// isn't eligible for this cluster. Because we re-resolve every
-		// invocation (no persisted binding), `entire auth use` takes effect
-		// immediately for unbound clusters.
+		// isn't eligible for this cluster. This tie-break only applies until
+		// the caller binds the cluster (after the first successful exchange);
+		// from then on step 1 returns the bound context directly. `entire auth
+		// use` therefore affects only not-yet-bound clusters — matching the
+		// `auth use`/`auth unbind` contract.
 		c := matches[0]
 		if current != nil {
 			for _, m := range matches {
@@ -89,7 +86,7 @@ func ResolveContextForCluster(ctx context.Context, configDir, clusterHost string
 				}
 			}
 		}
-		debugf("resolved %s -> %s via discovery match on %s (ephemeral; binding not persisted)", clusterHost, c.Name, coreURL)
+		debugf("resolved %s -> %s via discovery match on %s (caller binds on first successful exchange)", clusterHost, c.Name, coreURL)
 		return c, nil
 	}
 	return nil, errors.New(RenderLoginHint(clusterHost, body.CoreURLs))
