@@ -13,30 +13,39 @@ import (
 // Resolution order:
 //
 //  1. Explicit `cluster_contexts[clusterHost]` binding in contexts.json
-//     pointing at an existing context — used as-is. Bindings are only
-//     created by deliberate action (`entire-core context bind`, or a
-//     teammate's tooling); this CLI never writes one implicitly.
+//     pointing at an existing context — used as-is. Bindings are
+//     created only by deliberate action; this helper never writes one.
+//
 //  2. Discovery via /.well-known/entire-cluster.json on the cluster
 //     itself, matched against existing local contexts by the
 //     advertised core_urls. The first advertised URL with a local
-//     context wins. This match is used for the current invocation only
-//     — we deliberately do NOT persist a cluster→context binding.
-//     Persisting it would let a single drive-by clone of an
-//     attacker-controlled host (e.g. via a malicious submodule whose
-//     /.well-known names the victim's real core) establish a durable,
-//     silent channel that re-mints identity-bearing JWTs on every
-//     future fetch. Re-evaluating the live /.well-known each time keeps
-//     the trust decision fresh and revocable.
+//     context wins. This match applies to the current invocation only:
+//     this helper does not persist a cluster→context binding.
+//
+//     Resolving fresh on each call is a correctness choice, not a
+//     credential-safety one. The login JWT is only ever sent to the
+//     resolved context's CoreURL — a core the user already holds a local
+//     context for — never to clusterHost; the token clusterHost receives
+//     is repo-scoped and audience-pinned to clusterHost itself (see
+//     repocreds.exchange). A hostile clusterHost can at most steer us
+//     toward a core we already trust; it cannot introduce a new core or
+//     capture an identity-bearing token. What resolving fresh buys is
+//     immediacy: `entire auth use` and context deletion take effect on
+//     the next fetch with no stale binding to unbind, and no
+//     host→core mapping derived from a host-controlled /.well-known
+//     lingers in contexts.json.
+//
 //  3. No local context matches any advertised URL — return a
 //     fatal-ready error with the login hint listing the cluster's
 //     advertised issuers.
 //
 // We deliberately do NOT fall back to current_context for an unknown
-// cluster host. The old fallback would silently use a staging
-// context against a prod (entire.io) cluster — which
-// then 400s as "unknown cluster_host" because the cluster's own
-// registry doesn't know the host. The cluster's /.well-known is the
-// authoritative answer to "which env am I in", so we ask it.
+// cluster host. current_context can point at a different environment
+// than clusterHost (e.g. a staging context against a prod cluster); the
+// cluster then rejects the exchanged token with "unknown cluster_host"
+// because its own registry doesn't know that core. The cluster's
+// /.well-known is the authoritative answer to "which env am I in", so we
+// ask it rather than guessing from the active context.
 //
 // debugf is optional; nil suppresses debug output.
 func ResolveContextForCluster(ctx context.Context, configDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, error) {

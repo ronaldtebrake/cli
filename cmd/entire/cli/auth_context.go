@@ -107,10 +107,12 @@ func runAuthContexts(w io.Writer) error {
 }
 
 // printClusterBindings lists any cluster_contexts bindings so users can
-// audit which hosts auto-authenticate git operations with a stored
-// context. A binding means future ops against that host mint
-// identity-bearing JWTs without re-checking the host's /.well-known, so an
-// unrecognised entry is worth revoking with `entire auth unbind`.
+// audit which hosts skip /.well-known discovery and resolve straight to a
+// stored context. A binding does not hand that host your login JWT — that
+// only ever goes to the bound context's core, and the host receives a
+// repo-scoped, audience-pinned token (see repocreds). What a binding pins
+// is which core authenticates that host, so an entry you don't recognise
+// is still worth revoking with `entire auth unbind`.
 func printClusterBindings(w io.Writer) error {
 	bindings, err := auth.ClusterBindings()
 	if err != nil {
