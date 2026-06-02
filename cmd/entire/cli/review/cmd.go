@@ -250,7 +250,12 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
-	if len(s.ReviewProfiles) == 0 {
+	// Trigger first-run setup when no usable profile exists. Counting only
+	// non-zero profiles means a placeholder/empty entry (e.g. an empty
+	// `general` profile in a hand-edited preferences file) still routes through
+	// guided setup / the non-interactive default instead of dead-ending later in
+	// selectReviewProfile with "every profile is empty".
+	if len(nonZeroProfiles(s.ReviewProfiles)) == 0 {
 		profileForSetup := profileOverride
 		var profile settings.ReviewProfileConfig
 		guidedSetup := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
@@ -314,7 +319,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 
 	if missing := missingInstalledProfileAgents(profile.Agents, installed); len(missing) > 0 {
 		cmd.SilenceUsage = true
-		err := fmt.Errorf("Hooks are not installed for review profile %q agent(s): %s. Run `entire configure --agent <name>` first, or edit the profile", profileName, strings.Join(missing, ", "))
+		err := fmt.Errorf("hooks are not installed for review profile %q agent(s): %s; run `entire configure --agent <name>` first, or edit the profile", profileName, strings.Join(missing, ", "))
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 		return silentErr(err)
 	}
@@ -385,6 +390,32 @@ func nonLaunchableEligibleNames(profile settings.ReviewProfileConfig, eligible [
 	return out
 }
 
+// confirmReReviewOrProceed implements the "HEAD already reviewed" guard.
+// It returns (proceed, err). When the checkpoint has no prior review it returns
+// (true, nil). In a non-interactive context it cannot prompt, so it proceeds
+// (the user explicitly invoked `entire review`) after printing a note rather
+// than blocking on a confirm form that would error out.
+func confirmReReviewOrProceed(ctx context.Context, out io.Writer, deps Deps) (bool, error) {
+	reviewed, meta := deps.HeadHasReviewCheckpoint(ctx)
+	if !reviewed {
+		return true, nil
+	}
+	if !interactive.CanPromptInteractively() {
+		fmt.Fprintf(out, "Note: HEAD was already reviewed (%s); re-running.\n", meta)
+		return true, nil
+	}
+	var proceed bool
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title(fmt.Sprintf("Already reviewed: %s. Proceed anyway?", meta)).
+			Value(&proceed),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return false, err //nolint:wrapcheck // propagate huh cancellation
+	}
+	return proceed, nil
+}
+
 // runSingleAgentPath completes a single-agent review: verifies hooks + skills,
 // guards against re-review, resolves scope, then dispatches via Run or
 // RunMarkerFallback.
@@ -430,21 +461,12 @@ func runSingleAgentPath(
 	}
 
 	// 4. Re-run guard: check if HEAD's checkpoint already has a review.
-	if reviewed, meta := deps.HeadHasReviewCheckpoint(ctx); reviewed {
-		var proceed bool
-		form := newAccessibleForm(huh.NewGroup(
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Already reviewed: %s. Proceed anyway?", meta)).
-				Value(&proceed),
-		))
-		if err := form.RunWithContext(ctx); err != nil {
-			fmt.Fprintln(out, "prompt cancelled")
-			return err //nolint:wrapcheck // propagate huh cancellation
-		}
-		if !proceed {
-			fmt.Fprintln(out, "Review cancelled.")
-			return nil
-		}
+	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
+		fmt.Fprintln(out, "prompt cancelled")
+		return guardErr
+	} else if !proceed {
+		fmt.Fprintln(out, "Review cancelled.")
+		return nil
 	}
 
 	// 5. Resolve HEAD SHA and worktree root.
@@ -577,21 +599,12 @@ func runMultiAgentPath(
 		return fmt.Errorf("resolve HEAD: %w", shaErr)
 	}
 
-	if reviewed, meta := deps.HeadHasReviewCheckpoint(ctx); reviewed {
-		var proceed bool
-		form := newAccessibleForm(huh.NewGroup(
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Already reviewed: %s. Proceed anyway?", meta)).
-				Value(&proceed),
-		))
-		if err := form.RunWithContext(ctx); err != nil {
-			fmt.Fprintln(out, "prompt cancelled")
-			return err //nolint:wrapcheck // propagate huh cancellation
-		}
-		if !proceed {
-			fmt.Fprintln(out, "Review cancelled.")
-			return nil
-		}
+	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
+		fmt.Fprintln(out, "prompt cancelled")
+		return guardErr
+	} else if !proceed {
+		fmt.Fprintln(out, "Review cancelled.")
+		return nil
 	}
 
 	scopeBaseRef, scopeErr := detectScope(ctx, worktreeRoot, baseOverride, out)
@@ -647,7 +660,11 @@ func runMultiAgentPath(
 	}
 	aggregateOutput := ""
 
-	masterWorkerName, masterCfg, _ := selectProfileWorker(profile, profile.Master)
+	masterWorkerName, masterCfg, masterErr := selectProfileWorker(profile, profile.Master)
+	masterLabel := profile.Master
+	if masterErr == nil {
+		masterLabel = reviewWorkerLabel(masterWorkerName, masterCfg)
+	}
 	masterAgentName, masterModel := resolveProfileMaster(profile)
 	masterProvider := AgentSynthesisProvider{AgentName: masterAgentName, Model: masterModel}
 	sinks := composeMultiAgentSinks(multiAgentSinkInputs{
@@ -661,7 +678,7 @@ func runMultiAgentPath(
 		perRunPrompt:      perRunPrompt,
 		profileName:       profileName,
 		task:              profile.Task,
-		masterName:        reviewWorkerLabel(masterWorkerName, masterCfg),
+		masterName:        masterLabel,
 		autoSynthesis:     true,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result

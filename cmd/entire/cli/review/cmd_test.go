@@ -167,8 +167,8 @@ func TestRunReview_MissingHooksAborts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when hooks are not installed")
 	}
-	if !strings.Contains(errBuf.String(), "Hooks are not installed") {
-		t.Errorf("expected 'Hooks are not installed' in stderr, got: %s", errBuf.String())
+	if !strings.Contains(errBuf.String(), "hooks are not installed") {
+		t.Errorf("expected 'hooks are not installed' in stderr, got: %s", errBuf.String())
 	}
 
 	_, ok, readErr := review.ReadPendingReviewMarker(context.Background())

@@ -59,8 +59,11 @@ func (p AgentSynthesisProvider) Synthesize(ctx context.Context, prompt string) (
 }
 
 // SynthesisSink composes a multi-agent verdict by calling a configured
-// summary provider after the run finishes. AgentEvent is a no-op; all
-// work happens in RunFinished.
+// provider after the run finishes. In normal profile-native `entire review`
+// runs this is the profile's master adjudication phase: Auto is true and
+// Provider is the profile master, so the master report is produced without a
+// y/N prompt. The legacy opt-in path (Auto false) keeps the prompted-synthesis
+// behavior. AgentEvent is a no-op; all work happens in RunFinished.
 type SynthesisSink struct {
 	Provider        SynthesisProvider
 	Writer          io.Writer

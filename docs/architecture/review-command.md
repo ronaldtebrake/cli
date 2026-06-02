@@ -117,7 +117,7 @@ The redesign eliminated several constructs from the prior implementation. None s
 - `cmd/entire/cli/review/marker_fallback.go` — manual fallback for agents without review-runner adapters yet (single shared file)
 - `cmd/entire/cli/review/prompt.go` / `scope.go` / `run.go` / `dump.go` / `run_multi.go` — core machinery (single-agent + N-agent fan-in)
 - `cmd/entire/cli/review/tui_sink.go` / `tui_model.go` / `tui_detail.go` — Bubble Tea TUI sink
-- `cmd/entire/cli/review/synthesis_sink.go` / `synthesis_prompt.go` — opt-in cross-agent verdict
+- `cmd/entire/cli/review/synthesis_sink.go` / `synthesis_prompt.go` — profile master adjudication (runs automatically for multi-worker profiles) plus the legacy opt-in synthesis path
 - `cmd/entire/cli/review/types/{reviewer,sink,template}.go` — interface contracts (CU2 + CU4 + CU5b)
 - `cmd/entire/cli/review/env.go` — `ENTIRE_REVIEW_*` constants + `EncodeSkills`/`DecodeSkills` + `AppendReviewEnv`
 - `cmd/entire/cli/agent/{claudecode,codex,geminicli}/reviewer.go` — per-agent `AgentReviewer` implementations (claude-code, codex, gemini-cli)
@@ -125,4 +125,4 @@ The redesign eliminated several constructs from the prior implementation. None s
 - `cmd/entire/cli/lifecycle.go` — `adoptReviewEnv` reads `ENTIRE_REVIEW_*` from process env; replaces marker-file adoption
 - `cmd/entire/cli/review_bridge.go` / `review_helpers.go` — bridge code in `cli` package for cycle-bound functions (`headHasReviewCheckpoint`, `launchableReviewerFor`, `newReviewAttachCmd`)
 - `cmd/entire/cli/checkpoint/checkpoint.go` — `Kind`, `ReviewSkills`, `ReviewPrompt` on `CommittedMetadata`; `HasReview` on `CheckpointSummary`
-- `cmd/entire/cli/settings/settings.go` — `EntireSettings.Review` field
+- `cmd/entire/cli/settings/settings.go` — `EntireSettings.ReviewProfiles` + `EntireSettings.ReviewDefaultProfile` (the old `EntireSettings.Review` map is parse-tolerated but unused by `entire review`)

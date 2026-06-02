@@ -233,7 +233,7 @@ func promptForSimpleReviewModels(ctx context.Context, profileName string, profil
 		model := strings.TrimSpace(cfg.Model)
 		modelForm := newAccessibleForm(huh.NewGroup(
 			huh.NewInput().
-				Title(fmt.Sprintf("Model for %s", labelForSimpleAgent(reviewAgentName(workerName, cfg)))).
+				Title("Model for " + labelForSimpleAgent(reviewAgentName(workerName, cfg))).
 				Description("Optional; any value accepted by the agent CLI.").
 				Value(&model),
 		))
@@ -278,7 +278,7 @@ func promptForSimpleReviewModels(ctx context.Context, profileName string, profil
 		model := ""
 		modelForm := newAccessibleForm(huh.NewGroup(
 			huh.NewInput().
-				Title(fmt.Sprintf("Additional model for %s", labelForSimpleAgent(agentName))).
+				Title("Additional model for " + labelForSimpleAgent(agentName)).
 				Description("Example: sonnet, opus, gpt-5-codex, gemini-2.5-pro").
 				Value(&model),
 		))
@@ -326,7 +326,11 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 			Value(&runNow),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return false, fmt.Errorf("start review confirmation: %w", err)
+		// Aborting the confirm (Ctrl+C / Esc) is a clean "not now", not a
+		// command error. Surface it as picker-cancelled so the caller maps it
+		// to a silent exit via handlePickerError.
+		fmt.Fprintln(out, "Review not started. Run `entire review` when ready.")
+		return false, ErrPickerCancelled
 	}
 	if !runNow {
 		fmt.Fprintln(out, "Review not started. Run `entire review` when ready.")
@@ -538,22 +542,6 @@ func SaveReviewFixAgent(ctx context.Context, agentName string) error {
 	return nil
 }
 
-func saveReviewConfigAndFixAgent(ctx context.Context, review map[string]settings.ReviewConfig, fixAgent string) error {
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return fmt.Errorf("load review preferences before save: %w", err)
-	}
-	if prefs == nil {
-		prefs = &settings.ClonePreferences{}
-	}
-	prefs.Review = review
-	prefs.ReviewFixAgent = fixAgent
-	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
-		return fmt.Errorf("save review preferences: %w", err)
-	}
-	return nil
-}
-
 func saveReviewProfileConfig(ctx context.Context, profileName string, agents map[string]settings.ReviewConfig, master string) error {
 	prefs, err := settings.LoadClonePreferences(ctx)
 	if err != nil {
@@ -565,11 +553,17 @@ func saveReviewProfileConfig(ctx context.Context, profileName string, agents map
 	if prefs.ReviewProfiles == nil {
 		prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{}
 	}
-	prefs.ReviewProfiles[profileName] = settings.ReviewProfileConfig{
-		Task:   profileTask(profileName, settings.ReviewProfileConfig{}),
-		Agents: agents,
-		Master: master,
+	// Merge into any existing profile so the advanced skills picker only
+	// rewrites what it actually edits (agents + master). Profile-level fields
+	// the picker never surfaces — custom `task` text and `master_model` — are
+	// preserved instead of being clobbered with built-in defaults.
+	profile := prefs.ReviewProfiles[profileName]
+	profile.Agents = agents
+	profile.Master = master
+	if strings.TrimSpace(profile.Task) == "" {
+		profile.Task = profileTask(profileName, settings.ReviewProfileConfig{})
 	}
+	prefs.ReviewProfiles[profileName] = profile
 	if prefs.ReviewDefaultProfile == "" {
 		prefs.ReviewDefaultProfile = profileName
 	}
@@ -647,17 +641,6 @@ func promptForReviewMasterAgent(ctx context.Context, choices []AgentChoice, save
 	return picked, nil
 }
 
-// ComputeEligibleConfigured returns the sorted list of legacy review agents
-// that are both configured (non-zero ReviewConfig entry) AND have hooks
-// installed. New review execution uses ComputeEligibleConfiguredForProfile;
-// this helper remains for tests and old picker helpers.
-func ComputeEligibleConfigured(s *settings.EntireSettings, installed []types.AgentName) []AgentChoice {
-	if s == nil {
-		return nil
-	}
-	return eligibleAgentChoices(s.Review, installed)
-}
-
 // ComputeEligibleConfiguredForProfile returns the sorted list of agents in a
 // profile that are both configured and have hooks installed.
 func ComputeEligibleConfiguredForProfile(profile settings.ReviewProfileConfig, installed []types.AgentName) []AgentChoice {
@@ -696,24 +679,14 @@ func labelForAgentChoice(name string, cfg settings.ReviewConfig) string {
 	}
 }
 
-// computeLaunchableEligible returns the subset of ComputeEligibleConfigured
-// that also have a non-nil AgentReviewer. "Launchable" here is a historical
-// shorthand for "has an Entire review-runner adapter"; it is not a claim about
-// whether the agent's own CLI supports headless execution.
-// Used by the dispatch fork in cmd.go to decide whether to route to the
-// multi-agent path.
+// computeLaunchableEligibleForProfile returns the subset of
+// ComputeEligibleConfiguredForProfile that also have a non-nil AgentReviewer.
+// "Launchable" here is a historical shorthand for "has an Entire review-runner
+// adapter"; it is not a claim about whether the agent's own CLI supports
+// headless execution.
 //
 // reviewerFor is deps.ReviewerFor injected at the cmd layer; it returns nil for
 // agents that are known to Entire but not yet wired into `entire review`.
-func computeLaunchableEligible(
-	s *settings.EntireSettings,
-	installed []types.AgentName,
-	reviewerFor func(string) reviewtypes.AgentReviewer,
-) []AgentChoice {
-	eligible := ComputeEligibleConfigured(s, installed)
-	return filterLaunchableEligible(eligible, reviewerFor)
-}
-
 func computeLaunchableEligibleForProfile(
 	profile settings.ReviewProfileConfig,
 	installed []types.AgentName,
@@ -728,16 +701,6 @@ func filterLaunchableEligibleForProfile(profile settings.ReviewProfileConfig, el
 	for _, c := range eligible {
 		cfg := profile.Agents[c.Name]
 		if reviewerFor(reviewAgentName(c.Name, cfg)) != nil {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func filterLaunchableEligible(eligible []AgentChoice, reviewerFor func(string) reviewtypes.AgentReviewer) []AgentChoice {
-	out := make([]AgentChoice, 0, len(eligible))
-	for _, c := range eligible {
-		if reviewerFor(c.Name) != nil {
 			out = append(out, c)
 		}
 	}

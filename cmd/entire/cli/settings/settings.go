@@ -99,8 +99,9 @@ type EntireSettings struct {
 	// still parse, but `entire review` no longer reads this field.
 	Review map[string]ReviewConfig `json:"review,omitempty"`
 
-	// Deprecated: legacy fix-agent preference. Kept for `entire review --fix`
-	// until fix selection is profile-aware.
+	// ReviewFixAgent is the saved `entire review --fix` agent preference. It is
+	// transitional: still read by the fix flow until fix-agent selection becomes
+	// fully profile-aware.
 	ReviewFixAgent string `json:"review_fix_agent,omitempty"`
 
 	// Investigate holds configuration for `entire investigate`. Empty means
@@ -302,11 +303,13 @@ type ReviewConfig struct {
 	Model string `json:"model,omitempty"`
 
 	// Skills is the list of slash-prefixed skill invocations configured
-	// for this agent. May be empty when Prompt carries the full request.
+	// for this agent. May be empty for prompt/model-driven workers (e.g. Pi),
+	// in which case the profile task plus Prompt drive the review.
 	Skills []string `json:"skills,omitempty"`
 
 	// Prompt, when non-empty, carries saved agent-specific instructions. It is
-	// appended after the profile task regardless of whether Skills is empty.
+	// appended after the profile task (and after any Skills); it is not a
+	// verbatim replacement for the whole review prompt.
 	Prompt string `json:"prompt,omitempty"`
 }
 
