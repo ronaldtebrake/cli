@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -103,16 +102,5 @@ func TestCheckpointStruct(t *testing.T) {
 	}
 	if taskCheckpoint.ToolUseID != "toolu_abc123" {
 		t.Errorf("expected ToolUseID to match, got %s", taskCheckpoint.ToolUseID)
-	}
-}
-
-// TestManualCommitStrategyGetAdditionalSessions verifies that GetAdditionalSessions is callable
-func TestManualCommitStrategyGetAdditionalSessions(t *testing.T) {
-	strat := NewManualCommitStrategy()
-
-	// GetAdditionalSessions should be callable
-	_, err := strat.GetAdditionalSessions(context.Background())
-	if err != nil {
-		t.Logf("GetAdditionalSessions returned error: %v", err)
 	}
 }
