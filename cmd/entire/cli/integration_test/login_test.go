@@ -96,7 +96,7 @@ func TestLogin_SavesTokenAfterApproval(t *testing.T) {
 		t.Fatalf("output missing wait message:\n%s", output)
 	}
 
-	if !strings.Contains(output, "Login complete.") {
+	if !strings.Contains(output, "login complete.") {
 		t.Fatalf("output missing login complete message (token save likely failed):\n%s", output)
 	}
 
@@ -142,7 +142,7 @@ func TestLogin_ExpiredFlow(t *testing.T) {
 		t.Fatalf("expected expired message, got:\n%s", output)
 	}
 
-	if strings.Contains(output, "Login complete.") {
+	if strings.Contains(output, "login complete.") {
 		t.Fatal("output should NOT contain login complete for expired flow")
 	}
 }
@@ -181,7 +181,7 @@ func TestLogin_DeniedFlow(t *testing.T) {
 		t.Fatalf("expected denied message, got:\n%s", output)
 	}
 
-	if strings.Contains(output, "Login complete.") {
+	if strings.Contains(output, "login complete.") {
 		t.Fatal("output should NOT contain login complete for denied flow")
 	}
 }
@@ -255,8 +255,8 @@ func waitForLoginPrompt(t *testing.T, stdout *bufio.Reader) (string, string) {
 		switch {
 		case strings.HasPrefix(line, "Device code: "):
 			deviceCode = strings.TrimPrefix(line, "Device code: ")
-		case strings.HasPrefix(line, "Approval URL: "):
-			approvalURL = strings.TrimPrefix(line, "Approval URL: ")
+		case strings.HasPrefix(line, "Login URL:"):
+			approvalURL = strings.TrimSpace(strings.TrimPrefix(line, "Login URL:"))
 		}
 
 		if approvalURL != "" && deviceCode != "" {
