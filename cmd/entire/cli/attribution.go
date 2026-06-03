@@ -70,18 +70,12 @@ type attributionLine struct {
 	Candidates      []attributionCandidate `json:"candidates,omitempty"`
 }
 
-type attributionCandidate struct {
-	CheckpointID    string   `json:"checkpoint_id"`
-	SessionID       string   `json:"session_id,omitempty"`
-	Agent           string   `json:"agent,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	Prompt          string   `json:"prompt,omitempty"`
-	Intent          string   `json:"intent,omitempty"`
-	FilesTouched    []string `json:"files_touched,omitempty"`
-	MetadataMissing bool     `json:"metadata_missing,omitempty"`
-	Mixed           bool     `json:"mixed,omitempty"`
-}
-
+// attributionCheckpointContext is the resolved metadata for one checkpoint as
+// it applies to a file: the agent/session that produced the file's lines plus
+// the prompt and intent behind them. The same shape is used two ways — as a
+// per-line candidate (one line may map to several checkpoints) and as the
+// deduplicated per-file checkpoint map — so attributionCandidate aliases it
+// rather than duplicating the fields.
 type attributionCheckpointContext struct {
 	CheckpointID    string   `json:"checkpoint_id"`
 	SessionID       string   `json:"session_id,omitempty"`
@@ -93,6 +87,8 @@ type attributionCheckpointContext struct {
 	MetadataMissing bool     `json:"metadata_missing,omitempty"`
 	Mixed           bool     `json:"mixed,omitempty"`
 }
+
+type attributionCandidate = attributionCheckpointContext
 
 type fileAttributionResult struct {
 	File        string                                  `json:"file"`
@@ -363,7 +359,7 @@ func (r *attributionResolver) resolveLine(raw rawBlameLine, file string) attribu
 
 	var candidates []attributionCandidate
 	for _, cpID := range cpIDs {
-		candidates = append(candidates, candidateFromContext(r.checkpointContext(cpID, file)))
+		candidates = append(candidates, r.checkpointContext(cpID, file))
 	}
 
 	preferred := preferredAttributionCandidate(candidates, file)
@@ -479,7 +475,7 @@ func enrichAttributionLineWithFetch(ctx context.Context, file string, line *attr
 		}
 		cpCtx := resolver.checkpointContext(cpID, file)
 		checkpoints[cpCtx.CheckpointID] = cpCtx
-		candidates = append(candidates, candidateFromContext(cpCtx))
+		candidates = append(candidates, cpCtx)
 	}
 	preferred := preferredAttributionCandidate(candidates, file)
 	applyPreferredToLine(line, preferred)
@@ -1043,13 +1039,6 @@ func attributionTag(authorship attributionAuthorship) string {
 	default:
 		return "[HU]"
 	}
-}
-
-// candidateFromContext projects the resolved checkpoint context onto a
-// per-line candidate. The two structs carry the same fields, so this is a
-// direct conversion — if they ever diverge, this stops compiling.
-func candidateFromContext(ctx attributionCheckpointContext) attributionCandidate {
-	return attributionCandidate(ctx)
 }
 
 // applyPreferredToLine copies the preferred candidate's metadata onto the line.
