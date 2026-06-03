@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,8 +16,70 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/coreapi"
 )
+
+func TestExplainSuspendedMirror(t *testing.T) {
+	t.Parallel()
+	const id = "01KS6KFJR2XS6PZ188MVYE07AN"
+
+	t.Run("suspended mirror is explained with resume command", func(t *testing.T) {
+		t.Parallel()
+		// Wrap the sentinel the way RepoScopedToken/waitForMirrorClone do, to
+		// prove detection survives the wrapping chain.
+		err := fmt.Errorf("authorize clone probe: %w", fmt.Errorf("repo-scoped token exchange: %w", auth.ErrRepoTargetUnknown))
+		var buf bytes.Buffer
+		handled, serr := explainSuspendedMirror(&buf, id, false, err)
+		if !handled {
+			t.Fatal("expected handled=true for ErrRepoTargetUnknown")
+		}
+		var silent *SilentError
+		if !errors.As(serr, &silent) {
+			t.Errorf("expected a SilentError, got %T: %v", serr, serr)
+		}
+		out := buf.String()
+		if !strings.Contains(out, id) {
+			t.Errorf("message %q omits the mirror id", out)
+		}
+		if !strings.Contains(out, "entire-core admin mirrors resume "+id) {
+			t.Errorf("message %q omits the resume command", out)
+		}
+	})
+
+	t.Run("fresh create passes invalid_target through as propagation lag", func(t *testing.T) {
+		t.Parallel()
+		// Same invalid_target signature, but on a just-created placement it's
+		// eventual-consistency lag, not suspension — don't misdirect to resume.
+		err := fmt.Errorf("authorize clone probe: %w", fmt.Errorf("repo-scoped token exchange: %w", auth.ErrRepoTargetUnknown))
+		var buf bytes.Buffer
+		handled, serr := explainSuspendedMirror(&buf, id, true, err)
+		if handled {
+			t.Error("expected handled=false for a fresh create")
+		}
+		if serr != nil {
+			t.Errorf("expected nil error, got %v", serr)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+
+	t.Run("unrelated error passes through untouched", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		handled, serr := explainSuspendedMirror(&buf, id, false, errors.New("timed out waiting for initial clone"))
+		if handled {
+			t.Error("expected handled=false for an unrelated error")
+		}
+		if serr != nil {
+			t.Errorf("expected nil error, got %v", serr)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+}
 
 // TestParseGitHubURL is ported from entiredb's cmd/entire-repo/cli
 // mirror_test.go, since parseGitHubURL was carried over verbatim.

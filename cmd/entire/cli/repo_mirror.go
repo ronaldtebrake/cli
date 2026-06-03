@@ -156,6 +156,10 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 					return nil
 				}
 				if err := waitForMirrorClone(ctx, out, clusterHost, owner, repo, waitTimeout); err != nil {
+					if handled, serr := explainSuspendedMirror(cmd.ErrOrStderr(), created.MirrorId, created.Created, err); handled {
+						cmd.SilenceUsage = true
+						return serr
+					}
 					return err
 				}
 				fmt.Fprintf(out, "\nClone it:\n  git clone %s\n", created.MirrorUrl)
