@@ -21,8 +21,8 @@ const apiBasePath = "/api/v1"
 //
 // The host and bearer come from auth.ResolveControlPlaneTarget: the active
 // contexts.json login's core (so `entire auth use <ctx>` retargets the
-// control plane), or — when ENTIRE_AUTH_BASE_URL is set or no context is
-// active — the configured auth host. The Core API is served at
+// control plane), or — when no context is active — the configured auth host
+// (ENTIRE_AUTH_BASE_URL or the default). The Core API is served at
 // <core>/api/v1. The bearer is resolved lazily per request; for an active
 // context it re-mints silently from the stored refresh token, and for the
 // static path an RFC 8693 exchange happens transparently when the stored
