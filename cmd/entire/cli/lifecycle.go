@@ -53,6 +53,19 @@ func DispatchLifecycleEvent(ctx context.Context, ag agent.Agent, event *agent.Ev
 		return errors.New("event cannot be nil")
 	}
 
+	// Reject path-unsafe session IDs once, here, before any handler uses the ID
+	// to build filesystem paths. Handlers historically validated individually,
+	// which is fragile — handleLifecycleTurnEnd builds .entire/metadata/<id>/
+	// via os.MkdirAll + os.WriteFile without its own check. Centralizing the
+	// guard covers every handler (and any future one) uniformly. Empty IDs pass
+	// through: handlers apply their own empty-handling (e.g. TurnEnd falls back
+	// to a safe constant).
+	if event.SessionID != "" {
+		if err := validation.ValidateSessionID(event.SessionID); err != nil {
+			return fmt.Errorf("invalid session ID in %s event: %w", event.Type, err)
+		}
+	}
+
 	// Filter forwarded hooks: when Cursor IDE forwards events to both
 	// .cursor/hooks.json and .claude/settings.json, only the agent that owns
 	// the session should process them — otherwise checkpoints, metadata

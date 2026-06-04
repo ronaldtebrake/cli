@@ -347,6 +347,34 @@ func TestDispatchLifecycleEvent_UnknownEventType(t *testing.T) {
 	}
 }
 
+// TestDispatchLifecycleEvent_RejectsTraversalSessionID verifies the dispatcher
+// rejects a path-unsafe session ID for every event type, before routing to a
+// handler. This guards handlers that build filesystem paths from the ID without
+// their own check (notably handleLifecycleTurnEnd's .entire/metadata/<id>/
+// MkdirAll + WriteFile). The guard runs before any repo/FS access, so no repo
+// setup is needed.
+func TestDispatchLifecycleEvent_RejectsTraversalSessionID(t *testing.T) {
+	t.Parallel()
+
+	ag := newMockAgent()
+	for _, evType := range []agent.EventType{
+		agent.TurnEnd, agent.ModelUpdate, agent.Compaction, agent.SubagentEnd, agent.SessionEnd,
+	} {
+		err := DispatchLifecycleEvent(context.Background(), ag, &agent.Event{
+			Type:       evType,
+			SessionID:  "../../etc/evil",
+			SessionRef: "/dev/null",
+			Model:      "x",
+		})
+		if err == nil {
+			t.Fatalf("%v event with traversal session ID: got nil error, want rejection", evType)
+		}
+		if !strings.Contains(err.Error(), "invalid session ID") {
+			t.Errorf("%v event: error = %q, want \"invalid session ID\"", evType, err)
+		}
+	}
+}
+
 // --- handleLifecycleSessionStart tests ---
 
 func TestHandleLifecycleSessionStart_EmptySessionID(t *testing.T) {
