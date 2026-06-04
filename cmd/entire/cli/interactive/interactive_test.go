@@ -108,9 +108,32 @@ func TestTermLacksANSI(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.term, func(t *testing.T) {
 			t.Setenv("TERM", c.term)
-			if got := TermLacksANSI(); got != c.want {
-				t.Errorf("TermLacksANSI() with TERM=%q = %v; want %v", c.term, got, c.want)
+			if got := termLacksANSI(); got != c.want {
+				t.Errorf("termLacksANSI() with TERM=%q = %v; want %v", c.term, got, c.want)
 			}
 		})
 	}
+}
+
+// TestShouldStyle exercises the disabling gates; the enabling path needs a
+// real terminal writer, which `go test` doesn't provide.
+func TestShouldStyle(t *testing.T) {
+	t.Run("NO_COLOR disables", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		if ShouldStyle(os.Stdout) {
+			t.Error("ShouldStyle(os.Stdout) = true with NO_COLOR set; want false")
+		}
+	})
+	t.Run("TERM=cygwin disables", func(t *testing.T) {
+		t.Setenv("TERM", "cygwin")
+		if ShouldStyle(os.Stdout) {
+			t.Error("ShouldStyle(os.Stdout) = true with TERM=cygwin; want false")
+		}
+	})
+	t.Run("non-terminal writer disables", func(t *testing.T) {
+		t.Setenv("TERM", "xterm-256color")
+		if ShouldStyle(&bytes.Buffer{}) {
+			t.Error("ShouldStyle(*bytes.Buffer) = true; want false")
+		}
+	})
 }

@@ -73,17 +73,11 @@ func RenderForWriter(w io.Writer, markdown string) (string, error) {
 	return Render(markdown, terminalWidth(w), termenv.HasDarkBackground())
 }
 
-// shouldRender returns true if w is a terminal writer and NO_COLOR is unset.
-// TermLacksANSI also disables rendering so legacy consoles (e.g. TERM=cygwin)
-// don't show literal escape sequences in place of styled markdown.
+// shouldRender returns true when styled output is appropriate for w
+// (terminal writer, NO_COLOR unset, no legacy console) — see
+// interactive.ShouldStyle.
 func shouldRender(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if interactive.TermLacksANSI() {
-		return false
-	}
-	return interactive.IsTerminalWriter(w)
+	return interactive.ShouldStyle(w)
 }
 
 // terminalWidth returns the writer's terminal width capped at 80.

@@ -961,9 +961,8 @@ func TestShouldUseColor_RegularFile(t *testing.T) {
 	}
 }
 
-// TERM=cygwin's legacy console renders the ESC byte as the CP437 glyph "←"
-// instead of starting an SGR sequence, so styled output appears as literal
-// text like "←[32m●←[m". Regression test for GH #1267.
+// TERM=cygwin must disable color; see interactive.termLacksANSI.
+// Regression test for GH #1267.
 func TestShouldUseColor_TermCygwinDisables(t *testing.T) {
 	t.Setenv("TERM", "cygwin")
 
@@ -991,10 +990,10 @@ func TestFormatSettingsStatusShort_TermCygwinNoEscapes(t *testing.T) {
 
 	sty := newStatusStyles(f)
 	out := formatSettingsStatusShort(context.Background(), &EntireSettings{Enabled: true}, sty)
-	if bytes.ContainsRune([]byte(out), 0x1B) {
+	if strings.ContainsRune(out, 0x1B) {
 		t.Errorf("output contains ESC (0x1B) under TERM=cygwin: %q", out)
 	}
-	if bytes.ContainsRune([]byte(out), '←') {
+	if strings.ContainsRune(out, '←') {
 		t.Errorf("output contains U+2190 LEFTWARDS ARROW under TERM=cygwin: %q", out)
 	}
 }

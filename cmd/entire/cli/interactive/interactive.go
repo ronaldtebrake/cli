@@ -91,13 +91,26 @@ func IsTerminalWriter(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr->int is safe for fd
 }
 
-// TermLacksANSI reports whether the current TERM identifies a legacy console
+// ShouldStyle reports whether ANSI-styled output (color, bold, rendered
+// markdown) should be written to w. It is the single gate for writer-scoped
+// styling decisions: NO_COLOR disables styling per https://no-color.org,
+// legacy consoles that can't handle ANSI escapes are excluded, and otherwise
+// the answer is whether w is a terminal.
+func ShouldStyle(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if termLacksANSI() {
+		return false
+	}
+	return IsTerminalWriter(w)
+}
+
+// termLacksANSI reports whether the current TERM identifies a legacy console
 // that does not reliably handle ANSI escape sequences. The canonical case is
 // TERM=cygwin: writing the ESC byte (0x1B) ends up rendered as the CP437
 // glyph U+2190 LEFTWARDS ARROW ("←") instead of starting an SGR sequence, so
 // styled output appears as literal text like "←[32m●←[m" (see GH #1267).
-// When this returns true, callers should disable color and ANSI styling so
-// the output is plain text instead.
-func TermLacksANSI() bool {
+func termLacksANSI() bool {
 	return os.Getenv("TERM") == "cygwin"
 }

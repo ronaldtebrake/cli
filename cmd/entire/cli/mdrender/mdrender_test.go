@@ -107,10 +107,8 @@ func TestRenderForWriter_NoColorEnvForcesRaw(t *testing.T) {
 	}
 }
 
-// TestRenderForWriter_TermCygwinForcesRaw verifies TERM=cygwin disables
-// rendering. Cygwin's legacy console renders ESC as "←" (CP437 U+2190) so
-// styled output is unreadable — fall back to raw markdown. Regression test
-// for GH #1267.
+// TERM=cygwin must fall back to raw markdown; see interactive.termLacksANSI.
+// Regression test for GH #1267.
 func TestRenderForWriter_TermCygwinForcesRaw(t *testing.T) {
 	t.Setenv("TERM", "cygwin")
 
