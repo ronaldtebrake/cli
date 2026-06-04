@@ -152,7 +152,7 @@ func setupResumeTestRepo(t *testing.T, tmpDir string, createFeatureBranch bool) 
 	}
 
 	// Ensure entire/checkpoints/v1 branch exists
-	if err := strategy.EnsureMetadataBranch(t.Context(), repo); err != nil {
+	if err := strategy.EnsurePrimaryRef(t.Context(), repo); err != nil {
 		t.Fatalf("Failed to create metadata branch: %v", err)
 	}
 
@@ -341,7 +341,7 @@ func createCheckpointOnMetadataBranchFull(t *testing.T, repo *git.Repository, se
 	t.Helper()
 
 	// Get existing metadata branch or create it
-	if err := strategy.EnsureMetadataBranch(t.Context(), repo); err != nil {
+	if err := strategy.EnsurePrimaryRef(t.Context(), repo); err != nil {
 		t.Fatalf("Failed to ensure metadata branch: %v", err)
 	}
 
