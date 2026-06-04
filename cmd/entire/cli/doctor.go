@@ -369,7 +369,7 @@ func checkDisconnectedMetadata(cmd *cobra.Command, force bool) error {
 	fmt.Fprintln(w, "  Fix: cherry-pick local checkpoints onto remote tip (preserves all data).")
 
 	if !force {
-		proceed, promptErr := confirmDoctorFix(w, "Fix disconnected metadata branches?")
+		proceed, promptErr := confirmDoctorFix(ctx, w, "Fix disconnected metadata branches?")
 		if promptErr != nil {
 			return promptErr
 		}
@@ -429,7 +429,7 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
 		fmt.Fprintf(w, "  Mirror is at %s, behind %s at %s; reads miss newer checkpoints.\n",
 			shortMirrorHash(diag.Mirror), primary, shortMirrorHash(diag.Primary))
-		fmt.Fprintln(w, "  Fix: advance the mirror to its tip.")
+		fmt.Fprintf(w, "  Fix: advance the mirror to the %s tip.\n", primary)
 	case strategy.MirrorDiverged:
 		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
 		fmt.Fprintf(w, "  Mirror at %s has commits not on %s (at %s). Writes never target the\n",
@@ -440,7 +440,7 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 	}
 
 	if !force {
-		proceed, promptErr := confirmDoctorFix(w, "Repair checkpoint read mirror?")
+		proceed, promptErr := confirmDoctorFix(ctx, w, "Repair checkpoint read mirror?")
 		if promptErr != nil {
 			return promptErr
 		}
@@ -457,8 +457,14 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 }
 
 // confirmDoctorFix prompts to apply a doctor fix. Declining (which prints
-// "-> Skipped") and aborting both return false with no error.
-func confirmDoctorFix(w io.Writer, title string) (bool, error) {
+// "-> Skipped"), aborting (Ctrl+C), and context cancellation all return false
+// with no error.
+func confirmDoctorFix(ctx context.Context, w io.Writer, title string) (bool, error) {
+	// huh opens the TTY during form startup regardless of context state, so
+	// guard explicitly to honor an already-cancelled command context.
+	if ctx.Err() != nil {
+		return false, nil //nolint:nilerr // cancelled context is a clean skip, not an error
+	}
 	var confirmed bool
 	form := NewAccessibleForm(
 		huh.NewGroup(
@@ -467,8 +473,8 @@ func confirmDoctorFix(w io.Writer, title string) (bool, error) {
 				Value(&confirmed),
 		),
 	)
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
+	if err := form.RunWithContext(ctx); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) || errors.Is(err, context.Canceled) {
 			return false, nil
 		}
 		return false, fmt.Errorf("prompt failed: %w", err)

@@ -728,3 +728,17 @@ trusted_hash = "sha256:ccc"
 	require.Contains(t, out, "entire enable")
 	require.NotContains(t, out, "Codex hook trust: REVIEW NEEDED")
 }
+
+// TestConfirmDoctorFix_CancelledContext verifies that a cancelled command
+// context makes the confirm prompt return (false, nil) rather than surfacing a
+// wrapped error — doctor fixes are skipped cleanly on interrupt.
+func TestConfirmDoctorFix_CancelledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before prompting
+
+	var out bytes.Buffer
+	proceed, err := confirmDoctorFix(ctx, &out, "Apply fix?")
+	require.NoError(t, err)
+	assert.False(t, proceed)
+}

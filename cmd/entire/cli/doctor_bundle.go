@@ -175,6 +175,7 @@ func mirrorStatusReportLine(ctx context.Context, repoRoot string) string {
 	if err != nil {
 		return fmt.Sprintf("mirror status: [error: %v]\n", err)
 	}
+	defer repo.Close()
 	// Scope settings to repoRoot; the bundle's CWD may be elsewhere.
 	diag, err := strategy.DiagnoseCommittedMetadataMirror(settings.WithWorktreeRoot(ctx, repoRoot), repo)
 	if err != nil {
