@@ -214,9 +214,13 @@ func (s *ManualCommitStrategy) GetLogsOnlyRewindPoints(ctx context.Context, limi
 			// For multi-session checkpoints, read all prompts
 			if cpInfo.SessionCount > 1 && len(cpInfo.SessionIDs) > 1 {
 				sessionPrompts = ReadAllSessionPromptsFromTree(metadataTree, checkpointPath, cpInfo.SessionCount, cpInfo.SessionIDs)
-				// Use the last (most recent) prompt as the main session prompt
-				if len(sessionPrompts) > 0 {
-					sessionPrompt = sessionPrompts[len(sessionPrompts)-1]
+				// Prefer the latest non-empty prompt: the most-recent session may
+				// have been recorded without a prompt, but an earlier one usually has one.
+				for i := len(sessionPrompts) - 1; i >= 0; i-- {
+					if sessionPrompts[i] != "" {
+						sessionPrompt = sessionPrompts[i]
+						break
+					}
 				}
 			} else {
 				sessionPrompt = ReadLatestSessionPromptFromCommittedTree(metadataTree, cpInfo.CheckpointID, cpInfo.SessionCount)

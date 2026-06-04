@@ -524,6 +524,58 @@ func TestShadowStrategy_GetRewindPoints_V11ReadsPromptFromMirror(t *testing.T) {
 	assert.Equal(t, wantPrompt, points[0].SessionPrompt, "prompt must come from the mirror, not v1")
 }
 
+// When the most-recent session of a multi-session condensed checkpoint has no
+// prompt, the picker must fall back to the latest non-empty session prompt
+// rather than displaying nothing.
+func TestShadowStrategy_GetRewindPoints_MultiSessionFallsBackToEarlierPrompt(t *testing.T) {
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	testutil.WriteFile(t, dir, "f.txt", "init")
+	testutil.GitAdd(t, dir, "f.txt")
+	testutil.GitCommit(t, dir, "init")
+
+	t.Chdir(dir)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	cpID := id.MustCheckpointID("d4e5f6a1b2c3")
+	const earlierPrompt = "earlier-session-prompt"
+
+	// Earlier session carries the only usable prompt.
+	store := checkpoint.NewGitStore(repo)
+	require.NoError(t, store.WriteCommitted(t.Context(), checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-earlier",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("transcript\n")),
+		Prompts:      []string{earlierPrompt},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	// Latest session has no prompt at all.
+	require.NoError(t, store.WriteCommitted(t.Context(), checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-latest",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("transcript\n")),
+		Prompts:      nil,
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+
+	testutil.WriteFile(t, dir, "g.txt", "feat")
+	testutil.GitAdd(t, dir, "g.txt")
+	testutil.GitCommit(t, dir, "feat\n\nEntire-Checkpoint: "+cpID.String())
+
+	strat := NewManualCommitStrategy()
+	points, err := strat.GetRewindPoints(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.Equal(t, earlierPrompt, points[0].SessionPrompt,
+		"picker must fall back to the latest non-empty session prompt when the most-recent session is empty")
+}
+
 func TestShadowStrategy_GetSessionInfo_NoShadowBranch(t *testing.T) {
 	dir := t.TempDir()
 	repo, err := git.PlainInit(dir, false)
