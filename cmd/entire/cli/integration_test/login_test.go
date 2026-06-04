@@ -189,9 +189,10 @@ func TestLogin_DeniedFlow(t *testing.T) {
 
 // TestLogin_BrowserFlow_SavesToken drives the loopback authorization-code
 // flow end to end: ENTIRE_TEST_TTY=1 forces the interactive (browser)
-// default, openBrowser is a no-op under test, and the test plays the role
-// of the browser by GETting the loopback callback with a code + the state
-// parsed out of the printed authorization URL.
+// default, openBrowser reports failure under test (no usable browser on a
+// headless host) so the flow prints the fallback URL, and the test plays
+// the role of the browser by parsing that URL and GETting the loopback
+// callback with a code + the state from it.
 func TestLogin_BrowserFlow_SavesToken(t *testing.T) {
 	t.Parallel()
 
