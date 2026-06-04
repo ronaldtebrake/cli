@@ -136,6 +136,8 @@ func (f *browserAuthFlow) Close() error {
 
 // StartBrowserAuth begins the loopback authorization-code flow: it binds a
 // local listener and returns a flow carrying the browser URL to open.
+//
+//nolint:ireturn // returns the BrowserAuthFlow interface deliberately so login.go can substitute a fake in tests; the concrete impl owns a live listener and stays unexported.
 func (c *Client) StartBrowserAuth(ctx context.Context) (BrowserAuthFlow, error) {
 	f, err := c.browser.Start(ctx)
 	if err != nil {

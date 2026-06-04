@@ -335,6 +335,7 @@ type fakeBrowserClient struct {
 	startErr error
 }
 
+//nolint:ireturn // mirrors the browserAuthClient interface, which returns the auth.BrowserAuthFlow interface by design.
 func (c *fakeBrowserClient) StartBrowserAuth(context.Context) (auth.BrowserAuthFlow, error) {
 	if c.startErr != nil {
 		return nil, c.startErr
@@ -389,7 +390,12 @@ func TestRunBrowserLogin_OpensAuthorizationURL(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	_ = runBrowserLogin(context.Background(), &out, &bytes.Buffer{}, client, openURL)
+	// The stubbed Wait returns an error, so runBrowserLogin stops before
+	// persistLogin (which would hit the real keyring); we assert on the
+	// side effects up to that point.
+	if err := runBrowserLogin(context.Background(), &out, &bytes.Buffer{}, client, openURL); err == nil {
+		t.Fatal("expected error from stubbed Wait")
+	}
 
 	if openedURL != flow.authURL {
 		t.Errorf("opened URL = %q, want %q", openedURL, flow.authURL)
@@ -418,7 +424,9 @@ func TestRunBrowserLogin_OpenBrowserFallback(t *testing.T) {
 	failOpen := func(context.Context, string) error { return errors.New("no browser") }
 
 	var out, errW bytes.Buffer
-	_ = runBrowserLogin(context.Background(), &out, &errW, client, failOpen)
+	if err := runBrowserLogin(context.Background(), &out, &errW, client, failOpen); err == nil {
+		t.Fatal("expected error from stubbed Wait")
+	}
 
 	if !strings.Contains(errW.String(), "failed to open browser") {
 		t.Errorf("stderr missing warning:\n%s", errW.String())
