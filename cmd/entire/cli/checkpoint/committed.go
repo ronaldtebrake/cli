@@ -123,7 +123,7 @@ func (s *GitStore) WriteCommitted(ctx context.Context, opts WriteCommittedOption
 		return err
 	}
 
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	refName := s.refs.Primary
 	newRef := plumbing.NewHashReference(refName, newCommitHash)
 	if err := s.repo.Storer.SetReference(newRef); err != nil {
 		return fmt.Errorf("failed to set branch reference: %w", err)
@@ -601,7 +601,7 @@ func (s *GitStore) UpdateCheckpointSummary(ctx context.Context, checkpointID id.
 		return err
 	}
 
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	refName := s.refs.Primary
 	newRef := plumbing.NewHashReference(refName, newCommitHash)
 	if err := s.repo.Storer.SetReference(newRef); err != nil {
 		return fmt.Errorf("failed to set branch reference: %w", err)
@@ -1433,7 +1433,7 @@ func (s *GitStore) UpdateSummary(ctx context.Context, checkpointID id.Checkpoint
 		return err
 	}
 
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	refName := s.refs.Primary
 	newRef := plumbing.NewHashReference(refName, newCommitHash)
 	if err := s.repo.Storer.SetReference(newRef); err != nil {
 		return fmt.Errorf("failed to set branch reference: %w", err)
@@ -1558,7 +1558,7 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 		return err
 	}
 
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	refName := s.refs.Primary
 	newRef := plumbing.NewHashReference(refName, newCommitHash)
 	if err := s.repo.Storer.SetReference(newRef); err != nil {
 		return fmt.Errorf("failed to set branch reference: %w", err)
@@ -1727,7 +1727,7 @@ func PrecomputeTranscriptBlobs(ctx context.Context, repo *git.Repository, transc
 
 // ensureSessionsBranch ensures the entire/checkpoints/v1 branch exists.
 func (s *GitStore) ensureSessionsBranch(ctx context.Context) error {
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	refName := s.refs.Primary
 	_, err := s.repo.Reference(refName, true)
 	if err == nil {
 		return nil // Branch exists

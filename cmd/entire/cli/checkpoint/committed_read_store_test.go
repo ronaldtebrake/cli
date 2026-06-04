@@ -109,6 +109,34 @@ func TestGitStore_CommittedReadRef(t *testing.T) {
 	assert.Equal(t, customRef(), NewGitStore(nil, customRefs).CommittedReadRef())
 }
 
+// Not parallel: WriteCommitted touches repo refs.
+func TestGitStore_WriteCommittedTargetsPrimary(t *testing.T) {
+	dir, repo, _ := newTestRepo(t)
+	t.Chdir(dir)
+
+	synthetic := plumbing.ReferenceName("refs/entire/checkpoints/synthetic-primary")
+	refs := CommittedRefs{Primary: synthetic, Read: synthetic, Push: []plumbing.ReferenceName{synthetic}}
+	store := NewGitStore(repo, refs)
+
+	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
+	require.NoError(t, store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("transcript\n")),
+		Prompts:      []string{"prompt"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+
+	ref, err := repo.Reference(synthetic, true)
+	require.NoError(t, err, "synthetic primary ref must exist after write")
+	assert.NotEqual(t, plumbing.ZeroHash, ref.Hash())
+
+	_, err = repo.Reference(v1BranchRef(), true)
+	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "v1 branch must not be touched when Primary is synthetic")
+}
+
 func TestNewGitStore_UsesRefs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
