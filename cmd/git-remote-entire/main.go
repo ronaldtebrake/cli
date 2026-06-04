@@ -67,9 +67,17 @@ func run(args []string) int {
 		return 128
 	}
 
-	// Build info drives the agent string the helper advertises upstream.
+	// Build info drives the identifier the helper advertises upstream.
+	// One string covers both surfaces:
+	//   - githelper.Agent rides in the git protocol pkt-line agent=
+	//     capability appended to upload-pack / receive-pack / v2 requests.
+	//   - httpUserAgent rides in the HTTP User-Agent header on every
+	//     outbound request so server access logs can attribute traffic.
+	// Using the same value keeps the two log surfaces correlatable.
 	versioninfo.Load()
-	githelper.Agent = remotehelper.BinaryName + "/" + versioninfo.Commit
+	helperAgent := remotehelper.BinaryName + "/" + versioninfo.Version
+	githelper.Agent = helperAgent
+	httpUserAgent := helperAgent
 
 	rawURL := args[2]
 	parsedURL, err := url.Parse(rawURL)
@@ -98,8 +106,11 @@ func run(args []string) int {
 	repoSlug := parsedURL.Path
 
 	httpClient := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: httpclient.NewTransport(skipTLS),
+		Timeout: 30 * time.Second,
+		Transport: &httpclient.UserAgentTransport{
+			Next: httpclient.NewTransport(skipTLS),
+			UA:   httpUserAgent,
+		},
 	}
 
 	creds, err := resolveCreds(ctx, parsedURL, clusterBaseURL, skipTLS, httpClient)
@@ -132,6 +143,7 @@ func run(args []string) int {
 		SkipTLS:      skipTLS,
 		SetAuth:      setAuth,
 		OnNodeFailed: onNodeFailed,
+		UserAgent:    httpUserAgent,
 	})
 
 	protocolVersion := resolveProtocolVersion()
