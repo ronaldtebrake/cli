@@ -111,6 +111,8 @@ github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/entireio/auth-go v0.4.1-0.20260603125945-62cd5140d2d4 h1:apyo1X5SUGjbvFJyzaw2WSTTq7suvtYZ5JMA83lbx7M=
 github.com/entireio/auth-go v0.4.1-0.20260603125945-62cd5140d2d4/go.mod h1:eqFYgiNSBw6HXYR3j8DRW0/WTV1dX3SWxr2D6YCYNQ0=
+github.com/entireio/auth-go v0.4.1-0.20260604093244-dfb6f1d8eb12 h1:9xItErYdM5WKYjsdBqwCKmdCqEj+KhAgqSRXdOtWUCQ=
+github.com/entireio/auth-go v0.4.1-0.20260604093244-dfb6f1d8eb12/go.mod h1:eqFYgiNSBw6HXYR3j8DRW0/WTV1dX3SWxr2D6YCYNQ0=
 github.com/fatih/color v1.19.0 h1:Zp3PiM21/9Ld6FzSKyL5c/BULoe/ONr9KlbYVOfG8+w=
 github.com/fatih/color v1.19.0/go.mod h1:zNk67I0ZUT1bEGsSGyCZYZNrHuTkJJB+r6Q9VuMi0LE=
 github.com/fatih/semgroup v1.2.0 h1:h/OLXwEM+3NNyAdZEpMiH1OzfplU09i2qXPVThGZvyg=
