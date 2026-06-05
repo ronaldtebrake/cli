@@ -23,7 +23,7 @@ func TestResolveCommittedRefs(t *testing.T) {
 		want    CommittedRefs
 	}{
 		{"unset", "", CommittedRefs{Primary: v1, Read: v1, Push: []plumbing.ReferenceName{v1}}},
-		{"opted in", `"1.1"`, CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1}}},
+		{"opted in", `"1.1"`, CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1, custom}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestResolveCommittedRefsFromSettings(t *testing.T) {
 	}{
 		{"nil", nil, CommittedRefs{Primary: v1, Read: v1, Push: []plumbing.ReferenceName{v1}}},
 		{"empty", &settings.EntireSettings{}, CommittedRefs{Primary: v1, Read: v1, Push: []plumbing.ReferenceName{v1}}},
-		{"opted in", version("1.1"), CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1}}},
+		{"opted in", version("1.1"), CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1, custom}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,6 +77,8 @@ func TestCommittedRefs_PrimaryFetchableFromOrigin(t *testing.T) {
 		want bool
 	}{
 		{"v1 in push", CommittedRefs{Primary: v1, Push: []plumbing.ReferenceName{v1}}, true},
+		// Non-branch v1.1 alongside v1 in Push must not change v1's fetchability.
+		{"v1 primary, v1.1 also pushed", CommittedRefs{Primary: v1, Push: []plumbing.ReferenceName{v1, custom}}, true},
 		{"primary not in push", CommittedRefs{Primary: custom, Push: []plumbing.ReferenceName{v1}}, false},
 		{"empty push", CommittedRefs{Primary: v1, Push: nil}, false},
 		{"non-branch primary in push", CommittedRefs{Primary: custom, Push: []plumbing.ReferenceName{custom}}, false},
@@ -85,6 +87,28 @@ func TestCommittedRefs_PrimaryFetchableFromOrigin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, tt.refs.PrimaryFetchableFromOrigin())
+		})
+	}
+}
+
+func TestCommittedRefs_ReadBootstrappableFromOrigin(t *testing.T) {
+	t.Parallel()
+	v1, custom := v1BranchRef(), customRef()
+	tests := []struct {
+		name string
+		refs CommittedRefs
+		want bool
+	}{
+		{"v1-only: reads target fetchable primary", CommittedRefs{Primary: v1, Read: v1, Push: []plumbing.ReferenceName{v1}}, true},
+		// v1.1 is pushed but is a non-branch ref (no origin shadow) and
+		// Read != Primary, so reads still can't bootstrap from origin.
+		{"v1.1 pushed but reads target mirror", CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1, custom}}, false},
+		{"reads target primary but primary not pushed", CommittedRefs{Primary: v1, Read: v1, Push: nil}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.refs.ReadBootstrappableFromOrigin())
 		})
 	}
 }

@@ -146,9 +146,7 @@ func TestPushRefIfNeeded_UnreachableTarget_ReturnsNil(t *testing.T) {
 
 // TestPushRefIfNeeded_NonBranchRef verifies that pushRefIfNeeded accepts
 // arbitrary refs (not just branches under refs/heads) and pushes them with a
-// generic refspec. Today's CommittedRefs.Push contains only the v1 branch;
-// this test proves the wiring works for refs like refs/entire/checkpoints/v1.1
-// without changing the resolver.
+// generic refspec, e.g. refs/entire/checkpoints/v1.1.
 //
 // Not parallel: uses t.Chdir() (required for OpenRepository).
 func TestPushRefIfNeeded_NonBranchRef(t *testing.T) {

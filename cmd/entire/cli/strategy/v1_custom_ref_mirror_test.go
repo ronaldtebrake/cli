@@ -536,12 +536,11 @@ func TestDiagnoseCommittedMetadataMirror(t *testing.T) {
 	}
 }
 
-// TestPrePush_DoesNotPushV1CustomRef proves the phase-1 invariant: even with the
-// mirror opted in and both refs present locally, pre-push pushes only the v1
-// branch and never the v1 custom ref.
+// TestPrePush_PushesV1CustomRefWhenOptedIn proves that with the mirror opted
+// in, pre-push pushes the v1 branch and the v1 custom ref alongside it.
 //
 // Not parallel: uses t.Chdir().
-func TestPrePush_DoesNotPushV1CustomRef(t *testing.T) {
+func TestPrePush_PushesV1CustomRefWhenOptedIn(t *testing.T) {
 	ctx := t.Context()
 	repo := setupV1CustomRefRepo(t, `"1.1"`)
 	head := setV1MetadataBranch(t, repo)
@@ -558,6 +557,6 @@ func TestPrePush_DoesNotPushV1CustomRef(t *testing.T) {
 
 	assert.True(t, localRefExists(t, bareDir, "refs/heads/"+paths.MetadataBranchName),
 		"v1 metadata branch should be pushed")
-	assert.False(t, localRefExists(t, bareDir, paths.MetadataRefName),
-		"v1 custom ref must never be pushed")
+	assert.True(t, localRefExists(t, bareDir, paths.MetadataRefName),
+		"v1 custom ref should be pushed alongside v1 when opted in")
 }
