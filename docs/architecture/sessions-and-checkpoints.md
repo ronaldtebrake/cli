@@ -219,7 +219,12 @@ remote-tracking ref is the deliberate exception — it does not mirror and is
 skipped entirely in v1.1 mode.
 
 Read paths do not create, repair, or advance the mirror before use; they read
-the configured committed-read ref as-is.
+the configured committed-read ref as-is. The repair tool is `entire doctor`:
+it diagnoses a missing, stale (behind v1), or diverged mirror via
+`strategy.DiagnoseCommittedMetadataMirror` and — with confirmation, or
+automatically under `--force` — points the mirror back at the v1 tip.
+`entire doctor bundle` captures the entire-related refs and the mirror
+diagnosis in `entire-refs.txt`.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json
