@@ -3,12 +3,12 @@ package strategy
 import (
 	"context"
 
-	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/perf"
 )
 
 // PrePush is called by the git pre-push hook before pushing to a remote.
-// It pushes the entire/checkpoints/v1 branch alongside the user's push.
+// It pushes each ref in refs.Push alongside the user's push.
 //
 // If a checkpoint_remote is configured in settings, checkpoint branches/refs
 // are pushed to the derived URL instead of the user's push remote.
@@ -29,12 +29,17 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		return nil
 	}
 
+	refs := checkpoint.ResolveCommittedRefs(ctx)
+
 	// Thread the span's context into the push so the network push and any
 	// fetch+rebase recovery nest beneath it as child steps in the perf trace.
-	pushCtx, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoints_branch")
-	err := pushBranchIfNeeded(pushCtx, ps.pushTarget(), paths.MetadataBranchName)
-	pushCheckpointsSpan.RecordError(err)
-	pushCheckpointsSpan.End()
-
-	return err
+	pushCtx, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoint_refs")
+	defer pushCheckpointsSpan.End()
+	for _, ref := range refs.Push {
+		if err := pushRefIfNeeded(pushCtx, ps.pushTarget(), ref); err != nil {
+			pushCheckpointsSpan.RecordError(err)
+			return err
+		}
+	}
+	return nil
 }

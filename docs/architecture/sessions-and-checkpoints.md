@@ -59,8 +59,9 @@ const (
 
 `strategy/session.go` keeps the `Session` and `Checkpoint` data types used by
 status/explain formatting. Active session state is read from `.git/entire-sessions/`
-through `session.StateStore`; committed checkpoint/session content is read through
-the committed checkpoint store (`checkpoint.NewCommittedReadStore(...)`) and
+through `session.StateStore`; committed checkpoint/session content is read
+through a `checkpoint.GitStore` built with resolved committed refs (for example,
+`checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))`) and
 command-specific strategy methods such as `GetSessionInfo`.
 
 ### Checkpoint Storage (Low-Level)
