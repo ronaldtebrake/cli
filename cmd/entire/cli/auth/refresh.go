@@ -140,19 +140,41 @@ func newContextTokenManager(c *contexts.Context, transport http.RoundTripper, al
 	return mgr, nil
 }
 
+// reauthError carries a friendly, context-named re-login message while still
+// unwrapping to the underlying tokenmanager sentinel. Callers that branch on
+// errors.Is(err, ErrNotLoggedIn) (NewAuthenticatedAPIClient, search, dispatch)
+// keep matching — without this, the discovery path turned a missing keyring
+// token into an opaque string and those callers fell through to their generic
+// error, a regression vs the pre-discovery TokenForResource path. Error()
+// returns only msg so the sentinel's terse text ("not logged in") doesn't leak
+// into the rendered message.
+type reauthError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *reauthError) Error() string { return e.msg }
+func (e *reauthError) Unwrap() error { return e.sentinel }
+
 // contextReauthError maps the two re-auth sentinels a per-context manager can
-// return into a single friendly message that names the context and its core
-// (so a multi-core user logs back into the right one — matching
-// clusterdiscovery.RenderLoginHint's idiom). Returns nil when err is neither
-// sentinel, leaving the caller to wrap the residual error in its own terms
-// (refresh vs exchange).
+// return into a friendly message that names the context and its core (so a
+// multi-core user logs back into the right one — matching
+// clusterdiscovery.RenderLoginHint's idiom), preserving the sentinel for
+// errors.Is. Returns nil when err is neither sentinel, leaving the caller to
+// wrap the residual error in its own terms (refresh vs exchange).
 func contextReauthError(c *contexts.Context, err error) error {
 	coreURL := strings.TrimRight(c.CoreURL, "/")
 	switch {
 	case errors.Is(err, tokenmanager.ErrReauthRequired):
-		return fmt.Errorf("login session for %q (%s) expired; run `entire login` to re-authenticate", c.Name, coreURL)
+		return &reauthError{
+			msg:      fmt.Sprintf("login session for %q (%s) expired; run `entire login` to re-authenticate", c.Name, coreURL),
+			sentinel: tokenmanager.ErrReauthRequired,
+		}
 	case errors.Is(err, tokenmanager.ErrNotLoggedIn):
-		return fmt.Errorf("no usable login for %q (%s); run `entire login`", c.Name, coreURL)
+		return &reauthError{
+			msg:      fmt.Sprintf("no usable login for %q (%s); run `entire login`", c.Name, coreURL),
+			sentinel: tokenmanager.ErrNotLoggedIn,
+		}
 	}
 	return nil
 }

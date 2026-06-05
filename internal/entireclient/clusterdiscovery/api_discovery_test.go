@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,16 @@ import (
 
 	"github.com/entireio/cli/internal/entireclient/contexts"
 )
+
+// schemeRewriteTransport rewrites the scheme to http (DiscoverAPI hard-codes
+// https://) while leaving the host untouched, so a cross-origin redirect
+// reaches its real target rather than being pinned back to the first server.
+type schemeRewriteTransport struct{ base http.RoundTripper }
+
+func (s schemeRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = "http"
+	return s.base.RoundTrip(req)
+}
 
 const apiDiscoveryBody = `{
   "issuer": "https://us.auth.partial.to",
@@ -81,6 +92,30 @@ func TestDiscoverAPI(t *testing.T) {
 		defer srv.Close()
 
 		_, err := DiscoverAPI(t.Context(), "partial.to", hostPinningClient(t, srv), t.Logf)
+		assert.ErrorIs(t, err, ErrDiscoveryUnavailable)
+	})
+
+	// A trust-root fetch must not follow a 3xx to another origin. The redirect
+	// target serves a perfectly valid document, so this test only passes if the
+	// redirect is genuinely refused (not merely erroring on a loop): following
+	// it would succeed and return the target's doc.
+	t.Run("refuses cross-origin redirect → ErrDiscoveryUnavailable", func(t *testing.T) {
+		t.Parallel()
+		target := httptest.NewServer(apiHandler(t, "https://us.auth.partial.to"))
+		defer target.Close()
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+APIPath, http.StatusFound)
+		}))
+		defer redirector.Close()
+
+		// schemeRewriteClient rewrites the hard-coded https:// to http:// but
+		// leaves the host alone, so the redirect actually reaches `target`
+		// rather than being pinned back to `redirector`.
+		client := &http.Client{Transport: schemeRewriteTransport{base: http.DefaultTransport}}
+		host := strings.TrimPrefix(redirector.URL, "http://")
+
+		doc, err := DiscoverAPI(t.Context(), host, client, t.Logf)
+		assert.Nil(t, doc, "must not return the redirect target's document")
 		assert.ErrorIs(t, err, ErrDiscoveryUnavailable)
 	})
 

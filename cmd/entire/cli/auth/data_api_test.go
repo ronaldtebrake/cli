@@ -155,6 +155,25 @@ func TestNewRefreshingResourceProvider_Validation(t *testing.T) {
 	}
 }
 
+// When the selected context has no stored token, the provider's error must
+// still unwrap to ErrNotLoggedIn so callers (NewAuthenticatedAPIClient, search,
+// dispatch) that branch on errors.Is render their login guidance — the
+// regression the PR review flagged on the discovery path.
+func TestNewRefreshingResourceProvider_NotLoggedInPreservesSentinel(t *testing.T) {
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	c := &contexts.Context{Name: "me@core", CoreURL: "https://core.example", Handle: "me", KeychainService: "kc:me"}
+	provider, err := NewRefreshingResourceProvider(c, "https://data.example", "https://data.example", nil, false)
+	if err != nil {
+		t.Fatalf("NewRefreshingResourceProvider: %v", err)
+	}
+	_, err = provider(context.Background())
+	if !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("provider error must unwrap to ErrNotLoggedIn, got %v", err)
+	}
+}
+
 func mustOrigin(t *testing.T, raw string) string {
 	t.Helper()
 	u, err := url.Parse(raw)

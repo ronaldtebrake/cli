@@ -77,7 +77,19 @@ func fetchWellKnownJSON(ctx context.Context, host, path string, c *http.Client, 
 	if err != nil {
 		return fmt.Errorf("build discovery request: %w", err)
 	}
-	resp, err := c.Do(req)
+	// Refuse redirects. This is a trust-root fetch — the response decides which
+	// login servers we honour — so a 3xx to another origin (or a plaintext
+	// downgrade) from a hostile/misconfigured host must not be followed.
+	// Shallow-copy the caller's client so we don't mutate its redirect policy
+	// (it's reused for other operations); the copy shares Transport/TLS config.
+	if c == nil {
+		c = http.DefaultClient
+	}
+	noRedirect := *c
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("discovery does not follow redirects (trust root)")
+	}
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		debugf("discovery: %v", err)
 		return fmt.Errorf("%w: %w", ErrUnreachable, err)
