@@ -60,7 +60,7 @@ func DiscoverAPI(ctx context.Context, apiHost string, c *http.Client, debugf Deb
 	return &body, nil
 }
 
-// resolveAPITrustedIssuers returns apiHost's trusted issuer URLs, from
+// resolveAPICores returns apiHost's trusted issuer URLs, from
 // api_discovery.json when fresh, otherwise via a live
 // /.well-known/entire-api.json fetch (which is then cached). A stale-but-present
 // cache entry is used as a fallback when the live fetch fails, so a brief outage
@@ -68,7 +68,7 @@ func DiscoverAPI(ctx context.Context, apiHost string, c *http.Client, debugf Deb
 // resolveClusterCores exactly — the data-API trusted issuers ARE core URLs, so
 // they share the cores cache (different file). Cold failures stay folded under
 // ErrDiscoveryUnavailable (from DiscoverAPI) for the caller's static fallback.
-func resolveAPITrustedIssuers(ctx context.Context, cacheDir, apiHost string, httpClient *http.Client, debugf DebugFunc) ([]string, error) {
+func resolveAPICores(ctx context.Context, cacheDir, apiHost string, httpClient *http.Client, debugf DebugFunc) ([]string, error) {
 	cache, err := discovery.LoadAPICores(cacheDir)
 	if err != nil {
 		// A cache read problem must not block resolution — discover live.
@@ -130,7 +130,7 @@ func ResolveContextForAPI(ctx context.Context, configDir, cacheDir, apiHost stri
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
-	trustedIssuers, err := resolveAPITrustedIssuers(ctx, cacheDir, apiHost, httpClient, debugf)
+	trustedIssuers, err := resolveAPICores(ctx, cacheDir, apiHost, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
