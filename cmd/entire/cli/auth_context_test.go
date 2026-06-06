@@ -27,7 +27,7 @@ func TestResolveStatusTarget_PrefersActiveContext(t *testing.T) {
 	t.Cleanup(restore)
 
 	exp := time.Now().Add(time.Hour).Unix()
-	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://eu.auth.entire.io","handle":"alice","exp":%d}`, exp)), "", true); err != nil {
+	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"`+testCoreURL+`","handle":"alice","exp":%d}`, exp)), "", true); err != nil {
 		t.Fatalf("record context: %v", err)
 	}
 
@@ -35,7 +35,7 @@ func TestResolveStatusTarget_PrefersActiveContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStatusTarget: %v", err)
 	}
-	if got.coreURL != "https://eu.auth.entire.io" {
+	if got.coreURL != testCoreURL {
 		t.Errorf("coreURL = %q, want the active context's CoreURL", got.coreURL)
 	}
 	if got.token == "" {
@@ -59,7 +59,7 @@ func TestResolveStatusTarget_PrefersRefreshedToken(t *testing.T) {
 
 	// Stored token is expired; a raw read would 401 at /me → "re-login".
 	expired := time.Now().Add(-time.Hour).Unix()
-	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://eu.auth.entire.io","handle":"alice","exp":%d}`, expired)), "entr_refresh", true); err != nil {
+	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"`+testCoreURL+`","handle":"alice","exp":%d}`, expired)), "entr_refresh", true); err != nil {
 		t.Fatalf("record context: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestResolveStatusTarget_PrefersRefreshedToken(t *testing.T) {
 	if got.token != "refreshed-jwt" {
 		t.Errorf("token = %q, want the refreshed token (not the stale stored one)", got.token)
 	}
-	if got.coreURL != "https://eu.auth.entire.io" {
+	if got.coreURL != testCoreURL {
 		t.Errorf("coreURL = %q, want the active context's CoreURL", got.coreURL)
 	}
 }
@@ -87,7 +87,7 @@ func TestResolveStatusTarget_FallsBackToStoredWhenRefreshFails(t *testing.T) {
 	t.Cleanup(restore)
 
 	exp := time.Now().Add(time.Hour).Unix()
-	stored := makeContextJWT(t, fmt.Sprintf(`{"iss":"https://eu.auth.entire.io","handle":"alice","exp":%d}`, exp))
+	stored := makeContextJWT(t, fmt.Sprintf(`{"iss":"`+testCoreURL+`","handle":"alice","exp":%d}`, exp))
 	if _, err := auth.RecordLoginContext(stored, "", true); err != nil {
 		t.Fatalf("record context: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestResolveStatusTarget_FallsBackToStoredWhenRefreshFails(t *testing.T) {
 	if got.token != stored {
 		t.Errorf("token = %q, want the stored token as fallback", got.token)
 	}
-	if got.coreURL != "https://eu.auth.entire.io" || got.activeContext == "" {
+	if got.coreURL != testCoreURL || got.activeContext == "" {
 		t.Errorf("want the active context preserved on fallback, got coreURL=%q activeContext=%q", got.coreURL, got.activeContext)
 	}
 }

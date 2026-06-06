@@ -25,7 +25,7 @@ import (
 
 // stubResolveContextForAPI swaps the discovery seam for the duration of the
 // test, restoring it after.
-func stubResolveContextForAPI(t *testing.T, fn func(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error)) {
+func stubResolveContextForAPI(t *testing.T, fn resolveContextForAPIFunc) {
 	t.Helper()
 	prev := resolveContextForAPI
 	resolveContextForAPI = fn
@@ -42,7 +42,7 @@ func TestResolveDataAPIToken_FallbackWhenDiscoveryUnavailable(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
-	stubResolveContextForAPI(t, func(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
+	stubResolveContextForAPI(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
 		return nil, nil, fmt.Errorf("%w: 404", clusterdiscovery.ErrDiscoveryUnavailable)
 	})
 
@@ -74,7 +74,7 @@ func TestResolveDataAPIToken_SurfacesSelectionError(t *testing.T) {
 	t.Cleanup(restore)
 
 	sentinel := errors.New("multiple login contexts can authenticate against API host entire.io")
-	stubResolveContextForAPI(t, func(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
+	stubResolveContextForAPI(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
 		return nil, nil, sentinel
 	})
 
@@ -118,7 +118,7 @@ func TestResolveDataAPIToken_ExchangesForAdvertisedAudience(t *testing.T) {
 	}
 	ctxObj := &contexts.Context{Name: "me@core", CoreURL: srv.URL, Handle: "me", KeychainService: svc}
 
-	stubResolveContextForAPI(t, func(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
+	stubResolveContextForAPI(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
 		return ctxObj, &clusterdiscovery.APIResponse{
 			Issuer:         srv.URL,
 			TrustedIssuers: []string{srv.URL},

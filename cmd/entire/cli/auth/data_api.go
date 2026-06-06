@@ -10,6 +10,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 )
 
 // dataAPIDiscoveryTimeout bounds the one /.well-known/entire-api.json GET we
@@ -17,9 +18,14 @@ import (
 // resolution, so a slow or absent endpoint must not stall the command.
 const dataAPIDiscoveryTimeout = 8 * time.Second
 
+// resolveContextForAPIFunc is the shape of the discovery seam: it mirrors
+// clusterdiscovery.ResolveContextForAPI (ctx, configDir, cacheDir, apiHost,
+// httpClient, debugf).
+type resolveContextForAPIFunc func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error)
+
 // resolveContextForAPI is the discovery seam, swapped in tests so they don't
 // reach the network. See SetResolveContextForAPIForTest for cross-package tests.
-var resolveContextForAPI = clusterdiscovery.ResolveContextForAPI
+var resolveContextForAPI resolveContextForAPIFunc = clusterdiscovery.ResolveContextForAPI
 
 // SetResolveContextForAPIForTest overrides the /.well-known/entire-api.json
 // discovery seam and returns a cleanup func. Tests in other packages that
@@ -28,7 +34,7 @@ var resolveContextForAPI = clusterdiscovery.ResolveContextForAPI
 // configured data host and bypasses any SetManagerForTest fallback seam. Pass
 // a func returning clusterdiscovery.ErrDiscoveryUnavailable to force the static
 // fallback path. Test-only.
-func SetResolveContextForAPIForTest(t interface{ Helper() }, fn func(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error)) func() {
+func SetResolveContextForAPIForTest(t interface{ Helper() }, fn resolveContextForAPIFunc) func() {
 	t.Helper()
 	prev := resolveContextForAPI
 	resolveContextForAPI = fn
@@ -38,7 +44,7 @@ func SetResolveContextForAPIForTest(t interface{ Helper() }, fn func(context.Con
 // DiscoveryUnavailableForTest is a ready-made SetResolveContextForAPIForTest
 // value that forces the discovery-unavailable fallback (no network), so a
 // cross-package test exercises the static TokenForResource path deterministically.
-func DiscoveryUnavailableForTest(context.Context, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
+func DiscoveryUnavailableForTest(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, *clusterdiscovery.APIResponse, error) {
 	return nil, nil, clusterdiscovery.ErrDiscoveryUnavailable
 }
 
@@ -82,7 +88,7 @@ func ResolveDataAPIToken(ctx context.Context, dataBaseURL string) (string, error
 	defer cancel()
 	httpClient := &http.Client{Timeout: dataAPIDiscoveryTimeout}
 
-	selected, doc, err := resolveContextForAPI(dctx, contexts.DefaultConfigDir(), host, httpClient, nil)
+	selected, doc, err := resolveContextForAPI(dctx, contexts.DefaultConfigDir(), discovery.DefaultCacheDir(), host, httpClient, nil)
 	if errors.Is(err, clusterdiscovery.ErrDiscoveryUnavailable) {
 		// Old deployment / not rolled out / transient — preserve today's behaviour.
 		return TokenForResource(ctx, dataOrigin)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 )
 
 // APIPath is the well-known path a data/web API (entire.io) serves to
@@ -70,6 +71,52 @@ func DiscoverAPI(ctx context.Context, apiHost string, c *http.Client, debugf Deb
 	return &body, nil
 }
 
+// resolveAPIDoc returns apiHost's trust-root document, from api_discovery.json
+// when fresh, otherwise via a live /.well-known/entire-api.json fetch (which is
+// then cached). A stale-but-present cache entry is used as a fallback when the
+// live fetch fails, so a brief outage doesn't break a command whose trust roots
+// we already knew. Mirrors resolveClusterCores. Every cold failure stays folded
+// under ErrDiscoveryUnavailable (from DiscoverAPI) for the caller's fallback.
+func resolveAPIDoc(ctx context.Context, cacheDir, apiHost string, httpClient *http.Client, debugf DebugFunc) (*APIResponse, error) {
+	cache, err := discovery.LoadAPIDiscovery(cacheDir)
+	if err != nil {
+		// A cache read problem must not block resolution — discover live.
+		debugf("api-discovery cache load failed: %v; discovering live", err)
+		cache = nil
+	}
+
+	var stale *APIResponse
+	if cache != nil {
+		if entry, fresh, ok := cache.Get(apiHost); ok {
+			doc := &APIResponse{Issuer: entry.Issuer, TrustedIssuers: entry.TrustedIssuers, Audience: entry.Audience}
+			if fresh {
+				debugf("api host %s trust roots from cache", apiHost)
+				return doc, nil
+			}
+			stale = doc
+			debugf("api host %s trust-roots cache expired; re-fetching %s", apiHost, APIPath)
+		}
+	}
+
+	doc, err := DiscoverAPI(ctx, apiHost, httpClient, debugf)
+	if err != nil {
+		if stale != nil {
+			debugf("api discovery for %s failed (%v); falling back to stale cached trust roots", apiHost, err)
+			return stale, nil
+		}
+		return nil, err
+	}
+
+	if mErr := discovery.ModifyAPIDiscovery(cacheDir, func(c discovery.APIDiscoveryCache) error {
+		c.Set(apiHost, discovery.APIDiscoveryEntry{Issuer: doc.Issuer, TrustedIssuers: doc.TrustedIssuers, Audience: doc.Audience})
+		return nil
+	}); mErr != nil {
+		// Non-fatal: we resolved the doc, the next command just re-fetches.
+		debugf("api-discovery cache write for %s failed: %v", apiHost, mErr)
+	}
+	return doc, nil
+}
+
 // ResolveContextForAPI picks the local login context to authenticate data-API
 // calls against apiHost, and returns the discovery document alongside it so
 // the caller can exchange for the advertised audience.
@@ -78,19 +125,24 @@ func DiscoverAPI(ctx context.Context, apiHost string, c *http.Client, debugf Deb
 // wins when its CoreURL is among the API's trusted issuers, else the sole
 // eligible context, else an explicit-choice / login error — but sources the
 // trusted issuers from /.well-known/entire-api.json instead of
-// entire-cluster.json.
+// entire-cluster.json. The trust-root document is cached (api_discovery.json,
+// long TTL) and re-fetched on expiry, with stale fallback — the same
+// cache-then-/.well-known path the cluster resolver uses (resolveClusterCores).
+// Account selection is recomputed every call from the live contexts, never
+// persisted.
 //
 // When the API doesn't advertise discovery (404 / unreachable / 503 /
-// malformed), the returned error wraps ErrDiscoveryUnavailable so the caller
-// falls back to static resolution. A successful fetch whose context selection
-// fails returns that selection error unwrapped — the user must act on it.
+// malformed) and no cache entry exists, the returned error wraps
+// ErrDiscoveryUnavailable so the caller falls back to static resolution. A
+// successful fetch whose context selection fails returns that selection error
+// unwrapped — the user must act on it.
 //
 // debugf is optional; nil suppresses debug output.
-func ResolveContextForAPI(ctx context.Context, configDir, apiHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, *APIResponse, error) {
+func ResolveContextForAPI(ctx context.Context, configDir, cacheDir, apiHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, *APIResponse, error) {
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
-	doc, err := DiscoverAPI(ctx, apiHost, httpClient, debugf)
+	doc, err := resolveAPIDoc(ctx, cacheDir, apiHost, httpClient, debugf)
 	if err != nil {
 		return nil, nil, err
 	}
