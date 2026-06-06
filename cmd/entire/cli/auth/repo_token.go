@@ -60,18 +60,21 @@ func SetRepoExchangeTransportForTest(rt http.RoundTripper) func() {
 // surface verbatim from the STS endpoint (e.g. invalid_target when no
 // mirror matches the slug+cluster).
 //
-// The subject token is the stored login access token read directly,
-// rather than routed through the refresh-aware tokenmanager. That's
-// deliberate for two reasons: (1) `entire login` (device flow) stores only
-// a bare access token — no refresh token — so there is nothing the manager
-// could refresh that this path can't equally use; an expired login token
-// fails both ways. (2) The manager's exchange also emits an RFC 8693
-// `resource` parameter alongside `audience`, whereas the data-plane gate
+// The subject token is the stored login access token read directly, rather
+// than routed through the refresh-aware tokenmanager — so this path does NOT
+// silently re-mint an expired login JWT, even though one is now refreshable.
+// This is a known gap slated for removal: COR-395 reworks RepoScopedToken to
+// go through cluster discovery + the per-context refreshing provider (and
+// deletes the dead resolveAuthHostToken alongside it). Two reasons it stayed
+// direct until then: (1) historically `entire login` stored only a bare access
+// token, so there was nothing to refresh — no longer true now that login
+// requests `offline_access` and persists a refresh token, which is exactly why
+// this needs the COR-395 rework. (2) The manager's exchange also emits an RFC
+// 8693 `resource` parameter alongside `audience`, whereas the data-plane gate
 // keys solely on `audience`; going direct keeps the wire form byte-for-byte
 // what git-remote-entire (and the standalone entiredb CLI) already send.
 // Each call performs a fresh exchange and does not cache — callers that
-// poll (e.g. the mirror clone wait) re-invoke on token expiry. If the CLI
-// gains refresh tokens, route this through the tokenmanager instead.
+// poll (e.g. the mirror clone wait) re-invoke on token expiry.
 func RepoScopedToken(ctx context.Context, clusterBaseURL, repoSlug, action string) (string, error) {
 	provider := CurrentProvider()
 	if strings.TrimSpace(provider.STSPath) == "" {

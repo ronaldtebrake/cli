@@ -75,18 +75,6 @@ func newAuthSessionsClient(coreURL, token string) *api.Client {
 	return api.NewClientWithBaseURL(token, coreURL).WithAuthSessionsPath(coreAuthSessionsPath)
 }
 
-// resolveAuthHostToken returns a bearer scoped for the auth host (entire-core).
-// For the auth host's own origin the tokenmanager hits the same-host shortcut
-// and returns the stored login JWT unchanged — keeping the entire:session
-// scope that core's session endpoints (and /me) require, with no STS exchange.
-func resolveAuthHostToken(ctx context.Context) (string, error) {
-	token, err := auth.TokenForResource(ctx, api.OriginOnly(api.AuthBaseURL()))
-	if err != nil {
-		return "", fmt.Errorf("resolve auth-host token: %w", err)
-	}
-	return token, nil
-}
-
 // isKeychainTokenRejected reports whether err indicates the stored
 // keyring token can't authenticate against entire-core. Failure modes that
 // collapse into the single "the user must re-login" branch:
