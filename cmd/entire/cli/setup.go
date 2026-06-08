@@ -777,7 +777,7 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 				if runErr != nil {
 					return
 				}
-				reportRepoEnabled(ctx, cmd.ErrOrStderr(), insecureHTTPAuth)
+				reportRepoEnabled(ctx, insecureHTTPAuth)
 			}()
 			// Check if we're in a git repository first. If not, offer to
 			// bootstrap one (git init + optional GitHub repo). If the user
@@ -934,11 +934,11 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 }
 
 // reportRepoEnabled records the `entire enable` against the backend so the web
-// onboarding can reflect it. It is strictly best-effort: enabling works fully
-// offline, so any failure (no origin remote, not logged in, network error) is
-// swallowed except for the actionable "App can't reach this repo" hint, which
-// is written to errW (a warning, not piped output).
-func reportRepoEnabled(ctx context.Context, errW io.Writer, insecureHTTPAuth bool) {
+// onboarding can reflect it. It is strictly best-effort and fully silent:
+// enabling works offline, and every outcome (no origin remote, not logged in,
+// network error, App-can't-reach-repo) is swallowed — the web onboarding
+// surfaces the "install the GitHub App" nudge, so the CLI stays quiet.
+func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 	rawURL, err := gitremote.GetRemoteURL(ctx, "origin")
 	if err != nil || strings.TrimSpace(rawURL) == "" {
 		// Local-only repo with no origin yet — nothing to report.
@@ -962,14 +962,8 @@ func reportRepoEnabled(ctx context.Context, errW io.Writer, insecureHTTPAuth boo
 		return
 	}
 
-	resp, err := client.ReportEnable(ctx, cleanURL)
-	if err != nil {
+	if _, err := client.ReportEnable(ctx, cleanURL); err != nil {
 		logging.Debug(ctx, "enable report failed", "error", err)
-		return
-	}
-
-	if !resp.Connected && resp.InstallURL != "" {
-		fmt.Fprintf(errW, "\nEntire can't access this repository yet. Install the GitHub App so checkpoints can sync:\n  %s\n", resp.InstallURL)
 	}
 }
 
