@@ -3130,6 +3130,16 @@ func TestCleanRemoteURLForReport(t *testing.T) {
 			want:   "https://github.com/entireio/cli.git",
 		},
 		{
+			name:   "entire:// mirror origin maps the forge back to its real host",
+			rawURL: "entire://aws-us-east-2.entire.io/gh/entireio/cli",
+			want:   "https://github.com/entireio/cli.git",
+		},
+		{
+			name:   "unknown forge host is preserved (self-hosted enterprise)",
+			rawURL: "git@ghe.corp.example.com:entireio/cli.git",
+			want:   "https://ghe.corp.example.com/entireio/cli.git",
+		},
+		{
 			name:    "unparseable single-segment path errors",
 			rawURL:  "https://github.com/onlyowner.git",
 			wantErr: true,

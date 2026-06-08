@@ -980,7 +980,10 @@ func cleanRemoteURLForReport(rawURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse remote URL: %w", err)
 	}
-	return fmt.Sprintf("https://%s/%s/%s.git", info.Host, info.Owner, info.Repo), nil
+	// Use CanonicalHost, not Host: an entire://cluster/gh/owner/repo origin (an
+	// already-mirrored repo) carries the Entire cluster as Host, so reporting
+	// Host verbatim would point the backend at the cluster instead of github.com.
+	return fmt.Sprintf("https://%s/%s/%s.git", info.CanonicalHost(), info.Owner, info.Repo), nil
 }
 
 func newDisableCmd() *cobra.Command {
