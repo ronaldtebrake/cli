@@ -12,6 +12,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -753,6 +754,7 @@ func newEnableCmd() *cobra.Command {
 	var ignoreUntracked bool
 	var agentName string
 	var bootstrapOpts GitHubBootstrapOptions
+	var insecureHTTPAuth bool
 
 	cmd := &cobra.Command{
 		Use:   "enable",
@@ -766,6 +768,17 @@ If the current directory is not a git repository, Entire can initialize one
 for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 		RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
 			ctx := cmd.Context()
+			// Best-effort: after a successful enable, tell the backend which repo
+			// was enabled so the web onboarding reflects it (and we can warn when
+			// the GitHub App can't reach it). Registered first so it runs LAST
+			// (defers are LIFO) — after any bootstrap finalize that creates the
+			// GitHub repo and pushes, by which point an origin remote exists.
+			defer func() {
+				if runErr != nil {
+					return
+				}
+				reportRepoEnabled(ctx, cmd.OutOrStdout(), insecureHTTPAuth)
+			}()
 			// Check if we're in a git repository first. If not, offer to
 			// bootstrap one (git init + optional GitHub repo). If the user
 			// declines, fall back to the legacy prerequisite error.
@@ -892,6 +905,7 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 	cmd.Flags().BoolVar(&opts.Telemetry, flagTelemetry, true, "Enable anonymous usage analytics")
 	cmd.Flags().BoolVar(&opts.AbsoluteGitHookPath, flagAbsoluteGitHookPath, false, "Embed full binary path in git hooks (for GUI git clients that don't source shell profiles)")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Accept all defaults without prompting (in a non-repo directory: init git, create private GitHub repo, commit; then enable all agents and accept telemetry)")
+	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 
 	// Bootstrap flags for non-git-repo folders.
 	cmd.Flags().BoolVar(&bootstrapOpts.InitRepo, "init-repo", false, "If not a git repo, initialize one non-interactively")
@@ -917,6 +931,35 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 	})
 
 	return cmd
+}
+
+// reportRepoEnabled records the `entire enable` against the backend so the web
+// onboarding can reflect it. It is strictly best-effort: enabling works fully
+// offline, so any failure (no origin remote, not logged in, network error) is
+// swallowed except for the actionable "App can't reach this repo" hint.
+func reportRepoEnabled(ctx context.Context, w io.Writer, insecureHTTPAuth bool) {
+	remoteURL, err := gitremote.GetRemoteURL(ctx, "origin")
+	if err != nil || strings.TrimSpace(remoteURL) == "" {
+		// Local-only repo with no origin yet — nothing to report.
+		return
+	}
+
+	client, err := NewAuthenticatedAPIClient(ctx, insecureHTTPAuth)
+	if err != nil {
+		// Not logged in / token unavailable — enable already succeeded locally.
+		logging.Debug(ctx, "skipping enable report", "error", err)
+		return
+	}
+
+	resp, err := client.ReportEnable(ctx, remoteURL)
+	if err != nil {
+		logging.Debug(ctx, "enable report failed", "error", err)
+		return
+	}
+
+	if !resp.Connected && resp.InstallURL != "" {
+		fmt.Fprintf(w, "\nEntire can't access this repository yet. Install the GitHub App so checkpoints can sync:\n  %s\n", resp.InstallURL)
+	}
 }
 
 func newDisableCmd() *cobra.Command {
