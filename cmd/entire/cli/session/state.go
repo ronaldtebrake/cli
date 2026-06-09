@@ -246,6 +246,20 @@ type State struct {
 	ContextTokens     int   `json:"context_tokens,omitempty"`
 	ContextWindowSize int   `json:"context_window_size,omitempty"`
 
+	// PromptWindowBase is the SessionTurnCount value at the start of the current
+	// checkpoint window. The number of prompts attributed to the next checkpoint is
+	// SessionTurnCount - PromptWindowBase (floored at 1 when written). It is only
+	// advanced (deferred reset) the next time a turn is counted after a checkpoint
+	// was written, so two checkpoints with no prompt between them report the same
+	// count. Zero-value safe on old state files: base 0 ⇒ window = SessionTurnCount,
+	// i.e. "all prompts so far" (correct first-checkpoint semantics).
+	PromptWindowBase int `json:"prompt_window_base,omitempty"`
+
+	// PromptWindowResetPending indicates a checkpoint was just written and the
+	// window base must be re-anchored to the current SessionTurnCount the next time
+	// a turn is counted. Deferred so back-to-back checkpoints share a count.
+	PromptWindowResetPending bool `json:"prompt_window_reset_pending,omitempty"`
+
 	// Deprecated: TranscriptLinesAtStart is replaced by CheckpointTranscriptStart.
 	// Kept for backward compatibility with existing state files.
 	TranscriptLinesAtStart int `json:"transcript_lines_at_start,omitempty"`
@@ -478,12 +492,20 @@ func (s *StateStore) Save(ctx context.Context, state *State) error {
 		return fmt.Errorf("failed to create session state directory: %w", err)
 	}
 
+	// Scope the final rename to an os.Root so the session-ID-derived destination
+	// cannot escape the state directory even if validation were ever bypassed
+	// (defense in depth; the ID is already validated above).
+	root, err := os.OpenRoot(s.stateDir)
+	if err != nil {
+		return fmt.Errorf("failed to open session state directory: %w", err)
+	}
+	defer root.Close()
+
 	data, err := jsonutil.MarshalIndentWithNewline(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal session state: %w", err)
 	}
 
-	stateFile := s.stateFilePath(state.SessionID)
 	fileName := state.SessionID + ".json"
 
 	// Use a unique temp file per save. Concurrent hook processes can write the
@@ -508,8 +530,8 @@ func (s *StateStore) Save(ctx context.Context, state *State) error {
 		return fmt.Errorf("failed to close session state file: %w", err)
 	}
 
-	// Atomic rename into the validated final path.
-	if err := os.Rename(tmpFileName, stateFile); err != nil {
+	// Atomic rename into the validated final path, via os.Root.
+	if err := root.Rename(filepath.Base(tmpFileName), fileName); err != nil {
 		return fmt.Errorf("failed to rename session state file: %w", err)
 	}
 	removeTmp = false
@@ -525,21 +547,43 @@ func (s *StateStore) Clear(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("invalid session ID: %w", err)
 	}
 
-	// Remove all files for this session (state .json, .model hint, any future hint files).
-	// filepath.Glob finds matches; os.Root ensures traversal-resistant removal.
-	matches, _ := filepath.Glob(filepath.Join(s.stateDir, sessionID+".*")) //nolint:errcheck // pattern is always valid
+	// Remove all files for this session (state .json, .model hint, any future
+	// hint files). Match by literal prefix rather than filepath.Glob: the
+	// session ID is user-controlled, and a glob pattern would let metacharacters
+	// match and delete other sessions' files. os.Root ensures traversal-resistant
+	// removal.
+	matches := matchSessionFiles(s.stateDir, sessionID)
 	if len(matches) > 0 {
 		root, rootErr := os.OpenRoot(s.stateDir)
 		if rootErr != nil {
 			return fmt.Errorf("failed to open session state directory for cleanup: %w", rootErr)
 		}
 		defer root.Close()
-		for _, f := range matches {
-			_ = osroot.Remove(root, filepath.Base(f)) //nolint:errcheck // best-effort cleanup
+		for _, name := range matches {
+			_ = osroot.Remove(root, name) //nolint:errcheck // best-effort cleanup
 		}
 	}
 
 	return nil
+}
+
+// matchSessionFiles returns the names (not paths) of files in dir that belong to
+// the given session ID — i.e. "<sessionID>.<ext>". It uses literal prefix
+// matching, never glob patterns, so a session ID containing glob metacharacters
+// cannot match unrelated files.
+func matchSessionFiles(dir, sessionID string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil // missing/unreadable dir => nothing to clear
+	}
+	prefix := sessionID + "."
+	var matched []string
+	for _, e := range entries {
+		if name := e.Name(); strings.HasPrefix(name, prefix) {
+			matched = append(matched, name)
+		}
+	}
+	return matched
 }
 
 // RemoveAll removes the entire session state directory.
@@ -582,11 +626,6 @@ func (s *StateStore) List(ctx context.Context) ([]*State, error) {
 		states = append(states, state)
 	}
 	return states, nil
-}
-
-// stateFilePath returns the path to a session state file.
-func (s *StateStore) stateFilePath(sessionID string) string {
-	return filepath.Join(s.stateDir, sessionID+".json")
 }
 
 // gitCommonDirCache caches the git common dir to avoid repeated subprocess calls.

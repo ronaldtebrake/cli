@@ -53,6 +53,30 @@ func DispatchLifecycleEvent(ctx context.Context, ag agent.Agent, event *agent.Ev
 		return errors.New("event cannot be nil")
 	}
 
+	// Reject path-unsafe identifiers once, here, before any handler uses them to
+	// build filesystem paths. Handlers historically validated individually,
+	// which is fragile — handleLifecycleTurnEnd builds .entire/metadata/<id>/
+	// via os.MkdirAll + os.WriteFile, and handleLifecycleSubagentEnd builds a
+	// subagent transcript path from SubagentID and reads it, without their own
+	// checks. Centralizing the guard covers every handler (and any future one)
+	// uniformly. Empty IDs pass through: handlers apply their own empty-handling
+	// (e.g. TurnEnd falls back to a safe constant; SubagentEnd skips the path).
+	if event.SessionID != "" {
+		if err := validation.ValidateSessionID(event.SessionID); err != nil {
+			return fmt.Errorf("invalid session ID in %s event: %w", event.Type, err)
+		}
+	}
+	if event.ToolUseID != "" {
+		if err := validation.ValidateToolUseID(event.ToolUseID); err != nil {
+			return fmt.Errorf("invalid tool use ID in %s event: %w", event.Type, err)
+		}
+	}
+	if event.SubagentID != "" {
+		if err := validation.ValidateAgentID(event.SubagentID); err != nil {
+			return fmt.Errorf("invalid subagent ID in %s event: %w", event.Type, err)
+		}
+	}
+
 	// Filter forwarded hooks: when Cursor IDE forwards events to both
 	// .cursor/hooks.json and .claude/settings.json, only the agent that owns
 	// the session should process them — otherwise checkpoints, metadata
@@ -430,7 +454,20 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 		before.ReviewSkills = slices.Clone(state.ReviewSkills)
 		adoptReviewEnv(logCtx, state, string(ag.Name()))
 		adoptInvestigateEnv(logCtx, state, string(ag.Name()))
-		skillEventsChanged := appendEventSkillEventsToState(event, state)
+
+		skillEventSource := *event
+		// Record a skill event for a leading "/<command>" in the raw prompt. Only
+		// once ownership is known — TurnStart bypasses the owner filter so
+		// InitializeSession can repair it — and never overriding native adapter events.
+		if state.AgentType == "" || state.AgentType == ag.Type() {
+			skillEventSource.SkillEvents = agent.AppendPromptSlashCommandSkillEvent(
+				skillEventSource.SkillEvents,
+				string(ag.Name()),
+				event.Prompt,
+				event.Timestamp,
+			)
+		}
+		skillEventsChanged := appendEventSkillEventsToState(&skillEventSource, state)
 		if state.Kind == before.Kind &&
 			state.ReviewPrompt == before.ReviewPrompt &&
 			slices.Equal(state.ReviewSkills, before.ReviewSkills) &&
@@ -1100,12 +1137,24 @@ func persistEventMetadataToState(event *agent.Event, state *strategy.SessionStat
 	}
 	// Use hook-reported turn count if available (take max); otherwise
 	// increment on each TurnEnd event to count turns ourselves.
+	prevTurnCount := state.SessionTurnCount
 	if event.TurnCount > 0 {
 		if event.TurnCount > state.SessionTurnCount {
 			state.SessionTurnCount = event.TurnCount
 		}
 	} else if event.Type == agent.TurnEnd {
 		state.SessionTurnCount++
+	}
+	// Deferred checkpoint-window reset: the first time the turn count actually
+	// advances after a checkpoint was written, re-anchor the window base to the
+	// count from before this turn so the current turn becomes the first prompt of
+	// the new window. Gate on a real advance (not just a TurnEnd / non-zero
+	// TurnCount) so a repeated or stale hook reporting the same cumulative count
+	// doesn't re-anchor early — that would make a later back-to-back checkpoint
+	// report 1 instead of matching the prior count.
+	if state.SessionTurnCount > prevTurnCount && state.PromptWindowResetPending {
+		state.PromptWindowBase = prevTurnCount
+		state.PromptWindowResetPending = false
 	}
 	if event.ContextTokens > 0 {
 		state.ContextTokens = event.ContextTokens
