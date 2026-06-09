@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -120,11 +121,13 @@ func RunReviewGuidedSetup(
 		return "", settings.ReviewProfileConfig{}, err
 	}
 	if len(profile.Agents) > 1 {
-		master, err := promptForSimpleReviewMaster(ctx, profile)
+		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, out, launchable)
 		if err != nil {
 			return "", settings.ReviewProfileConfig{}, err
 		}
-		profile.Master = master
+		profile.MasterAgent = masterAgent
+		profile.MasterModel = masterModel
+		profile.Master = ""
 	}
 	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
 	fmt.Fprintln(out)
@@ -176,38 +179,97 @@ type crewSlot struct {
 	model string
 }
 
-// promptForReviewCrew builds the review crew one worker at a time. It always
-// configures a first slot (agent + model), then keeps offering "Add another"
-// until the user is done — so the crew is never empty and the same agent can be
-// added repeatedly, on different or identical models.
+// promptForReviewCrew builds the review crew on a single screen. It seeds one
+// slot per launchable agent (the guided default is "all agents"), then lets the
+// user add, edit, or remove slots from a list until Done. Duplicate slots (same
+// agent and model) are allowed; each becomes its own worker.
 func promptForReviewCrew(ctx context.Context, out io.Writer, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
-	fmt.Fprintln(out, "Build the review crew")
-	fmt.Fprintln(out, "Add one worker at a time — each is an agent + model. You can add the same")
-	fmt.Fprintln(out, "agent more than once, on different or identical models.")
+	fmt.Fprintln(out, "Add review slots")
+	fmt.Fprintln(out, "Each slot is an agent + model. The whole crew runs the same task;")
+	fmt.Fprintln(out, "set per-slot skills later with `entire scout --edit`.")
 	fmt.Fprintln(out)
 
 	slots := make([]crewSlot, 0, len(launchable))
-	for {
-		agentName, err := promptCrewAgent(ctx, launchable)
-		if err != nil {
-			return settings.ReviewProfileConfig{}, err
-		}
-		model, err := promptCrewModel(ctx, agentName)
-		if err != nil {
-			return settings.ReviewProfileConfig{}, err
-		}
-		slot := crewSlot{agent: agentName, model: model}
-		slots = append(slots, slot)
-		fmt.Fprintf(out, "Added %s  (%d in crew)\n\n", slotLabel(slot), len(slots))
+	for _, name := range launchable {
+		slots = append(slots, crewSlot{agent: name})
+	}
 
-		more, err := promptAddAnotherSlot(ctx)
-		if err != nil {
-			return settings.ReviewProfileConfig{}, err
+	const (
+		actAdd     = "add"
+		actDone    = "done"
+		slotPrefix = "slot:"
+	)
+	for {
+		options := make([]huh.Option[string], 0, len(slots)+2)
+		for i, s := range slots {
+			options = append(options, huh.NewOption(fmt.Sprintf("%d  %s", i+1, slotLabel(s)), slotPrefix+strconv.Itoa(i)))
 		}
-		if !more {
+		options = append(options, huh.NewOption("+ Add slot", actAdd))
+		if len(slots) > 0 {
+			options = append(options, huh.NewOption(fmt.Sprintf("Done · %d slot(s)", len(slots)), actDone))
+		}
+		picked := actDone
+		if len(slots) == 0 {
+			picked = actAdd
+		}
+		form := newAccessibleForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Review crew").
+				Description("Select a slot to edit or remove it; + Add slot to add one.").
+				Options(options...).
+				Height(reviewPickerHeight(len(options))).
+				Value(&picked),
+		))
+		if err := form.RunWithContext(ctx); err != nil {
+			return settings.ReviewProfileConfig{}, fmt.Errorf("review crew picker: %w", err)
+		}
+
+		switch {
+		case picked == actAdd:
+			slot, err := promptCrewSlot(ctx, launchable)
+			if err != nil {
+				return settings.ReviewProfileConfig{}, err
+			}
+			slots = append(slots, slot)
+		case picked == actDone:
+			if len(slots) == 0 {
+				continue
+			}
 			return buildCrewProfile(ctx, profileName, slots), nil
+		case strings.HasPrefix(picked, slotPrefix):
+			idx, convErr := strconv.Atoi(strings.TrimPrefix(picked, slotPrefix))
+			if convErr != nil || idx < 0 || idx >= len(slots) {
+				continue
+			}
+			action, err := promptSlotAction(ctx, slots[idx])
+			if err != nil {
+				return settings.ReviewProfileConfig{}, err
+			}
+			switch action {
+			case "edit":
+				slot, err := promptCrewSlot(ctx, launchable)
+				if err != nil {
+					return settings.ReviewProfileConfig{}, err
+				}
+				slots[idx] = slot
+			case "remove":
+				slots = append(slots[:idx], slots[idx+1:]...)
+			}
 		}
 	}
+}
+
+// promptCrewSlot prompts for one slot: an agent then a model.
+func promptCrewSlot(ctx context.Context, launchable []string) (crewSlot, error) {
+	agentName, err := promptCrewAgent(ctx, launchable)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	model, err := promptCrewModel(ctx, agentName)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	return crewSlot{agent: agentName, model: model}, nil
 }
 
 // buildCrewProfile turns an ordered slot list into a profile. Each slot becomes
@@ -231,21 +293,23 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 	return profile
 }
 
-// promptAddAnotherSlot asks whether to add another worker. Defaults to Done, so
-// pressing enter finishes the crew.
-func promptAddAnotherSlot(ctx context.Context) (bool, error) {
-	add := false
+// promptSlotAction asks what to do with an existing slot row.
+func promptSlotAction(ctx context.Context, slot crewSlot) (string, error) {
+	picked := "cancel"
 	form := newAccessibleForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title("Add another worker?").
-			Affirmative("Add another").
-			Negative("Done").
-			Value(&add),
+		huh.NewSelect[string]().
+			Title(slotLabel(slot)).
+			Options(
+				huh.NewOption("Edit", "edit"),
+				huh.NewOption("Remove", "remove"),
+				huh.NewOption("Cancel", "cancel"),
+			).
+			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return false, fmt.Errorf("review crew add-another: %w", err)
+		return "", fmt.Errorf("slot action: %w", err)
 	}
-	return add, nil
+	return picked, nil
 }
 
 func slotLabel(s crewSlot) string {
@@ -369,15 +433,46 @@ func modelInList(id string, models []agent.ModelInfo) bool {
 	return false
 }
 
-func promptForSimpleReviewMaster(ctx context.Context, profile settings.ReviewProfileConfig) (string, error) {
-	choices := reviewMasterAgentChoices(profile.Agents)
-	if len(choices) == 0 {
-		return "", errors.New("no selected review agent can write the final report")
+// promptForStandaloneMaster picks the standalone master (judge) as its own
+// agent + model, independent of the worker slots. Candidates are launchable
+// agents that can write text. Returns (agentName, model).
+func promptForStandaloneMaster(ctx context.Context, out io.Writer, launchable []string) (string, string, error) {
+	candidates := make([]string, 0, len(launchable))
+	for _, name := range launchable {
+		if agentSupportsTextGeneration(ctx, name) {
+			candidates = append(candidates, name)
+		}
 	}
-	if len(choices) == 1 {
-		return choices[0].Name, nil
+	if len(candidates) == 0 {
+		return "", "", errors.New("no installed agent can write the final report")
 	}
-	return promptForReviewMasterAgent(ctx, choices, profile.Master)
+
+	fmt.Fprintln(out, "Choose the review master")
+	fmt.Fprintln(out, "It evaluates the workers' reports and writes the final verdict.")
+	fmt.Fprintln(out)
+
+	agentName := candidates[0]
+	if len(candidates) > 1 {
+		options := make([]huh.Option[string], 0, len(candidates))
+		for _, name := range candidates {
+			options = append(options, huh.NewOption(labelForSimpleAgent(name), name))
+		}
+		form := newAccessibleForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Master agent").
+				Options(options...).
+				Height(reviewPickerHeight(len(options))).
+				Value(&agentName),
+		))
+		if err := form.RunWithContext(ctx); err != nil {
+			return "", "", fmt.Errorf("master agent picker: %w", err)
+		}
+	}
+	model, err := promptCrewModel(ctx, agentName)
+	if err != nil {
+		return "", "", fmt.Errorf("master model picker: %w", err)
+	}
+	return agentName, model, nil
 }
 
 func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
