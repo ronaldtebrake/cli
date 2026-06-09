@@ -4087,6 +4087,52 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestMetadataDirectoryWalkersAllowDotDotPrefixedNames(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+
+	metadataDir := filepath.Join(tempDir, "metadata")
+	generatedDir := filepath.Join(metadataDir, "..generated")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(generatedDir, "schema.json"), []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("failed to write metadata file: %v", err)
+	}
+
+	expectedPath := filepath.ToSlash(filepath.Join("checkpoint", "..generated", "schema.json"))
+
+	entries := make(map[string]object.TreeEntry)
+	if err := addDirectoryToEntriesWithAbsPath(repo, metadataDir, "checkpoint", entries); err != nil {
+		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
+	}
+	if _, ok := entries[expectedPath]; !ok {
+		t.Fatalf("expected entry at %q, got entries: %v", expectedPath, entries)
+	}
+
+	changes, err := addDirectoryToChanges(repo, metadataDir, "checkpoint")
+	if err != nil {
+		t.Fatalf("addDirectoryToChanges failed: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Path != expectedPath {
+		t.Fatalf("expected one change at %q, got %#v", expectedPath, changes)
+	}
+
+	committedEntries := make(map[string]object.TreeEntry)
+	store := NewGitStore(repo, DefaultV1Refs())
+	if err := store.copyMetadataDir(metadataDir, "checkpoint/", committedEntries); err != nil {
+		t.Fatalf("copyMetadataDir failed: %v", err)
+	}
+	if _, ok := committedEntries[expectedPath]; !ok {
+		t.Fatalf("expected committed entry at %q, got entries: %v", expectedPath, committedEntries)
+	}
+}
+
 func TestAddDirectoryToEntries_SkipsSymlinks(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
