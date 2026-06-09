@@ -92,10 +92,6 @@ func RunReviewGuidedSetup(
 		if !ConfirmFirstRunSetup(ctx, out) {
 			return "", settings.ReviewProfileConfig{}, ErrPickerCancelled
 		}
-	} else {
-		fmt.Fprintln(out, "Configure a review profile.")
-		fmt.Fprintln(out, "You'll choose a review type and worker agents. Skill details use opinionated defaults.")
-		fmt.Fprintln(out)
 	}
 
 	launchable := launchableInstalledAgentNames(installed, reviewerFor)
@@ -116,12 +112,12 @@ func RunReviewGuidedSetup(
 		profileName = pickedProfile
 	}
 
-	profile, err := promptForReviewCrew(ctx, out, profileName, launchable)
+	profile, err := promptForReviewCrew(ctx, profileName, launchable)
 	if err != nil {
 		return "", settings.ReviewProfileConfig{}, err
 	}
 	if len(profile.Agents) > 1 {
-		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, out, launchable)
+		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, launchable)
 		if err != nil {
 			return "", settings.ReviewProfileConfig{}, err
 		}
@@ -183,12 +179,7 @@ type crewSlot struct {
 // slot per launchable agent (the guided default is "all agents"), then lets the
 // user add, edit, or remove slots from a list until Done. Duplicate slots (same
 // agent and model) are allowed; each becomes its own worker.
-func promptForReviewCrew(ctx context.Context, out io.Writer, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
-	fmt.Fprintln(out, "Add review slots")
-	fmt.Fprintln(out, "Each slot is an agent + model. The whole crew runs the same task;")
-	fmt.Fprintln(out, "set per-slot skills later with `entire scout --edit`.")
-	fmt.Fprintln(out)
-
+func promptForReviewCrew(ctx context.Context, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
 	slots := make([]crewSlot, 0, len(launchable))
 	for _, name := range launchable {
 		slots = append(slots, crewSlot{agent: name})
@@ -436,7 +427,7 @@ func modelInList(id string, models []agent.ModelInfo) bool {
 // promptForStandaloneMaster picks the standalone master (judge) as its own
 // agent + model, independent of the worker slots. Candidates are launchable
 // agents that can write text. Returns (agentName, model).
-func promptForStandaloneMaster(ctx context.Context, out io.Writer, launchable []string) (string, string, error) {
+func promptForStandaloneMaster(ctx context.Context, launchable []string) (string, string, error) {
 	candidates := make([]string, 0, len(launchable))
 	for _, name := range launchable {
 		if agentSupportsTextGeneration(ctx, name) {
@@ -447,10 +438,6 @@ func promptForStandaloneMaster(ctx context.Context, out io.Writer, launchable []
 		return "", "", errors.New("no installed agent can write the final report")
 	}
 
-	fmt.Fprintln(out, "Choose the review master")
-	fmt.Fprintln(out, "It evaluates the workers' reports and writes the final verdict.")
-	fmt.Fprintln(out)
-
 	agentName := candidates[0]
 	if len(candidates) > 1 {
 		options := make([]huh.Option[string], 0, len(candidates))
@@ -459,7 +446,8 @@ func promptForStandaloneMaster(ctx context.Context, out io.Writer, launchable []
 		}
 		form := newAccessibleForm(huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Master agent").
+				Title("Choose the review master").
+				Description("Evaluates the workers' reports and writes the final verdict.").
 				Options(options...).
 				Height(reviewPickerHeight(len(options))).
 				Value(&agentName),
