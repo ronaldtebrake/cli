@@ -84,25 +84,28 @@ func NewCommand(deps Deps) *cobra.Command {
 	var setSlots []string
 
 	cmd := &cobra.Command{
-		Use: "review",
+		Use: "scout",
+		// `review` is kept as an alias for back-compat while scout matures.
+		Aliases: []string{"review"},
 		// Hidden from `entire help` while the feature is still maturing —
-		// users who know about it can still run `entire review` / `entire
-		// review --help` and the command works normally.
+		// users who know about it can still run `entire scout` / `entire
+		// scout --help` and the command works normally.
 		Hidden: true,
-		Short:  "Run a review profile against the current branch",
-		Long: `Run a named review profile against the current branch. Review
-profiles are loaded from Entire settings and clone-local preferences. On
-first run, simple guided setup writes clone-local preferences and asks before
-starting agents.
+		Short:  "Run a multi-agent crew against the current branch",
+		Long: `Run a multi-agent crew against the current branch: several worker
+agents inspect the change in parallel, then a master agent synthesizes their
+reports into a final verdict. Crews are saved as named profiles in Entire
+settings and clone-local preferences. On first run, guided setup writes a
+profile and asks before starting agents.
 
-Labs entry: review is experimental. We are actively refining it based on user
+Labs entry: scout is experimental. We are actively refining it based on user
 feedback.
 
-The review session is recorded as part of the next checkpoint, so the
-review metadata is permanently attached to the commit it covers.
+The session is recorded as part of the next checkpoint, so the metadata is
+permanently attached to the commit it covers.
 
 Flags:
-  --configure    set up a review profile (shows available agents + profiles).
+  --configure    set up a crew profile (shows available agents + profiles).
                  With --set-* flags it writes the profile non-interactively;
                  otherwise it opens the wizard (interactive) without starting agents.
   --set-agents   with --configure: comma-separated worker agents for the profile
@@ -111,21 +114,21 @@ Flags:
   --set-model    with --configure: per-worker model as agent=model (repeatable)
   --set-slot     with --configure: a worker slot as agent[=model] (repeatable;
                  the same agent/model may repeat to run it multiple times)
-  --edit         re-open the advanced review profile skill picker
-  --findings     browse local review findings
+  --edit         re-open the advanced profile skill picker
+  --findings     browse local findings
   --agent NAME   run only one worker from the selected profile
   --agents       list the worker agents you can pass to --agent for the profile
   --model NAME   override the model for the --agent worker (requires --agent)
-  --models       list the models each review agent advertises (optionally --agent NAME)
-  --profile NAME select a review profile (also accepted as positional arg)
+  --models       list the models each agent advertises (optionally --agent NAME)
+  --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
-  --base REF     scope the review against REF instead of mainline. Useful
-                 for stacked PRs where the review base is the parent feature
-                 branch, not main. Default: first existing of origin/HEAD,
-                 origin/main, origin/master, main, master.
+  --base REF     scope against REF instead of mainline. Useful for stacked
+                 PRs where the base is the parent feature branch, not main.
+                 Default: first existing of origin/HEAD, origin/main,
+                 origin/master, main, master.
 
-To tag an already-finished session as a review, use
-'entire attach --review <id>'.`,
+Aliased as 'entire review'. To tag an already-finished session as a review,
+use 'entire attach --review <id>'.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts at most one argument, received %d", len(args))
@@ -257,7 +260,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 			return err
 		}
 		fmt.Fprintf(out, "Review profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
-		fmt.Fprintf(out, "Run `entire review %s` to start.\n", profileName)
+		fmt.Fprintf(out, "Run `entire scout %s` to start.\n", profileName)
 		return nil
 	}
 
@@ -271,7 +274,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if err := saveReviewProfile(ctx, name, profile, true); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Review profile %q saved. Run `entire review`, or `entire review %s`, to start.\n", name, name)
+		fmt.Fprintf(out, "Crew profile %q saved. Run `entire scout`, or `entire scout %s`, to start.\n", name, name)
 		return nil
 	}
 
@@ -334,7 +337,7 @@ func runReviewListModels(ctx context.Context, cmd *cobra.Command, agentFilter st
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "These are common models/aliases, not an exhaustive list. Use one with:")
-	fmt.Fprintln(out, "  entire review --agent <name> --model <model>")
+	fmt.Fprintln(out, "  entire scout --agent <name> --model <model>")
 	return nil
 }
 
@@ -369,7 +372,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 				fmt.Fprintf(out, "  %s — %s%s\n", reviewWorkerLabel(worker, cfg), status, marker)
 			}
 			fmt.Fprintln(out)
-			fmt.Fprintln(out, "See all available agents and profiles with `entire review --configure`.")
+			fmt.Fprintln(out, "See all available agents and profiles with `entire scout --configure`.")
 			return nil
 		}
 	}
@@ -385,7 +388,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 		fmt.Fprintf(out, "  %-14s %s\n", e.Name, status)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Configure a profile with `entire review --configure`.")
+	fmt.Fprintln(out, "Configure a profile with `entire scout --configure`.")
 	return nil
 }
 
@@ -451,7 +454,7 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "Configure %q non-interactively, e.g.:\n", profileName)
-	fmt.Fprintf(out, "  entire review --configure --profile %s --set-agents %s --set-master <agent>\n",
+	fmt.Fprintf(out, "  entire scout --configure --profile %s --set-agents %s --set-master <agent>\n",
 		profileName, exampleAgentList(catalog))
 }
 
@@ -590,7 +593,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		cmd.SilenceUsage = true
 		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
 		fmt.Fprintln(cmd.ErrOrStderr(),
-			"Fix your Entire settings or clone-local review preferences and re-run `entire review`.")
+			"Fix your Entire settings or clone-local review preferences and re-run `entire scout`.")
 		return silentErr(err)
 	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
@@ -624,7 +627,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			}
 			profile = defaultProfile
 			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
-			fmt.Fprintln(out, "Configure later with `entire review --configure`.")
+			fmt.Fprintln(out, "Configure later with `entire scout --configure`.")
 			fmt.Fprintln(out)
 		}
 		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
@@ -1189,7 +1192,7 @@ func warnManifestNotWritten(out io.Writer, reason string) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Note: review skills ran but findings were not persisted.")
 	fmt.Fprintf(out, "  Reason: %s\n", reason)
-	fmt.Fprintln(out, "  `entire review --findings` will not see this run.")
+	fmt.Fprintln(out, "  `entire scout --findings` will not see this run.")
 	fmt.Fprintln(out, "  Re-run with `ENTIRE_LOG_LEVEL=debug` for diagnostic detail.")
 }
 

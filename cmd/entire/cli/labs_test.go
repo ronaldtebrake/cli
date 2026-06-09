@@ -24,8 +24,8 @@ func TestLabsCmd_PrintsExperimentalCommandList(t *testing.T) {
 		"Labs",
 		"newer Entire workflows",
 		"Available experimental commands",
-		"entire review",
-		"entire review --help",
+		"entire scout",
+		"entire scout --help",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("entire labs output missing %q:\n%s", want, got)
@@ -46,7 +46,7 @@ func TestLabsCmd_HelpShowsExperimentalCommandList(t *testing.T) {
 		t.Fatalf("entire labs --help failed: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Labs", "entire review"} {
+	for _, want := range []string{"Labs", "entire scout"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("entire labs --help output missing %q:\n%s", want, got)
 		}
@@ -69,8 +69,8 @@ func TestLabsCmd_RejectsTopicWithoutRunningIt(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown labs topic") {
 		t.Fatalf("error should mention unknown labs topic, got: %v", err)
 	}
-	if !strings.Contains(errOut.String(), "entire review --help") {
-		t.Fatalf("stderr should point to canonical review help, got:\n%s", errOut.String())
+	if !strings.Contains(errOut.String(), "entire scout --help") {
+		t.Fatalf("stderr should point to canonical scout help, got:\n%s", errOut.String())
 	}
 	if strings.Contains(out.String(), "Run the review skills configured") {
 		t.Fatalf("entire labs review should not run or show review help, got stdout:\n%s", out.String())

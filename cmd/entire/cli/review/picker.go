@@ -53,7 +53,7 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
-	fmt.Fprintln(out, "local review preferences; configure later with `entire review --configure`.")
+	fmt.Fprintln(out, "local review preferences; configure later with `entire scout --configure`.")
 	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
 
@@ -393,11 +393,11 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 		// Aborting the confirm (Ctrl+C / Esc) is a clean "not now", not a
 		// command error. Surface it as picker-cancelled so the caller maps it
 		// to a silent exit via handlePickerError.
-		fmt.Fprintln(out, "Review not started. Run `entire review` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
 		return false, ErrPickerCancelled
 	}
 	if !runNow {
-		fmt.Fprintln(out, "Review not started. Run `entire review` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
 	}
 	return runNow, nil
 }
@@ -442,13 +442,13 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 		if pathErr != nil {
 			return nil, errors.New(
 				"no installed agents have curated review skills; " +
-					"install an eligible agent and run `entire review --edit`, " +
+					"install an eligible agent and run `entire scout --edit`, " +
 					"or edit clone-local review preferences under review.<agent-name>",
 			)
 		}
 		return nil, fmt.Errorf(
 			"no installed agents have curated review skills; "+
-				"install an eligible agent and run `entire review --edit`, "+
+				"install an eligible agent and run `entire scout --edit`, "+
 				"or edit clone-local review preferences (%s) under review.<agent-name>",
 			prefsPath,
 		)
@@ -566,7 +566,7 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if err := saveReviewProfileConfig(ctx, profileName, merged, masterAgent); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(out, "Saved review profile %q to local review preferences. Edit later with `entire review --edit --profile %s`.\n", profileName, profileName)
+	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire scout --edit --profile %s`.\n", profileName, profileName)
 	return merged, nil
 }
 
@@ -861,7 +861,7 @@ func VerifyConfiguredSkillsInstalled(ctx context.Context, ag agent.Agent, cfg se
 	}
 	return fmt.Errorf(
 		"configured review skill(s) not installed: %s\n"+
-			"run `entire review --edit` to reconfigure, or install the plugin and retry",
+			"run `entire scout --edit` to reconfigure, or install the plugin and retry",
 		strings.Join(missing, ", "),
 	)
 }

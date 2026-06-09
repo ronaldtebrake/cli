@@ -16,7 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 )
 
-const reviewCommandBinary = "entire"
+const reviewCommandBinary = "entire scout"
 
 func runReviewFindings(ctx context.Context, cmd *cobra.Command, silentErr func(error) error) error {
 	worktreeRoot, err := paths.WorktreeRoot(ctx)
@@ -86,7 +86,7 @@ func writeReviewCompletionFooter(w io.Writer, manifest LocalReviewManifest) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Browse findings:")
-	fmt.Fprintf(w, "  %s review --findings\n", reviewCommandBinary)
+	fmt.Fprintf(w, "  %s --findings\n", reviewCommandBinary)
 }
 
 func reviewManifestHandle(manifest LocalReviewManifest) string {

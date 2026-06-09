@@ -244,7 +244,7 @@ func TestWriteReviewCompletionFooter_PointsToFindings(t *testing.T) {
 	writeReviewCompletionFooter(&b, manifest)
 
 	got := b.String()
-	for _, want := range []string{"Review complete.", "entire review --findings"} {
+	for _, want := range []string{"Review complete.", "entire scout --findings"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("footer missing %q:\n%s", want, got)
 		}
@@ -379,7 +379,7 @@ func TestWarnManifestNotWritten_PrintsReasonAndDiagnosticHints(t *testing.T) {
 	for _, want := range []string{
 		"Note: review skills ran but findings were not persisted.",
 		"Reason: test reason text",
-		"`entire review --findings` will not see this run.",
+		"`entire scout --findings` will not see this run.",
 		"`ENTIRE_LOG_LEVEL=debug`",
 	} {
 		if !strings.Contains(got, want) {

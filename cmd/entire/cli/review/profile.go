@@ -44,7 +44,7 @@ func profileTask(name string, cfg settings.ReviewProfileConfig) string {
 // is intentionally no migration from the old review map).
 func selectReviewProfile(s *settings.EntireSettings, override string) (string, settings.ReviewProfileConfig, error) {
 	if s == nil || len(s.ReviewProfiles) == 0 {
-		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire review --configure` or add review_profiles to Entire preferences")
+		return "", settings.ReviewProfileConfig{}, errors.New("no crew profiles configured; run `entire scout --configure` or add review_profiles to Entire preferences")
 	}
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
