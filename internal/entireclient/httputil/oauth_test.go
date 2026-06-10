@@ -51,7 +51,7 @@ func TestPostOAuthToken_LiftsAndPercentEncodesClientCreds(t *testing.T) {
 	assert.Empty(t, gotForm.Get("client_secret"), "client_secret must be dropped from the body")
 }
 
-// TestPostOAuthToken_ErrorCode pins that a non-2xx response surfaces as
+// TestPostOAuthToken_ErrorCode pins that a non-200 response surfaces as
 // *OAuthError with the RFC 6749 `error` code parsed from the body (empty for
 // non-JSON bodies), so callers can branch on e.g. invalid_target.
 func TestPostOAuthToken_ErrorCode(t *testing.T) {

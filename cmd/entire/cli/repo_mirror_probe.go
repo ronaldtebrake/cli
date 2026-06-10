@@ -162,7 +162,7 @@ func explainSuspendedMirror(w io.Writer, mirrorID string, freshCreate bool, err 
 	return true, NewSilentError(fmt.Errorf("mirror %s is suspended", mirrorID))
 }
 
-// repoTokenSource is the slice of auth.RepoTokenSource the clone probe
+// repoTokenSource is the subset of auth.RepoTokenSource the clone probe
 // uses; an interface so tests can substitute a fake.
 type repoTokenSource interface {
 	Token(ctx context.Context, repoSlug, action string) (string, error)

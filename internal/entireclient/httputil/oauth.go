@@ -59,7 +59,7 @@ func cloneValuesWithoutClient(v url.Values) url.Values {
 }
 
 // OAuthError is returned by PostOAuthToken when the OAuth endpoint
-// responds with a non-2xx status. Callers can errors.As it to surface
+// responds with a non-200 status. Callers can errors.As it to surface
 // status-specific UX (e.g. a friendly 403 message) or branch on the
 // RFC 6749 error code.
 type OAuthError struct {
@@ -86,8 +86,9 @@ func (e *OAuthError) Error() string {
 // them on the other side — a raw '+'/'%xx' would round-trip to a different
 // value and fail invalid_client (matches core/api/token_endpoint.go).
 //
-// coreURL must already be trimmed of any trailing slash. A non-2xx
-// response is surfaced as *OAuthError; transport and decode failures
+// coreURL must already be trimmed of any trailing slash. A non-200
+// response is surfaced as *OAuthError (RFC 6749 defines token-endpoint
+// success as 200 only); transport and decode failures
 // are wrapped plain errors.
 func PostOAuthToken(ctx context.Context, httpClient *http.Client, coreURL string, form url.Values) (accessToken string, expiresIn int, err error) {
 	clientID := form.Get("client_id")
