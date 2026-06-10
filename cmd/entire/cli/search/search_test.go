@@ -639,6 +639,38 @@ func TestSearch_AllReposFlagOmitsRepoParam(t *testing.T) {
 	}
 }
 
+func TestSearch_ExplicitRepoWinsOverAllRepos(t *testing.T) {
+	t.Parallel()
+
+	var capturedReq *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedReq = r
+		resp := Response{Results: []Result{}, Total: 0, Page: 1}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp) //nolint:errcheck // test helper response
+	}))
+	defer srv.Close()
+
+	// --all-repos alongside an explicit owner/name filter must scope to the
+	// explicit repo (the more specific filter wins), not search all repos.
+	_, err := Search(context.Background(), Config{
+		ServiceURL:  srv.URL,
+		GitHubToken: "tok",
+		Owner:       "default-owner",
+		Repo:        "default-repo",
+		Query:       "q",
+		AllRepos:    true,
+		Repos:       []string{"owner/explicit"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := capturedReq.URL.Query()["repo"]; len(got) != 1 || got[0] != "owner/explicit" {
+		t.Errorf("repo params = %v, want [owner/explicit]", got)
+	}
+}
+
 func TestSearch_MultipleExplicitReposRejected(t *testing.T) {
 	t.Parallel()
 
@@ -762,6 +794,9 @@ func TestConfig_HasFilters(t *testing.T) {
 	}
 	if !(Config{Repos: []string{"entirehq/entire.io"}}).HasFilters() {
 		t.Error("config with Repos should have filters")
+	}
+	if !(Config{AllRepos: true}).HasFilters() {
+		t.Error("config with AllRepos should have filters")
 	}
 	if !(Config{Author: "alice", Date: testDateWeek}).HasFilters() {
 		t.Error("config with both should have filters")

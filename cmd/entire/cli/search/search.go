@@ -154,6 +154,9 @@ func (r *Result) UnmarshalJSON(b []byte) error {
 	r.Type = raw.Type
 	r.Meta = raw.Meta
 	r.rawData = raw.Data
+	// Clear any previously-decoded payloads so a reused Result keeps the
+	// "exactly one typed pointer is non-nil" invariant.
+	r.Checkpoint, r.Commit, r.Session = nil, nil, nil
 
 	switch raw.Type {
 	case TypeCheckpoint:
@@ -379,7 +382,7 @@ type Config struct {
 
 // HasFilters reports whether any filter fields are set on the config.
 func (c Config) HasFilters() bool {
-	return c.Author != "" || c.Date != "" || c.Branch != "" || len(c.Repos) > 0
+	return c.Author != "" || c.Date != "" || c.Branch != "" || len(c.Repos) > 0 || c.AllRepos
 }
 
 // ParsedInput holds the parsed query and optional filters extracted from search input.
@@ -543,11 +546,25 @@ func Search(ctx context.Context, cfg Config) (*Response, error) {
 		return nil, err
 	}
 	allRepos := cfg.AllRepos || (len(cfg.Repos) == 1 && cfg.Repos[0] == AllReposFilter)
-	if len(cfg.Repos) > 0 && !allRepos {
-		for _, repo := range cfg.Repos {
-			q.Add("repo", repo)
+	hasExplicitRepo := false
+	for _, repo := range cfg.Repos {
+		if repo != AllReposFilter {
+			hasExplicitRepo = true
+			break
 		}
-	} else if !allRepos && cfg.Owner != "" && cfg.Repo != "" {
+	}
+	switch {
+	case hasExplicitRepo:
+		// An explicit owner/name filter always scopes the search, even when
+		// --all-repos is also set (the more specific filter wins).
+		for _, repo := range cfg.Repos {
+			if repo != AllReposFilter {
+				q.Add("repo", repo)
+			}
+		}
+	case allRepos:
+		// No repo scoping — search every accessible repo.
+	case cfg.Owner != "" && cfg.Repo != "":
 		q.Set("repo", cfg.Owner+"/"+cfg.Repo)
 	}
 	// Don't set types — let the API return all types (checkpoints, commits, sessions, etc.)

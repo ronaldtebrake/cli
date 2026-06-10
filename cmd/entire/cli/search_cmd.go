@@ -159,9 +159,9 @@ branch:<name>, repo:<owner/name>, and repo:* to search all accessible repos.`,
 				return nil
 			}
 
-			// Fetch max results so client-side pagination works.
-			// The search API caps results at the limit, so we fetch
-			// the maximum and paginate client-side for all output modes.
+			// Fetch a full page (DefaultLimit, matching the web UI) up front and
+			// paginate client-side for all output modes; the requested --limit
+			// only controls the client-side page size.
 			requestedLimit := searchCfg.Limit
 			requestedPage := searchCfg.Page
 			searchCfg.Limit = search.DefaultLimit
