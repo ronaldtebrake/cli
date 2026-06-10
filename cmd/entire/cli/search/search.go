@@ -305,6 +305,14 @@ func (r *Result) ResultTitle() string {
 	switch r.Type {
 	case TypeCheckpoint:
 		if r.Checkpoint != nil {
+			// Prefer the commit title over the prompt; fall back to the prompt
+			// for uncommitted checkpoints. The full prompt remains in the detail view.
+			if r.Checkpoint.CommitSubject != nil && *r.Checkpoint.CommitSubject != "" {
+				return *r.Checkpoint.CommitSubject
+			}
+			if r.Checkpoint.CommitMessage != nil && *r.Checkpoint.CommitMessage != "" {
+				return *r.Checkpoint.CommitMessage
+			}
 			return r.Checkpoint.Prompt
 		}
 	case TypeCommit:

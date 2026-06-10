@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/entireio/cli/cmd/entire/cli/search"
 )
 
@@ -216,16 +217,16 @@ func TestSearchModel_TopBottomNavigation(t *testing.T) {
 			key:         tea.KeyPressMsg{Code: tea.KeyEnd},
 			startPage:   0,
 			startCursor: 0,
-			wantPage:    1,
-			wantCursor:  4,
+			wantPage:    2,
+			wantCursor:  9,
 		},
 		{
 			name:        "G",
 			key:         tea.KeyPressMsg{Code: 'G', Text: "G"},
 			startPage:   0,
 			startCursor: 0,
-			wantPage:    1,
-			wantCursor:  4,
+			wantPage:    2,
+			wantCursor:  9,
 		},
 	}
 
@@ -338,6 +339,88 @@ func TestSearchModel_SearchModeEnterEmpty(t *testing.T) {
 	}
 }
 
+// TestSearchModel_BrowseNeverExceedsHeight guards the master-detail layout:
+// the browse view (header + scrolling list + pinned detail card + footer) must
+// never render more rows than the terminal height, or the detail card gets
+// clipped at the bottom (the bug this layout fixes).
+func TestSearchModel_BrowseNeverExceedsHeight(t *testing.T) {
+	t.Parallel()
+
+	results := make([]search.Result, 10)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{
+			ID:           fmt.Sprintf("id-%02d", i),
+			Prompt:       "a deliberately long prompt that wraps across the detail card width several times over",
+			Branch:       "feature/a-fairly-long-branch-name",
+			Org:          "entireio",
+			Repo:         "cli",
+			Author:       "toothbrush",
+			CreatedAt:    "2026-06-03T10:00:00Z",
+			FilesTouched: []string{"cmd/entire/cli/auth.go", "cmd/entire/cli/some/deeply/nested/long/path/file.go"},
+		}}
+	}
+
+	for _, color := range []bool{false, true} {
+		for _, w := range []int{40, 80, 120} {
+			for _, h := range []int{12, 20, 24, 40, 60} {
+				ss := statusStyles{colorEnabled: color, width: w}
+				m := initTestViewport(newSearchModel(results, "auth", 47, search.Config{}, ss))
+				m.width, m.height = w, h
+				m.cursor = 7 // force the list to scroll
+				m = m.refreshBrowseContent()
+
+				if got := lipgloss.Height(m.viewBrowse()); got > h {
+					t.Errorf("color=%v w=%d h=%d: rendered %d rows, exceeds height", color, w, h, got)
+				}
+			}
+		}
+	}
+}
+
+// TestSearchModel_ListScrollHint verifies the reserved gap row shows a "more
+// results" affordance when the list is cut off, and stays blank when it fits.
+func TestSearchModel_ListScrollHint(t *testing.T) {
+	t.Parallel()
+
+	mk := func(n int) []search.Result {
+		r := make([]search.Result, n)
+		for i := range r {
+			r[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{
+				ID: fmt.Sprintf("id-%02d", i), Prompt: "p", Branch: "main", Org: "o", Repo: "r",
+				Author: "a", CreatedAt: "2026-06-03T10:00:00Z",
+			}}
+		}
+		return r
+	}
+
+	// Short terminal + 25 results (multiple pages) → the page's rows can't all fit.
+	overflow := newSearchModel(mk(25), "auth", 25, search.Config{}, statusStyles{width: 80})
+	overflow.height, overflow.width = 28, 80
+	overflow = overflow.refreshBrowseContent()
+
+	overflow.cursor = 0
+	if v := overflow.viewBrowse(); !strings.Contains(v, "↓ more results") {
+		t.Error("expected a down-scroll hint at the top of an overflowing list")
+	}
+	// The page / results count renders on the same status row beneath the list.
+	if v := overflow.viewBrowse(); !strings.Contains(v, "page 1/3") || !strings.Contains(v, "25 results") {
+		t.Errorf("expected page/results count in the list status row: %q", v)
+	}
+	overflow.cursor = 9
+	overflow = overflow.refreshBrowseContent()
+	if v := overflow.viewBrowse(); !strings.Contains(v, "↑ more results") {
+		t.Error("expected an up-scroll hint at the bottom of an overflowing list")
+	}
+
+	// Tall terminal + few results → everything fits, no hint.
+	fits := newSearchModel(mk(3), "auth", 3, search.Config{}, statusStyles{width: 80})
+	fits.height, fits.width = 50, 80
+	fits = fits.refreshBrowseContent()
+	if v := fits.viewBrowse(); strings.Contains(v, "more results") {
+		t.Error("did not expect a scroll hint when the whole list fits")
+	}
+}
+
 func TestSearchModel_View(t *testing.T) {
 	t.Parallel()
 	m := testModel()
@@ -356,19 +439,12 @@ func TestSearchModel_View(t *testing.T) {
 		t.Error("view missing query in search bar")
 	}
 
-	// Column headers
-	for _, col := range []string{"Type", "Age", "ID", "Branch", "Repo", "Title", "Author"} {
-		if !strings.Contains(view, col) {
-			t.Errorf("view missing column header %q", col)
-		}
+	// List meta line shows the result's type word
+	if !strings.Contains(view, "checkpoint") {
+		t.Error("view missing checkpoint type word on meta line")
 	}
 
-	// Table data - type badge
-	if !strings.Contains(view, "CP") {
-		t.Error("view missing checkpoint type badge")
-	}
-
-	// Table data - ID
+	// Selected result's full ID is shown in the detail card
 	if !strings.Contains(view, "a3b2c4d5e6f") {
 		t.Error("view missing first result ID")
 	}
@@ -405,17 +481,20 @@ func TestSearchModel_View(t *testing.T) {
 func TestSearchModel_ViewMultiTypes(t *testing.T) {
 	t.Parallel()
 	m := testMultiTypeModel()
+	// Switch to the All tab so every result type renders in the list.
+	m.filterType = typeFilterAll
+	m = m.refreshBrowseContent()
 	view := m.View().Content
 
-	// Type badges
-	if !strings.Contains(view, "CP") {
-		t.Error("view missing CP type badge")
+	// List meta lines show each result's type word
+	if !strings.Contains(view, "checkpoint") {
+		t.Error("view missing checkpoint type word")
 	}
-	if !strings.Contains(view, "CM") {
-		t.Error("view missing CM type badge")
+	if !strings.Contains(view, "commit") {
+		t.Error("view missing commit type word")
 	}
-	if !strings.Contains(view, "SS") {
-		t.Error("view missing SS type badge")
+	if !strings.Contains(view, "session") {
+		t.Error("view missing session type word")
 	}
 
 	// Type tabs
@@ -461,13 +540,10 @@ func TestSearchModel_TypeFilterKeys(t *testing.T) {
 		t.Errorf("commit filter: got %d results, want 1", len(m.filteredResults()))
 	}
 
-	// Press 0 → show all
+	// Press 0 → no-op (the All tab was removed); filter stays on commits
 	m = updateModel(t, m, tea.KeyPressMsg{Code: '0', Text: "0"})
-	if m.filterType != typeFilterAll {
-		t.Errorf("after 0: filterType = %q, want %q", m.filterType, typeFilterAll)
-	}
-	if len(m.filteredResults()) != 4 {
-		t.Errorf("all filter: got %d results, want 4", len(m.filteredResults()))
+	if m.filterType != typeFilterCommits {
+		t.Errorf("after 0: filterType = %q, want %q (no-op)", m.filterType, typeFilterCommits)
 	}
 }
 
@@ -562,7 +638,7 @@ func TestSearchModel_BrowseFooterHelp(t *testing.T) {
 		"/ search",
 		"↑/↓, j/k scroll",
 		"home/end, g/G top/bottom",
-		"0-3 type",
+		"1-3 type",
 		"q quit",
 	}
 	lastIndex := -1
@@ -604,7 +680,7 @@ func TestSearchModel_BrowseFooterHelpIncludesPagingForMultiplePages(t *testing.T
 		"↑/↓, j/k scroll",
 		"home/end, g/G top/bottom",
 		"n/p page",
-		"0-3 type",
+		"1-3 type",
 		"q quit",
 	}
 	lastIndex := -1
@@ -890,8 +966,8 @@ func TestSearchModel_TotalPages(t *testing.T) {
 		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 	many := newSearchModel(results, "q", 26, cfg, ss)
-	if got := many.totalPages(); got != 2 {
-		t.Errorf("totalPages() with total=26 = %d, want 2", got)
+	if got := many.totalPages(); got != 3 {
+		t.Errorf("totalPages() with total=26 = %d, want 3", got)
 	}
 }
 
@@ -948,14 +1024,15 @@ func TestSearchModel_AppendResults(t *testing.T) {
 func TestSearchModel_FetchMoreOnNavigate(t *testing.T) {
 	t.Parallel()
 
-	// 25 loaded results, total=50 → 2 display pages but only 1 page loaded
+	// 10 loaded results, total=50 → multiple display pages but only 1 page loaded
 	ss := statusStyles{colorEnabled: false, width: 100}
-	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 25}
-	results := make([]search.Result, 25)
+	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 10}
+	results := make([]search.Result, 10)
 	for i := range results {
 		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 	m := newSearchModel(results, "q", 50, cfg, ss)
+	m.filterType = typeFilterAll // fetch-more from the API applies in the All view
 
 	// Navigate to page 2 — should trigger fetch
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
@@ -1057,14 +1134,14 @@ func TestSearchModel_SelectedResult(t *testing.T) {
 func TestSearchModel_PageNavigation(t *testing.T) {
 	t.Parallel()
 
-	// Create model with 30 results (2 pages)
+	// Create model with 20 results (2 pages at 10/page)
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r"}
-	results := make([]search.Result, 30)
+	results := make([]search.Result, 20)
 	for i := range results {
 		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
-	m := newSearchModel(results, "q", 30, cfg, ss)
+	m := newSearchModel(results, "q", 20, cfg, ss)
 
 	if m.page != 0 {
 		t.Fatalf("initial page = %d, want 0", m.page)
@@ -1175,21 +1252,22 @@ func TestSearchModel_FetchMoreEmpty_CapsTotal(t *testing.T) {
 
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	results := make([]search.Result, 25)
+	results := make([]search.Result, 10)
 	for i := range results {
 		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 	m := newSearchModel(results, "q", 100, cfg, ss)
+	m.filterType = typeFilterAll // exercise all-types pagination against m.total
 
-	if m.totalPages() != 4 {
-		t.Fatalf("initial totalPages = %d, want 4", m.totalPages())
+	if m.totalPages() != 10 {
+		t.Fatalf("initial totalPages = %d, want 10", m.totalPages())
 	}
 
 	// Simulate API returning empty results (exhausted)
 	m = updateModel(t, m, searchMoreResultsMsg{results: nil})
 
-	if m.total != 25 {
-		t.Errorf("total should be capped to loaded results (25), got %d", m.total)
+	if m.total != 10 {
+		t.Errorf("total should be capped to loaded results (10), got %d", m.total)
 	}
 	if m.totalPages() != 1 {
 		t.Errorf("totalPages should be 1 after cap, got %d", m.totalPages())
@@ -1199,10 +1277,10 @@ func TestSearchModel_FetchMoreEmpty_CapsTotal(t *testing.T) {
 func TestSearchModel_ViewFetchingMore(t *testing.T) {
 	t.Parallel()
 
-	// Model with 25 loaded results but on page 2 (no data) while fetching
+	// Model with 10 loaded results but on page 2 (no data) while fetching
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	results := make([]search.Result, 25)
+	results := make([]search.Result, 10)
 	for i := range results {
 		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
