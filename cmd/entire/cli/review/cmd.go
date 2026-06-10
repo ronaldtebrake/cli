@@ -661,6 +661,26 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+
+	profileOverride = strings.TrimSpace(profileOverride)
+	interactiveTTY := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
+
+	// Bare `entire scout` never auto-runs a profile. Without a TTY we cannot
+	// prompt, so list the profiles (or point at setup) and require an explicit
+	// selection rather than silently spawning a default crew.
+	if profileOverride == "" && !interactiveTTY {
+		cmd.SilenceUsage = true
+		eo := cmd.ErrOrStderr()
+		if profs := nonZeroProfiles(s.ReviewProfiles); len(profs) > 0 {
+			ns := sortedProfileNames(profs)
+			fmt.Fprintf(eo, "Specify a profile to scout, e.g. `entire scout %s`.\n", ns[0])
+			fmt.Fprintf(eo, "Configured profiles: %s\n", strings.Join(ns, ", "))
+		} else {
+			fmt.Fprintln(eo, "No scout profiles configured. Run `entire scout --configure` in a terminal first.")
+		}
+		return silentErr(errors.New("no profile specified"))
+	}
+
 	// Trigger first-run setup when no usable profile exists. Counting only
 	// non-zero profiles means a placeholder/empty entry (e.g. an empty
 	// `general` profile in a hand-edited preferences file) still routes through
@@ -696,6 +716,9 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		}
 		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
 		s.ReviewDefaultProfile = profileForSetup
+		// The user just chose this profile in setup; treat it as the selection so
+		// the chooser below doesn't prompt again.
+		profileOverride = profileForSetup
 		if guidedSetup {
 			runNow, confirmErr := ConfirmRunReviewNow(ctx, out)
 			if confirmErr != nil {
@@ -706,6 +729,16 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			}
 			fmt.Fprintln(out)
 		}
+	}
+
+	// Interactive bare `entire scout` with existing profiles: require a choice
+	// instead of defaulting silently.
+	if profileOverride == "" {
+		picked, pickErr := promptForProfileToRun(ctx, s)
+		if pickErr != nil {
+			return handlePickerError(cmd, silentErr, pickErr)
+		}
+		profileOverride = picked
 	}
 
 	profileName, profile, err := selectReviewProfile(s, profileOverride)

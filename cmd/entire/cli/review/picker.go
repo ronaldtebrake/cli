@@ -234,6 +234,50 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	return customProfileName, task, nil
 }
 
+// promptForProfileToRun asks which configured profile to scout. It pre-selects
+// the default but never runs without an explicit choice, so a bare
+// `entire scout` doesn't silently spawn a crew.
+func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (string, error) {
+	profiles := nonZeroProfiles(s.ReviewProfiles)
+	names := sortedProfileNames(profiles)
+	if len(names) == 0 {
+		return "", errors.New("no configured profiles to choose from")
+	}
+	defaultName := strings.TrimSpace(s.ReviewDefaultProfile)
+	picked := defaultName
+	if _, ok := profiles[picked]; !ok {
+		picked = names[0]
+	}
+	options := make([]huh.Option[string], 0, len(names))
+	for _, name := range names {
+		p := profiles[name]
+		p.Agents = nonZeroAgentConfigs(p.Agents)
+		workers := make([]string, 0, len(p.Agents))
+		for _, w := range sortedProfileAgentNames(p) {
+			workers = append(workers, reviewAgentName(w, p.Agents[w]))
+		}
+		label := name
+		if name == defaultName {
+			label += " (default)"
+		}
+		if len(workers) > 0 {
+			label += " — " + strings.Join(workers, ", ")
+		}
+		options = append(options, huh.NewOption(label, name))
+	}
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Which profile should scout the branch?").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("profile picker: %w", err)
+	}
+	return picked, nil
+}
+
 // crewSlot is one worker slot in the review crew: an agent plus an optional
 // model ("" means the agent's own default). Duplicate slots — the same agent
 // and model — are allowed; each becomes its own worker.

@@ -232,7 +232,7 @@ func TestRunReview_MissingHooksAborts(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	errBuf := &bytes.Buffer{}
 	rootCmd.SetErr(errBuf)
-	rootCmd.SetArgs([]string{"review"})
+	rootCmd.SetArgs([]string{"review", "general"})
 	err := rootCmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when hooks are not installed")
@@ -276,7 +276,7 @@ func TestRunReview_NonLaunchableAgentPreservesMarker(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	buf := &bytes.Buffer{}
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"review"})
+	rootCmd.SetArgs([]string{"review", "general"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestRunReview_MissingConfiguredSkillAbortsBeforeMarker(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	errBuf := &bytes.Buffer{}
 	rootCmd.SetErr(errBuf)
-	rootCmd.SetArgs([]string{"review"})
+	rootCmd.SetArgs([]string{"review", "general"})
 	err := rootCmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when configured skill not installed")
@@ -345,7 +345,7 @@ func TestRunReview_PromptOnlyConfigSkipsVerification(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	buf := &bytes.Buffer{}
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"review"})
+	rootCmd.SetArgs([]string{"review", "general"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -355,6 +355,42 @@ func TestRunReview_PromptOnlyConfigSkipsVerification(t *testing.T) {
 	}
 	if !markerExists {
 		t.Error("marker should exist for prompt-only config")
+	}
+}
+
+// TestRunReview_BareNonInteractiveRequiresProfile verifies that `entire scout`
+// with no profile, in a non-interactive context (the test has no TTY), never
+// auto-runs a default crew — it errors and lists the configured profiles.
+func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
+	setupCmdTestRepo(t)
+	installHooksForCmdTest(t, "cursor")
+	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
+		"cursor": {Prompt: "review the diff"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rootCmd := cli.NewRootCmd()
+	outBuf := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+	rootCmd.SetOut(outBuf)
+	rootCmd.SetErr(errBuf)
+	rootCmd.SetArgs([]string{"review"}) // bare, no profile
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("bare non-interactive scout should require a profile, got nil error")
+	}
+	if !strings.Contains(errBuf.String(), "Specify a profile") {
+		t.Errorf("stderr should ask for a profile, got:\n%s", errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "general") {
+		t.Errorf("stderr should list the configured profile, got:\n%s", errBuf.String())
+	}
+	// It must not have spawned a crew: no pending marker written.
+	_, exists, markerErr := review.ReadPendingReviewMarker(context.Background())
+	if markerErr == nil && exists {
+		t.Error("bare non-interactive scout should not have started a review")
 	}
 }
 
@@ -375,7 +411,7 @@ func TestRunReview_FlagOverrideSkipsPicker(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	buf := &bytes.Buffer{}
 	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"review", "--agent", "opencode"})
+	rootCmd.SetArgs([]string{"review", "general", "--agent", "opencode"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,7 +442,7 @@ func TestRunReview_FlagOverrideMustBeEligibleAgent(t *testing.T) {
 	rootCmd := cli.NewRootCmd()
 	errBuf := &bytes.Buffer{}
 	rootCmd.SetErr(errBuf)
-	rootCmd.SetArgs([]string{"review", "--agent", "opencode"})
+	rootCmd.SetArgs([]string{"review", "general", "--agent", "opencode"})
 	err := rootCmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when --agent points at hookless agent")
@@ -529,7 +565,7 @@ func TestRunReview_ConfigPromptAugmentsSelectedSkills(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -578,7 +614,7 @@ func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(buf)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -629,7 +665,7 @@ func TestDispatchFork_MultiAgentPassesPerAgentConfigs(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--prompt", "Focus this run on regressions."})
+	cmd.SetArgs([]string{"general", "--prompt", "Focus this run on regressions."})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -695,7 +731,7 @@ func TestDispatchFork_OneLaunchableOneNonLaunchableNoOverride(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	executeErr := cmd.Execute() // may error (agent-a not a real agent); we only care about picker routing
 	_ = executeErr              // intentionally ignored: this test only asserts picker routing
@@ -738,7 +774,7 @@ func TestDispatchFork_TwoLaunchableWithAgentOverride(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(buf)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--agent", "cursor"})
+	cmd.SetArgs([]string{"general", "--agent", "cursor"})
 
 	// cursor is not launchable in our stub (reviewerFor returns nil), so it
 	// falls through to RunMarkerFallback. That's fine — we only care that
@@ -774,7 +810,7 @@ func TestDispatchFork_MultiPickerCancellationExitsCleanly(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -806,7 +842,7 @@ func TestDispatchFork_MultiPickerNoSelectionSurfacesError(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1087,7 +1123,7 @@ func TestDispatchFork_SynthesisSinkNilProviderNoComposition(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(buf)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1123,7 +1159,7 @@ func TestDispatchFork_SingleAgentNoSynthesis(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(buf)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"general"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
