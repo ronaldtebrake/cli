@@ -340,19 +340,135 @@ func TestShouldUseBrowserLogin(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		useDevice bool
-		canPrompt bool
-		want      bool
+		useDevice  bool
+		canPrompt  bool
+		sshSession bool
+		want       bool
 	}{
-		{useDevice: false, canPrompt: true, want: true},   // default interactive → browser
-		{useDevice: false, canPrompt: false, want: false}, // headless → fall back to device
-		{useDevice: true, canPrompt: true, want: false},   // --device forces device
-		{useDevice: true, canPrompt: false, want: false},
+		{useDevice: false, canPrompt: true, sshSession: false, want: true},   // default interactive → browser
+		{useDevice: false, canPrompt: false, sshSession: false, want: false}, // headless → fall back to device
+		{useDevice: false, canPrompt: true, sshSession: true, want: false},   // SSH: loopback unreachable → device
+		{useDevice: false, canPrompt: false, sshSession: true, want: false},
+		{useDevice: true, canPrompt: true, sshSession: false, want: false}, // --device forces device
+		{useDevice: true, canPrompt: false, sshSession: false, want: false},
+		{useDevice: true, canPrompt: true, sshSession: true, want: false},
 	}
 	for _, tc := range cases {
-		if got := shouldUseBrowserLogin(tc.useDevice, tc.canPrompt); got != tc.want {
-			t.Errorf("shouldUseBrowserLogin(%v, %v) = %v, want %v", tc.useDevice, tc.canPrompt, got, tc.want)
+		if got := shouldUseBrowserLogin(tc.useDevice, tc.canPrompt, tc.sshSession); got != tc.want {
+			t.Errorf("shouldUseBrowserLogin(%v, %v, %v) = %v, want %v", tc.useDevice, tc.canPrompt, tc.sshSession, got, tc.want)
 		}
+	}
+}
+
+func TestIsSSHSession(t *testing.T) {
+	// t.Setenv forbids t.Parallel.
+	for _, v := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"} {
+		t.Setenv(v, "")
+	}
+	if isSSHSession() {
+		t.Error("isSSHSession() = true with all SSH env vars empty")
+	}
+
+	t.Setenv("SSH_CONNECTION", "10.0.0.1 50022 10.0.0.2 22")
+	if !isSSHSession() {
+		t.Error("isSSHSession() = false with SSH_CONNECTION set")
+	}
+}
+
+// startBrowserStub returns a startBrowser func that records invocations and
+// returns the given flow.
+func startBrowserStub(calls *int, flow browserAuthFlow) func(context.Context) (browserAuthFlow, error) {
+	return func(context.Context) (browserAuthFlow, error) {
+		*calls++
+		return flow, nil
+	}
+}
+
+func TestRunLoginAuto_Interactive_UsesBrowserFlow(t *testing.T) {
+	t.Parallel()
+
+	flow := &fakeBrowserFlow{authURL: "https://auth.test/authorize", waitErr: errors.New("stop")}
+	var browserCalls int
+	noopOpen := func(context.Context, string) error { return nil }
+
+	err := runLoginAuto(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &mockClient{},
+		startBrowserStub(&browserCalls, flow), noopOpen,
+		false /* useDevice */, true /* canPrompt */, false /* ssh */)
+
+	if browserCalls != 1 {
+		t.Errorf("startBrowser calls = %d, want 1", browserCalls)
+	}
+	// The stubbed Wait errors, so the browser flow is entered and fails there.
+	if err == nil || !strings.Contains(err.Error(), "complete login") {
+		t.Fatalf("err = %v, want browser-flow 'complete login' error", err)
+	}
+}
+
+func TestRunLoginAuto_SSHSession_FallsBackToDevice(t *testing.T) {
+	t.Parallel()
+
+	var browserCalls int
+	noopOpen := func(context.Context, string) error { return nil }
+
+	var errW bytes.Buffer
+	err := runLoginAuto(context.Background(), &bytes.Buffer{}, &errW, &mockClient{},
+		startBrowserStub(&browserCalls, nil), noopOpen,
+		false /* useDevice */, true /* canPrompt */, true /* ssh */)
+
+	if browserCalls != 0 {
+		t.Errorf("startBrowser calls = %d, want 0 (SSH must skip the browser flow)", browserCalls)
+	}
+	if !strings.Contains(errW.String(), "SSH session detected") {
+		t.Errorf("stderr missing SSH explanation:\n%s", errW.String())
+	}
+	// mockClient.StartDeviceAuth errors — proof the device flow was attempted.
+	if err == nil || !strings.Contains(err.Error(), "not implemented in mock") {
+		t.Fatalf("err = %v, want device-flow start error from mock", err)
+	}
+}
+
+func TestRunLoginAuto_Headless_FallsBackToDevice(t *testing.T) {
+	t.Parallel()
+
+	var browserCalls int
+	noopOpen := func(context.Context, string) error { return nil }
+
+	var errW bytes.Buffer
+	err := runLoginAuto(context.Background(), &bytes.Buffer{}, &errW, &mockClient{},
+		startBrowserStub(&browserCalls, nil), noopOpen,
+		false /* useDevice */, false /* canPrompt */, false /* ssh */)
+
+	if browserCalls != 0 {
+		t.Errorf("startBrowser calls = %d, want 0", browserCalls)
+	}
+	if !strings.Contains(errW.String(), "No interactive terminal detected") {
+		t.Errorf("stderr missing headless explanation:\n%s", errW.String())
+	}
+	if err == nil || !strings.Contains(err.Error(), "not implemented in mock") {
+		t.Fatalf("err = %v, want device-flow start error from mock", err)
+	}
+}
+
+func TestRunLoginAuto_DeviceFlag_NoExplanation(t *testing.T) {
+	t.Parallel()
+
+	var browserCalls int
+	noopOpen := func(context.Context, string) error { return nil }
+
+	var errW bytes.Buffer
+	err := runLoginAuto(context.Background(), &bytes.Buffer{}, &errW, &mockClient{},
+		startBrowserStub(&browserCalls, nil), noopOpen,
+		true /* useDevice */, true /* canPrompt */, false /* ssh */)
+
+	if browserCalls != 0 {
+		t.Errorf("startBrowser calls = %d, want 0", browserCalls)
+	}
+	// mockClient.StartDeviceAuth errors — proof the device flow was attempted.
+	if err == nil || !strings.Contains(err.Error(), "not implemented in mock") {
+		t.Fatalf("err = %v, want device-flow start error from mock", err)
+	}
+	if errW.String() != "" {
+		t.Errorf("--device should produce no fallback commentary, got:\n%s", errW.String())
 	}
 }
 

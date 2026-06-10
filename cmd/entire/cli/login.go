@@ -74,25 +74,17 @@ func newLoginCmd() *cobra.Command {
 				return err
 			}
 			client := auth.NewClient(nil, insecureHTTPAuth)
-			outW, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
-
-			// Default to the browser (loopback authorization-code) flow:
-			// no code to type, no poll latency. It needs a local browser and
-			// a reachable 127.0.0.1, so when there's no interactive terminal
-			// (CI, piped, SSH without a tty) fall back to the device flow —
-			// the same both-flows-with-fallback shape gh / gcloud / aws sso
-			// ship. --device forces the device flow explicitly.
-			if shouldUseBrowserLogin(useDevice, interactive.CanPromptInteractively()) {
-				flow, err := client.StartBrowserAuth(cmd.Context())
+			startBrowser := func(ctx context.Context) (browserAuthFlow, error) {
+				flow, err := client.StartBrowserAuth(ctx)
 				if err != nil {
-					return fmt.Errorf("start login: %w", err)
+					// Explicit nil so the interface value is nil, not a typed nil.
+					return nil, err //nolint:wrapcheck // runLoginAuto wraps this as "start login: %w"
 				}
-				return runBrowserLogin(cmd.Context(), outW, errW, flow, client.BaseURL(), openBrowser, browserLoginTimeout)
+				return flow, nil
 			}
-			if !useDevice {
-				fmt.Fprintln(errW, "No interactive terminal detected; using device-code flow.")
-			}
-			return runLogin(cmd.Context(), outW, errW, client, openBrowser)
+			return runLoginAuto(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				client, startBrowser, openBrowser,
+				useDevice, interactive.CanPromptInteractively(), isSSHSession())
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
@@ -142,13 +134,50 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 	return persistLogin(outW, errW, client.BaseURL(), token, refreshToken)
 }
 
+// runLoginAuto picks between the browser (loopback authorization-code) and
+// device-code flows and runs the chosen one. The browser flow is the
+// default — no code to type, no poll latency — but it needs a browser that
+// can reach this machine's 127.0.0.1, so headless terminals (CI, piped
+// stdin) and SSH sessions fall back to the device flow with a one-line
+// explanation; the same both-flows-with-fallback shape gh / gcloud /
+// aws sso ship. --device forces the device flow without commentary.
+func runLoginAuto(ctx context.Context, outW, errW io.Writer, deviceClient deviceAuthClient, startBrowser func(context.Context) (browserAuthFlow, error), openURL browserOpenFunc, useDevice, canPrompt, sshSession bool) error {
+	if shouldUseBrowserLogin(useDevice, canPrompt, sshSession) {
+		flow, err := startBrowser(ctx)
+		if err != nil {
+			return fmt.Errorf("start login: %w", err)
+		}
+		return runBrowserLogin(ctx, outW, errW, flow, deviceClient.BaseURL(), openURL, browserLoginTimeout)
+	}
+	switch {
+	case useDevice:
+		// Explicitly requested; no explanation needed.
+	case !canPrompt:
+		fmt.Fprintln(errW, "No interactive terminal detected; using device-code flow.")
+	case sshSession:
+		fmt.Fprintln(errW, "SSH session detected; using device-code flow (a browser opened here couldn't reach this machine).")
+	}
+	return runLogin(ctx, outW, errW, deviceClient, openURL)
+}
+
 // shouldUseBrowserLogin reports whether `entire login` should use the
 // loopback authorization-code (browser) flow. The browser flow is the
 // default but needs a local browser + reachable 127.0.0.1, so it's only
-// chosen when --device wasn't passed and an interactive terminal is
-// present; otherwise the caller falls back to the device flow.
-func shouldUseBrowserLogin(useDevice, canPrompt bool) bool {
-	return !useDevice && canPrompt
+// chosen when --device wasn't passed, an interactive terminal is present,
+// and we're not inside an SSH session (where the loopback listener binds
+// on the remote host, out of the user's browser's reach); otherwise the
+// caller falls back to the device flow.
+func shouldUseBrowserLogin(useDevice, canPrompt, sshSession bool) bool {
+	return !useDevice && canPrompt && !sshSession
+}
+
+// isSSHSession reports whether this process is running inside an SSH
+// session: sshd sets SSH_CONNECTION/SSH_CLIENT for every session and
+// SSH_TTY for interactive ones.
+func isSSHSession() bool {
+	return os.Getenv("SSH_CONNECTION") != "" ||
+		os.Getenv("SSH_CLIENT") != "" ||
+		os.Getenv("SSH_TTY") != ""
 }
 
 // runBrowserLogin runs the loopback authorization-code flow on an

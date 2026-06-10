@@ -216,7 +216,13 @@ func TestLogin_BrowserFlow_SavesToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	proc := startLoginProcess(t, server.URL, []string{"ENTIRE_TEST_TTY=1"}, "login", "--insecure-http-auth")
+	// Blank the SSH_* vars too: startLoginProcess inherits os.Environ(), so a
+	// developer running tests over SSH would otherwise flip the subprocess'
+	// isSSHSession() detection and route it to the device flow.
+	proc := startLoginProcess(t, server.URL, []string{
+		"ENTIRE_TEST_TTY=1",
+		"SSH_CONNECTION=", "SSH_CLIENT=", "SSH_TTY=",
+	}, "login", "--insecure-http-auth")
 
 	authURL := waitForBrowserPrompt(t, proc.stdout)
 	u, err := url.Parse(authURL)
