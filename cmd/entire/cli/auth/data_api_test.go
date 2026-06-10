@@ -8,13 +8,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/entireio/auth-go/sts"
-	"github.com/entireio/auth-go/tokenmanager"
 
-	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
@@ -32,13 +31,11 @@ func stubResolveContextForAPI(t *testing.T, fn resolveContextFunc) {
 	t.Cleanup(func() { resolveContextForAPI = prev })
 }
 
-// When the API doesn't advertise discovery, resolution falls back to the static
-// path — so with no login it surfaces ErrNotLoggedIn, exactly as before the
-// discovery layer existed (proving we took the fallback branch, not the
-// per-context one, which would name a context instead).
-func TestResolveDataAPIToken_FallbackWhenDiscoveryUnavailable(t *testing.T) {
+// An API host that doesn't advertise discovery is an error naming the host —
+// without /.well-known/entire-api.json we can't know which login servers it
+// trusts, and there is no static fallback to guess with.
+func TestResolveDataAPIToken_ErrsWhenDiscoveryUnavailable(t *testing.T) {
 	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
-	t.Setenv(api.AuthBaseURLEnvVar, "")
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
@@ -46,23 +43,12 @@ func TestResolveDataAPIToken_FallbackWhenDiscoveryUnavailable(t *testing.T) {
 		return nil, fmt.Errorf("%w: 404", clusterdiscovery.ErrDiscoveryUnavailable)
 	})
 
-	// Pin the singleton manager to an empty store so the static fallback's
-	// TokenForResource reports not-logged-in deterministically — the
-	// process-global manager is otherwise frozen by whichever earlier test
-	// built it first.
-	mgr, err := tokenmanager.New(tokenmanager.Config{
-		Issuer:   "https://entire.io",
-		ClientID: "entire-cli",
-		Store:    contextTokenStore{service: "empty-service", handle: "nobody"},
-	})
-	if err != nil {
-		t.Fatalf("build empty manager: %v", err)
+	_, err := ResolveDataAPIToken(context.Background(), "https://entire.io")
+	if !errors.Is(err, clusterdiscovery.ErrDiscoveryUnavailable) {
+		t.Fatalf("want the discovery-unavailable error surfaced, got %v", err)
 	}
-	t.Cleanup(SetManagerForTest(t, mgr))
-
-	_, err = ResolveDataAPIToken(context.Background(), "https://entire.io")
-	if !errors.Is(err, ErrNotLoggedIn) {
-		t.Fatalf("want ErrNotLoggedIn from the static fallback, got %v", err)
+	if !strings.Contains(err.Error(), "entire.io") {
+		t.Fatalf("err = %q, want it to name the host", err)
 	}
 }
 

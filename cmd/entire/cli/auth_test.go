@@ -8,10 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/entireio/auth-go/sts"
-	"github.com/entireio/auth-go/tokenmanager"
-	"github.com/entireio/auth-go/tokens"
-	"github.com/entireio/auth-go/tokenstore"
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/coreapi"
@@ -269,67 +265,6 @@ func TestAuthCmd_RegistersExpectedSubcommands(t *testing.T) {
 	if authCmd == nil {
 		t.Fatal("auth command not registered on root")
 	}
-}
-
-// authResolveTestIssuer is intentionally distinct from api.AuthBaseURL() so
-// the manager's same-host shortcut is skipped and the STS-exchange path runs.
-const authResolveTestIssuer = "https://auth.resolve-test.example.com"
-
-// --- shared token-manager test helpers --------------------------------------
-//
-// Used by the data-API resolution tests (activity_cmd_test.go and friends) to
-// install a real tokenmanager.Manager via auth.SetManagerForTest while stubbing
-// only the STS wire call, so the static fallback path runs end-to-end without a
-// live core.
-
-// authMemStore is an in-memory tokenstore.Store for tests that need a
-// real tokenmanager.Manager. Mirrors the private memStore in auth-go's
-// tokenmanager_test.go — that one isn't exported, so we duplicate the
-// trivial implementation rather than pull in a fragile internal package.
-type authMemStore struct {
-	data map[string]tokens.TokenSet
-}
-
-func newAuthMemStore() *authMemStore { return &authMemStore{data: map[string]tokens.TokenSet{}} }
-
-func (s *authMemStore) SaveTokens(profile string, t tokens.TokenSet) error {
-	s.data[profile] = t
-	return nil
-}
-
-func (s *authMemStore) LoadTokens(profile string) (tokens.TokenSet, error) {
-	t, ok := s.data[profile]
-	if !ok {
-		return tokens.TokenSet{}, tokenstore.ErrNotFound
-	}
-	return t, nil
-}
-
-func (s *authMemStore) DeleteTokens(profile string) error {
-	delete(s.data, profile)
-	return nil
-}
-
-func saveCoreToken(t *testing.T, store tokenstore.Store, profile, accessToken string) {
-	t.Helper()
-	if err := store.SaveTokens(profile, tokens.TokenSet{AccessToken: accessToken}); err != nil {
-		t.Fatalf("SaveTokens: %v", err)
-	}
-}
-
-func newResolveTestManager(t *testing.T, store tokenstore.Store, exchange func(context.Context, sts.ExchangeRequest) (*tokens.TokenSet, error)) *tokenmanager.Manager {
-	t.Helper()
-	mgr, err := tokenmanager.New(tokenmanager.Config{
-		Issuer:   authResolveTestIssuer,
-		ClientID: "entire-cli-test",
-		STSPath:  "/sts/token",
-		Store:    store,
-	})
-	if err != nil {
-		t.Fatalf("tokenmanager.New: %v", err)
-	}
-	tokenmanager.SetExchangeForTest(t, mgr, exchange)
-	return mgr
 }
 
 // --- isKeychainTokenRejected -----------------------------------------------
