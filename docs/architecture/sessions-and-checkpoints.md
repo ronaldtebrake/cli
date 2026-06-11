@@ -194,15 +194,31 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 ├── metadata.json        # CheckpointSummary (aggregated stats)
 ├── 0/                   # First session (0-based indexing)
 │   ├── metadata.json    # Session-specific CommittedMetadata
-│   ├── full.jsonl
+│   ├── full.jsonl       # Raw agent transcript (CLI rewind/resume/explain)
+│   ├── transcript.jsonl # Compact transcript, scoped to this checkpoint
 │   ├── prompt.txt       # Checkpoint-scoped user prompts
-│   └── content_hash.txt
+│   └── content_hash.txt # sha256 of full.jsonl (dedup short-circuit)
 ├── 1/                   # Second session
 │   ├── metadata.json
 │   ├── full.jsonl
 │   └── ...
 └── 2/                   # Third session...
 ```
+
+**Compact transcript (`transcript.jsonl`):** generated best-effort from
+`full.jsonl` via `transcript/compact` on every committed write and on
+transcript replacement during finalization. Unlike `full.jsonl` (the
+cumulative session transcript, scoped at read time via
+`checkpoint_transcript_start`), `transcript.jsonl` is pre-sliced to the
+checkpoint's own portion (`compact.Compact` is called with
+`StartLine = checkpoint_transcript_start`), so it needs no offset to consume.
+The root `metadata.json` `sessions[].transcript` pointer targets
+`transcript.jsonl` when it was generated and falls back to `full.jsonl`
+otherwise (e.g. unparseable/external-agent transcripts, or checkpoints written
+by older CLI versions). CLI read paths (rewind/resume/explain) ignore the
+pointer and read `full.jsonl` by filename. Generation failures are logged but
+never fail the checkpoint write; during finalization a failed regeneration
+keeps the previous `transcript.jsonl` so the pointer never dangles.
 
 #### v1.1 local read mirror
 
@@ -244,7 +260,7 @@ diagnosis in `entire-refs.txt`.
   "sessions": [
     {
       "metadata": "/ab/c123def456/0/metadata.json",
-      "transcript": "/ab/c123def456/0/full.jsonl",
+      "transcript": "/ab/c123def456/0/transcript.jsonl",
       "content_hash": "/ab/c123def456/0/content_hash.txt",
       "prompt": "/ab/c123def456/0/prompt.txt"
     }
@@ -350,6 +366,7 @@ are for human readability in `git log` only. The CLI always reads from the tree 
 │     │   (checkpoint_id: "a3b2c4d5e6f7")          │
 │     ├── 0/                                       │
 │     │   ├── full.jsonl                           │
+│     │   ├── transcript.jsonl                     │
 │     │   └── prompt.txt                           │
 │     └── ...                                      │
 │                                                   │
