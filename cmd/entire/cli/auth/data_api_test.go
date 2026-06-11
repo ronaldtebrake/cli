@@ -25,7 +25,7 @@ import (
 
 // stubResolveContextForAPI swaps the discovery seam for the duration of the
 // test, restoring it after.
-func stubResolveContextForAPI(t *testing.T, fn resolveContextForAPIFunc) {
+func stubResolveContextForAPI(t *testing.T, fn resolveContextFunc) {
 	t.Helper()
 	prev := resolveContextForAPI
 	resolveContextForAPI = fn

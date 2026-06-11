@@ -18,14 +18,14 @@ import (
 // resolution, so a slow or absent endpoint must not stall the command.
 const dataAPIDiscoveryTimeout = 8 * time.Second
 
-// resolveContextForAPIFunc is the shape of the discovery seam: it mirrors
-// clusterdiscovery.ResolveContextForAPI (ctx, configDir, cacheDir, apiHost,
-// httpClient, debugf).
-type resolveContextForAPIFunc func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error)
+// resolveContextFunc is the shape of a context-discovery seam: it mirrors
+// clusterdiscovery.ResolveContextForAPI / ResolveContextForCluster
+// (ctx, configDir, cacheDir, host, httpClient, debugf).
+type resolveContextFunc func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error)
 
 // resolveContextForAPI is the discovery seam, swapped in tests so they don't
 // reach the network. See SetResolveContextForAPIForTest for cross-package tests.
-var resolveContextForAPI resolveContextForAPIFunc = clusterdiscovery.ResolveContextForAPI
+var resolveContextForAPI resolveContextFunc = clusterdiscovery.ResolveContextForAPI
 
 // SetResolveContextForAPIForTest overrides the /.well-known/entire-api.json
 // discovery seam and returns a cleanup func. Tests in other packages that
@@ -34,7 +34,7 @@ var resolveContextForAPI resolveContextForAPIFunc = clusterdiscovery.ResolveCont
 // configured data host and bypasses any SetManagerForTest fallback seam. Pass
 // a func returning clusterdiscovery.ErrDiscoveryUnavailable to force the static
 // fallback path. Test-only.
-func SetResolveContextForAPIForTest(t interface{ Helper() }, fn resolveContextForAPIFunc) func() {
+func SetResolveContextForAPIForTest(t interface{ Helper() }, fn resolveContextFunc) func() {
 	t.Helper()
 	prev := resolveContextForAPI
 	resolveContextForAPI = fn
