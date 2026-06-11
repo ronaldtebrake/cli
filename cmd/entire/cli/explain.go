@@ -722,17 +722,10 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		author, _ = lookup.store.GetCheckpointAuthor(ctx, fullCheckpointID) //nolint:errcheck // Author is optional
 	}
 
-	// External agents store transcripts in their native format, which the
-	// display parsers don't understand. Compact through the agent binary so
-	// --full/--verbose render the conversation instead of failing to parse.
-	if (verbose || full) && len(content.Transcript) > 0 {
-		content.Transcript = maybeCompactExternalTranscript(ctx, content.Transcript, content.Metadata.Agent)
-	}
-
 	// Format and output. Stop spinner BEFORE any write to w to keep stderr
 	// frames and stdout content from interleaving.
 	stopLoad(false)
-	output := formatCheckpointOutput(summary, content, fullCheckpointID, associatedCommits, author, verbose, full, w)
+	output := formatCheckpointOutput(ctx, summary, content, fullCheckpointID, associatedCommits, author, verbose, full, w)
 	outputExplainContent(w, output, noPager)
 	return nil
 }
@@ -1616,7 +1609,7 @@ func renderExplainBody(w io.Writer, md string) string {
 //
 // Author is displayed when available (only for committed checkpoints).
 // Associated commits are git commits that reference this checkpoint via Entire-Checkpoint trailer.
-func formatCheckpointOutput(summary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, checkpointID id.CheckpointID, associatedCommits []associatedCommit, author checkpoint.Author, verbose, full bool, w io.Writer) string {
+func formatCheckpointOutput(ctx context.Context, summary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, checkpointID id.CheckpointID, associatedCommits []associatedCommit, author checkpoint.Author, verbose, full bool, w io.Writer) string {
 	var sb strings.Builder
 	meta := content.Metadata
 	styles := newStatusStyles(w)
@@ -1670,7 +1663,20 @@ func formatCheckpointOutput(summary *checkpoint.CheckpointSummary, content *chec
 		sb.WriteString("\n")
 		sb.WriteString(styles.sectionRule(label, styles.width))
 		sb.WriteString("\n")
-		appendTranscriptSection(&sb, verbose, full, content.Transcript, scopedTranscript, content.Prompts, meta.Agent)
+		// External agents' native transcripts need the agent binary to convert
+		// them to a displayable format. Scoping already happened on the native
+		// transcript above (CheckpointTranscriptStart indexes the stored
+		// format, and compaction changes line counts), so compact only the
+		// bytes that will be displayed.
+		displayFull := content.Transcript
+		displayScoped := scopedTranscript
+		if full && len(displayFull) > 0 {
+			displayFull = maybeCompactExternalTranscript(ctx, displayFull, meta.Agent)
+		}
+		if verbose && len(displayScoped) > 0 {
+			displayScoped = maybeCompactExternalTranscript(ctx, displayScoped, meta.Agent)
+		}
+		appendTranscriptSection(&sb, verbose, full, displayFull, displayScoped, content.Prompts, meta.Agent)
 	}
 
 	return sb.String()
