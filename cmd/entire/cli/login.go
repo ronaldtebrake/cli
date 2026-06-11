@@ -195,7 +195,7 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 		return fmt.Errorf("complete login: %w", err)
 	}
 
-	return persistLogin(outW, errW, client.BaseURL(), token, refreshToken)
+	return persistLogin(outW, client.BaseURL(), token, refreshToken)
 }
 
 // loginFlowFacts carries the environment facts that pick between the
@@ -312,13 +312,13 @@ func runBrowserLogin(ctx context.Context, outW, errW io.Writer, flow browserAuth
 		return fmt.Errorf("complete login: %w", err)
 	}
 
-	return persistLogin(outW, errW, baseURL, token, refreshToken)
+	return persistLogin(outW, baseURL, token, refreshToken)
 }
 
 // persistLogin validates the freshly-issued access token and records it in
 // the shared contexts.json credential model. Shared by the device-code and
 // browser flows.
-func persistLogin(outW, errW io.Writer, baseURL, token, refreshToken string) error {
+func persistLogin(outW io.Writer, baseURL, token, refreshToken string) error {
 	if err := validateReceivedToken(token, baseURL, time.Now()); err != nil {
 		return fmt.Errorf("reject login token: %w", err)
 	}
