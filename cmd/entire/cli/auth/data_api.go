@@ -10,7 +10,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
-	"github.com/entireio/cli/internal/entireclient/discovery"
+	"github.com/entireio/cli/internal/entireclient/userdirs"
 )
 
 // dataAPIDiscoveryTimeout bounds the one /.well-known/entire-api.json GET we
@@ -88,7 +88,7 @@ func ResolveDataAPIToken(ctx context.Context, dataBaseURL string) (string, error
 	defer cancel()
 	httpClient := &http.Client{Timeout: dataAPIDiscoveryTimeout}
 
-	selected, err := resolveContextForAPI(dctx, contexts.DefaultConfigDir(), discovery.DefaultCacheDir(), host, httpClient, nil)
+	selected, err := resolveContextForAPI(dctx, userdirs.Config(), userdirs.Cache(), host, httpClient, nil)
 	if errors.Is(err, clusterdiscovery.ErrDiscoveryUnavailable) {
 		// Old deployment / not rolled out / transient — preserve today's behaviour.
 		return TokenForResource(ctx, dataOrigin)

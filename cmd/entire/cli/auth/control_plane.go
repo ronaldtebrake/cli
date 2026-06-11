@@ -7,6 +7,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/userdirs"
 )
 
 // ControlPlaneTarget is the resolved login server a control-plane request
@@ -77,7 +78,7 @@ func staticControlPlaneTarget() ControlPlaneTarget {
 // unusable pointer we treat as "no active context" rather than dialing an
 // empty host).
 func activeContext() (c *contexts.Context, ok bool, err error) {
-	f, err := contexts.Load(contexts.DefaultConfigDir())
+	f, err := contexts.Load(userdirs.Config())
 	if err != nil {
 		return nil, false, fmt.Errorf("load contexts: %w", err)
 	}

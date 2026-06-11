@@ -179,13 +179,17 @@ Tests must never read or write the developer's real `~/.config/entire`
 cluster_cores.json, api_discovery.json), or OS keychain. The developer may be
 using `entire` for real while tests run.
 
-- **In-process safety net**: `contexts.DefaultConfigDir()`,
-  `discovery.DefaultCacheDir()`, versioncheck's config path, and the
-  `tokenstore` default backend all detect `go test` (via `internal/testdirs`)
-  and fall back to a throwaway per-process temp directory when their env
-  override is unset. The fallback is shared across tests in one process — for
-  per-test isolation still set `t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())`
-  and `tokenstore.UseFileBackendForTesting(...)`.
+- **Single resolver**: `internal/entireclient/userdirs` is the only place
+  that resolves the per-user config dir (`userdirs.Config()`:
+  `$ENTIRE_CONFIG_DIR` else `~/.config/entire`) and cache dir
+  (`userdirs.Cache()`: `$XDG_CACHE_HOME/entire` else `~/.cache/entire`).
+  Never derive these paths anywhere else.
+- **In-process safety net**: `userdirs` and the `tokenstore` default backend
+  detect `go test` (via `internal/testdirs`) and fall back to a throwaway
+  per-process temp directory when their env override is unset. The fallback
+  is shared across tests in one process — for per-test isolation still set
+  `t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())` and
+  `tokenstore.UseFileBackendForTesting(...)`.
 - **Spawned binaries are NOT covered**: `testing.Testing()` is false in a
   subprocess. The integration and e2e TestMains set `ENTIRE_CONFIG_DIR`,
   `XDG_CACHE_HOME`, `ENTIRE_TOKEN_STORE=file`, `ENTIRE_TOKEN_STORE_PATH`, and

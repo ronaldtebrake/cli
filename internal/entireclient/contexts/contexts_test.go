@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -283,33 +282,5 @@ func TestModify_HoldsLockAcrossLoadAndSave(t *testing.T) {
 	}
 	if got.CurrentContext != strconv.Itoa(n) {
 		t.Errorf("CurrentContext = %q, want %q (lost updates indicate non-atomic RMW)", got.CurrentContext, strconv.Itoa(n))
-	}
-}
-
-func TestDefaultConfigDir_HonorsEnv(t *testing.T) {
-	t.Setenv("ENTIRE_CONFIG_DIR", "/tmp/explicit/path")
-	if got := contexts.DefaultConfigDir(); got != "/tmp/explicit/path" {
-		t.Errorf("DefaultConfigDir = %q, want /tmp/explicit/path", got)
-	}
-}
-
-func TestDefaultConfigDir_TestRunsNeverResolveRealConfigDir(t *testing.T) {
-	// With no explicit override, a `go test` process must fall back to a
-	// throwaway directory — never ~/.config/entire, where it could read or
-	// pollute the developer's real contexts.json. (The fallback lives under
-	// os.TempDir, which may itself be under $HOME via TMPDIR — that's fine;
-	// only the real config location is off-limits.)
-	t.Setenv("ENTIRE_CONFIG_DIR", "")
-	got := contexts.DefaultConfigDir()
-	if got == "" {
-		t.Fatal("DefaultConfigDir returned empty string")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("no home dir: %v", err)
-	}
-	realDir := filepath.Join(home, ".config", "entire")
-	if got == realDir || strings.HasPrefix(got, realDir+string(os.PathSeparator)) {
-		t.Fatalf("DefaultConfigDir = %q resolves to the real config dir %q during tests", got, realDir)
 	}
 }
