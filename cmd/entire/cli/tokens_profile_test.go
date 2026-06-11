@@ -1,0 +1,231 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/redact"
+)
+
+func TestTokensProfileCmd_TextOutputAggregatesCommittedCheckpoints(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo)
+
+	writeProfileTokenCheckpoint(ctx, t, store, "100aaa000001", "profile-cache-hotspot", &agent.TokenUsage{
+		InputTokens:         100,
+		CacheCreationTokens: 100,
+		CacheReadTokens:     800,
+		APICallCount:        5,
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "100aaa000002", "profile-api-heavy", &agent.TokenUsage{
+		InputTokens:  400,
+		OutputTokens: 100,
+		APICallCount: 25,
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "100aaa000003", "profile-subagent-heavy", &agent.TokenUsage{
+		InputTokens:  500,
+		OutputTokens: 500,
+		APICallCount: 3,
+		SubagentTokens: &agent.TokenUsage{
+			InputTokens: 1_000,
+		},
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "100aaa000004", "profile-missing", nil)
+
+	cmd := newTokensGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"profile"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := stdout.String()
+	checks := []string{
+		"Token profile",
+		"Checkpoints analyzed: 4",
+		"With token data:      3",
+		"Missing token data:   1",
+		"Token usage",
+		"Total:  3.5k tokens",
+		"Cache read: 800",
+		"API calls: 33",
+		"Repeated signals",
+		"Cache/context replay hotspot: 1 checkpoint",
+		"API call amplification: 1 checkpoint",
+		"Subagent-heavy sessions: 1 checkpoint",
+		"Missing token data: 1 checkpoint",
+		"Recommendations",
+		"Use `entire search` for prior decisions/checkpoints before broad re-investigation.",
+		"Tool-level search/read spend is not captured yet",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+
+	tokenUsageIndex := strings.Index(out, "Token usage")
+	recommendationsIndex := strings.Index(out, "Recommendations")
+	if tokenUsageIndex == -1 || recommendationsIndex == -1 {
+		t.Fatalf("expected token usage and recommendations sections, got:\n%s", out)
+	}
+	if tokenUsageIndex > recommendationsIndex {
+		t.Fatalf("expected token usage before recommendations, got:\n%s", out)
+	}
+}
+
+func TestTokensProfileCmd_JSONOutput(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo)
+
+	writeProfileTokenCheckpoint(ctx, t, store, "200bbb000001", "profile-json-cache", &agent.TokenUsage{
+		InputTokens:     100,
+		CacheReadTokens: 900,
+		APICallCount:    2,
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "200bbb000002", "profile-json-api", &agent.TokenUsage{
+		InputTokens:  200,
+		OutputTokens: 100,
+		APICallCount: 22,
+	})
+
+	cmd := newTokensGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"profile", "--json"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	var result tokensProfileReport
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected valid JSON, got parse error: %v\noutput: %s", err, stdout.String())
+	}
+	if result.CheckpointsAnalyzed != 2 {
+		t.Fatalf("checkpoints_analyzed = %d, want 2", result.CheckpointsAnalyzed)
+	}
+	if result.CheckpointsWithTokenData != 2 {
+		t.Fatalf("checkpoints_with_token_data = %d, want 2", result.CheckpointsWithTokenData)
+	}
+	if result.Tokens == nil || result.Tokens.Total != 1300 {
+		t.Fatalf("unexpected token total: %+v", result.Tokens)
+	}
+	if got := signalCount(result.Signals, "context-replay-hotspot"); got != 1 {
+		t.Fatalf("context-replay-hotspot signal count = %d, want 1", got)
+	}
+	if got := signalCount(result.Signals, "api-call-amplification"); got != 1 {
+		t.Fatalf("api-call-amplification signal count = %d, want 1", got)
+	}
+	if len(result.Recommendations) == 0 {
+		t.Fatalf("expected recommendations, got none")
+	}
+}
+
+func TestTokensProfileCmd_LimitScopesAnalyzedCheckpoints(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo)
+
+	writeProfileTokenCheckpoint(ctx, t, store, "300ccc000001", "profile-limit-one", &agent.TokenUsage{
+		InputTokens:  100,
+		OutputTokens: 100,
+		APICallCount: 1,
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "300ccc000002", "profile-limit-two", &agent.TokenUsage{
+		InputTokens:  100,
+		OutputTokens: 100,
+		APICallCount: 1,
+	})
+	writeProfileTokenCheckpoint(ctx, t, store, "300ccc000003", "profile-limit-three", &agent.TokenUsage{
+		InputTokens:  100,
+		OutputTokens: 100,
+		APICallCount: 1,
+	})
+
+	cmd := newTokensGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"profile", "--limit", "2"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := stdout.String()
+	checks := []string{
+		"Checkpoints available: 3",
+		"Checkpoints analyzed: 2",
+		"Total:  400 tokens",
+		"Limited to latest 2 of 3 committed checkpoints",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+}
+
+func TestTokensProfileCmd_EmptyHistory(t *testing.T) {
+	runExplainAutoTestRepo(t)
+
+	cmd := newTokensGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"profile"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := stdout.String()
+	checks := []string{
+		"Token profile",
+		"Checkpoints analyzed: 0",
+		"Token data: unavailable",
+		"No committed checkpoints found.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+}
+
+func signalCount(signals []tokensProfileSignal, id string) int {
+	for _, signal := range signals {
+		if signal.ID == id {
+			return signal.Count
+		}
+	}
+	return 0
+}
+
+func writeProfileTokenCheckpoint(ctx context.Context, t *testing.T, store *checkpoint.GitStore, checkpointID string, sessionID string, usage *agent.TokenUsage) {
+	t.Helper()
+
+	if err := store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: id.MustCheckpointID(checkpointID),
+		SessionID:    sessionID,
+		Strategy:     strategy.StrategyNameManualCommit,
+		Branch:       "tokens-profile",
+		Agent:        testAgentClaude,
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"profile"}]}}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+		TokenUsage:   usage,
+	}); err != nil {
+		t.Fatalf("WriteCommitted(%s) error = %v", checkpointID, err)
+	}
+}
