@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
+	"github.com/entireio/cli/cmd/entire/cli/investigate/flowchart"
 	"github.com/entireio/cli/cmd/entire/cli/mdrender"
-	"github.com/entireio/cli/cmd/entire/cli/mermaidascii"
 )
 
 // ShowInput drives RunShow.
@@ -169,7 +169,7 @@ func writeRenderedFindings(w io.Writer, body string) {
 		return
 	}
 
-	for _, seg := range mermaidascii.SplitRenderable(body) {
+	for _, seg := range flowchart.SplitRenderable(body) {
 		if seg.Diagram != "" {
 			// Print the diagram outside glamour, padded with blank lines so
 			// it sits apart from the surrounding rendered markdown.

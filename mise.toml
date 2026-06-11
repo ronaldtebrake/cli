@@ -19,10 +19,6 @@ run = "gotestsum --format pkgname --format-icons text --format-hide-empty-pkg --
 description = "Run integration tests"
 run = "gotestsum --format testname --format-icons text --hide-summary skipped -- -tags=integration,authfilestore ./cmd/entire/cli/integration_test/... ./cmd/entire/cli/auth/..."
 
-[tasks."render-mermaid"]
-description = "Preview how `entire investigate` renders a Mermaid flowchart in the terminal. Reads a file arg or stdin: `mise run render-mermaid diagram.mmd` or `pbpaste | mise run render-mermaid`."
-run = "go run scripts/render-mermaid.go"
-
 [tasks."build:e2e"]
 description = "Build the CLI for e2e tests with the file-backed auth store (-tags=authfilestore), so the spawned binary, the git-remote-entire helper, and git hooks never touch the developer's OS keychain"
 run = """

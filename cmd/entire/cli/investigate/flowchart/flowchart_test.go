@@ -1,4 +1,4 @@
-package mermaidascii
+package flowchart
 
 import (
 	"strings"
@@ -17,7 +17,7 @@ func lineOf(out, sub string) int {
 
 // renderable cases: a single rooted tree (chain or branch). We assert the
 // labels appear top-to-bottom in DFS order and edge labels show in brackets.
-func TestRenderFlowchart_RenderableTrees(t *testing.T) {
+func TestRender_RenderableTrees(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -71,7 +71,7 @@ func TestRenderFlowchart_RenderableTrees(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			out, ok := RenderFlowchart(tc.src)
+			out, ok := Render(tc.src)
 			if !ok {
 				t.Fatalf("expected renderable, got ok=false for:\n%s", tc.src)
 			}
@@ -97,10 +97,10 @@ func TestRenderFlowchart_RenderableTrees(t *testing.T) {
 
 // A chain renders as boxes stacked top-down joined by ▼ arrows, one box per
 // node, in path order.
-func TestRenderFlowchart_VerticalFlow(t *testing.T) {
+func TestRender_VerticalFlow(t *testing.T) {
 	t.Parallel()
 
-	out, ok := RenderFlowchart("flowchart LR\n A[Root] --> B[Mid] --> C[Leaf]")
+	out, ok := Render("flowchart LR\n A[Root] --> B[Mid] --> C[Leaf]")
 	if !ok {
 		t.Fatalf("expected renderable")
 	}
@@ -117,13 +117,13 @@ func TestRenderFlowchart_VerticalFlow(t *testing.T) {
 
 // A fork renders both branches side-by-side under a ┴ distributor bar, each
 // with its own labeled connector and ▼ arrow. Sibling boxes share rows.
-func TestRenderFlowchart_Branches(t *testing.T) {
+func TestRender_Branches(t *testing.T) {
 	t.Parallel()
 
 	src := "flowchart LR\n" +
 		"  R[Read stdin] -->|EOF| OK[Parse event]\n" +
 		"  R -.->|no EOF| HANG[Hangs]\n"
-	out, ok := RenderFlowchart(src)
+	out, ok := Render(src)
 	if !ok {
 		t.Fatalf("expected renderable")
 	}
@@ -142,14 +142,14 @@ func TestRenderFlowchart_Branches(t *testing.T) {
 
 // A back-edge (retry loop) renders the forward flow as a tree and the looping
 // edge as a "↪" reference, rather than falling back to raw Mermaid.
-func TestRenderFlowchart_CycleBecomesReference(t *testing.T) {
+func TestRender_CycleBecomesReference(t *testing.T) {
 	t.Parallel()
 
 	src := "flowchart LR\n" +
 		"  A[Start] --> B[Work]\n" +
 		"  B --> C[Done]\n" +
 		"  C -->|retry| A\n"
-	out, ok := RenderFlowchart(src)
+	out, ok := Render(src)
 	if !ok {
 		t.Fatalf("expected cycle to render via reference, got fallback")
 	}
@@ -168,7 +168,7 @@ func TestRenderFlowchart_CycleBecomesReference(t *testing.T) {
 }
 
 // A subgraph wrapper is transparent: the inner nodes and edges still render.
-func TestRenderFlowchart_SubgraphIsTransparent(t *testing.T) {
+func TestRender_SubgraphIsTransparent(t *testing.T) {
 	t.Parallel()
 
 	src := "flowchart LR\n" +
@@ -176,7 +176,7 @@ func TestRenderFlowchart_SubgraphIsTransparent(t *testing.T) {
 		"    A[Inner]\n" +
 		"  end\n" +
 		"  A --> B[Outer]\n"
-	out, ok := RenderFlowchart(src)
+	out, ok := Render(src)
 	if !ok {
 		t.Fatalf("expected subgraph to render transparently, got fallback")
 	}
@@ -186,10 +186,10 @@ func TestRenderFlowchart_SubgraphIsTransparent(t *testing.T) {
 }
 
 // Fan-in (two arrows into one node) renders the second arrival as a reference.
-func TestRenderFlowchart_FanInBecomesReference(t *testing.T) {
+func TestRender_FanInBecomesReference(t *testing.T) {
 	t.Parallel()
 
-	out, ok := RenderFlowchart("flowchart LR\n A --> C\n B --> C")
+	out, ok := Render("flowchart LR\n A --> C\n B --> C")
 	if !ok {
 		t.Fatalf("expected fan-in to render, got fallback")
 	}
@@ -199,10 +199,10 @@ func TestRenderFlowchart_FanInBecomesReference(t *testing.T) {
 }
 
 // Multi-line (<br/>) labels render as stacked lines inside one box.
-func TestRenderFlowchart_MultiLineLabels(t *testing.T) {
+func TestRender_MultiLineLabels(t *testing.T) {
 	t.Parallel()
 
-	out, ok := RenderFlowchart("flowchart LR\n  A[\"first line<br/>second line\"] --> B[End]")
+	out, ok := Render("flowchart LR\n  A[\"first line<br/>second line\"] --> B[End]")
 	if !ok {
 		t.Fatalf("expected renderable")
 	}
@@ -221,7 +221,7 @@ func TestRenderFlowchart_MultiLineLabels(t *testing.T) {
 
 // A node label wrapped across physical lines (a copy-paste artifact) is
 // rejoined into one logical line rather than failing to parse.
-func TestRenderFlowchart_WrappedLabel(t *testing.T) {
+func TestRender_WrappedLabel(t *testing.T) {
 	t.Parallel()
 
 	// The bracketed label is split mid-token across two lines.
@@ -229,7 +229,7 @@ func TestRenderFlowchart_WrappedLabel(t *testing.T) {
 		"  A --> R[\"io.ReadAll stdin<br/>event.go:157<br/>NO timeout / NO tty\n" +
 		"  guard\"]\n" +
 		"  R --> B[Done]\n"
-	out, ok := RenderFlowchart(src)
+	out, ok := Render(src)
 	if !ok {
 		t.Fatalf("expected wrapped label to rejoin and render, got fallback")
 	}
@@ -243,7 +243,7 @@ func TestRenderFlowchart_WrappedLabel(t *testing.T) {
 
 // not-renderable cases must return ok=false so the caller can fall back to
 // the raw mermaid source. We never render a misleading partial diagram.
-func TestRenderFlowchart_FallsBack(t *testing.T) {
+func TestRender_FallsBack(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -262,7 +262,7 @@ func TestRenderFlowchart_FallsBack(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if out, ok := RenderFlowchart(tc.src); ok {
+			if out, ok := Render(tc.src); ok {
 				t.Errorf("expected ok=false (fallback) for %q, got:\n%s", tc.name, out)
 			}
 		})

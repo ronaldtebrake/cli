@@ -1,4 +1,0 @@
-flowchart LR
-  A[HTTP request] -->|enqueue| Q[Job queue]
-  Q --> W[Worker]
-  W -->|write| DB[(Postgres)]

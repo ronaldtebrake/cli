@@ -1,4 +1,0 @@
-flowchart LR
-  WEB[Web app] -->|writes| CACHE[Redis]
-  CRON[Cron job] -->|writes| CACHE
-  CACHE --> API[API reads cache]

@@ -1,6 +1,0 @@
-flowchart LR
-  P[Producer<br/>publishes msg] --> Q[Queue]
-  Q --> C[Consumer]
-  C -->|ack| DONE[Committed]
-  C -->|nack / timeout| RETRY[Backoff]
-  RETRY -->|requeue| Q

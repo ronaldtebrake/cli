@@ -1,4 +1,4 @@
-// Package mermaidascii renders Mermaid flowcharts as top-down Unicode box
+// Package flowchart renders Mermaid flowcharts as top-down Unicode box
 // diagrams for terminal display.
 //
 // Investigation findings are authored in Mermaid (which renders natively on
@@ -23,7 +23,7 @@
 // it can parse at all (non-flowchart diagram types, `&` multi-edge
 // shorthand, or unrecognized syntax), so the caller can show the raw Mermaid
 // source.
-package mermaidascii
+package flowchart
 
 import (
 	"regexp"
@@ -54,10 +54,10 @@ var headerRe = regexp.MustCompile(`^(?:flowchart|graph)\b`)
 // brRe matches Mermaid line breaks in labels (`<br>`, `<br/>`, `<br />`).
 var brRe = regexp.MustCompile(`(?i)<br\s*/?>`)
 
-// RenderFlowchart renders src as a top-down box diagram and returns ok=true,
+// Render renders src as a top-down box diagram and returns ok=true,
 // or returns ok=false when src isn't a parseable flowchart. On ok=false the
 // caller should show the raw Mermaid source.
-func RenderFlowchart(src string) (string, bool) {
+func Render(src string) (string, bool) {
 	order, labels, edges, ok := parse(src)
 	if !ok {
 		return "", false
@@ -604,7 +604,7 @@ func SplitRenderable(md string) []Segment {
 	var segs []Segment
 	last := 0
 	for _, loc := range mermaidBlockRe.FindAllStringSubmatchIndex(md, -1) {
-		ascii, ok := RenderFlowchart(md[loc[2]:loc[3]])
+		ascii, ok := Render(md[loc[2]:loc[3]])
 		if !ok {
 			continue // leave this block in the surrounding markdown
 		}
