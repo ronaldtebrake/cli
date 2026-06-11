@@ -54,7 +54,7 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
-	fmt.Fprintln(out, "local review preferences; configure later with `entire scout --configure`.")
+	fmt.Fprintln(out, "local review preferences; configure later with `entire inspect --configure`.")
 	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
 
@@ -234,9 +234,9 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	return customProfileName, task, nil
 }
 
-// promptForProfileToRun asks which configured profile to scout. It pre-selects
+// promptForProfileToRun asks which configured profile to inspect. It pre-selects
 // the default but never runs without an explicit choice, so a bare
-// `entire scout` doesn't silently spawn a crew.
+// `entire inspect` doesn't silently spawn a crew.
 func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (string, error) {
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	names := sortedProfileNames(profiles)
@@ -267,7 +267,7 @@ func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (str
 	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("Which profile should scout the branch?").
+			Title("Which profile should inspect the branch?").
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),
@@ -605,11 +605,11 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 		// Aborting the confirm (Ctrl+C / Esc) is a clean "not now", not a
 		// command error. Surface it as picker-cancelled so the caller maps it
 		// to a silent exit via handlePickerError.
-		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
 		return false, ErrPickerCancelled
 	}
 	if !runNow {
-		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
 	}
 	return runNow, nil
 }
@@ -654,13 +654,13 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 		if pathErr != nil {
 			return nil, errors.New(
 				"no installed agents have curated review skills; " +
-					"install an eligible agent and run `entire scout --edit`, " +
+					"install an eligible agent and run `entire inspect --edit`, " +
 					"or edit clone-local review preferences under review.<agent-name>",
 			)
 		}
 		return nil, fmt.Errorf(
 			"no installed agents have curated review skills; "+
-				"install an eligible agent and run `entire scout --edit`, "+
+				"install an eligible agent and run `entire inspect --edit`, "+
 				"or edit clone-local review preferences (%s) under review.<agent-name>",
 			prefsPath,
 		)
@@ -778,7 +778,7 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if err := saveReviewProfileConfig(ctx, profileName, merged, masterAgent); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire scout --edit --profile %s`.\n", profileName, profileName)
+	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire inspect --edit --profile %s`.\n", profileName, profileName)
 	return merged, nil
 }
 
@@ -1073,7 +1073,7 @@ func VerifyConfiguredSkillsInstalled(ctx context.Context, ag agent.Agent, cfg se
 	}
 	return fmt.Errorf(
 		"configured review skill(s) not installed: %s\n"+
-			"run `entire scout --edit` to reconfigure, or install the plugin and retry",
+			"run `entire inspect --edit` to reconfigure, or install the plugin and retry",
 		strings.Join(missing, ", "),
 	)
 }

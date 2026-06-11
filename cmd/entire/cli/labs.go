@@ -16,8 +16,8 @@ type experimentalCommandInfo struct {
 
 var experimentalCommands = []experimentalCommandInfo{
 	{
-		Name:       "scout",
-		Invocation: "entire scout",
+		Name:       "inspect",
+		Invocation: "entire inspect",
 		Summary:    "Run a multi-agent crew against the current branch (aliased as 'entire review')",
 	},
 	{
@@ -58,7 +58,7 @@ func newLabsCmd() *cobra.Command {
 			}
 			err := fmt.Errorf("unknown labs topic %q", args[0])
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"%v\n\nRun `entire labs` to see available experimental commands, or run `entire scout --help` for command-specific help.\n",
+				"%v\n\nRun `entire labs` to see available experimental commands, or run `entire inspect --help` for command-specific help.\n",
 				err)
 			return NewSilentError(err)
 		},
@@ -85,7 +85,7 @@ to try now, but details may change based on feedback.
 Available experimental commands:
 ` + renderExperimentalCommands(experimentalCommands) + `
 Try:
-  entire scout --help
+  entire inspect --help
   entire investigate --help
   entire org --help
   entire project --help

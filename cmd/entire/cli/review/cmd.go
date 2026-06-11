@@ -85,12 +85,13 @@ func NewCommand(deps Deps) *cobra.Command {
 	var setSlots []string
 
 	cmd := &cobra.Command{
-		Use: "scout",
-		// `review` is kept as an alias for back-compat while scout matures.
-		Aliases: []string{"review"},
+		Use: "inspect",
+		// `scout` and `review` are kept as aliases for back-compat while inspect
+		// matures.
+		Aliases: []string{"scout", "review"},
 		// Hidden from `entire help` while the feature is still maturing —
-		// users who know about it can still run `entire scout` / `entire
-		// scout --help` and the command works normally.
+		// users who know about it can still run `entire inspect` / `entire
+		// inspect --help` and the command works normally.
 		Hidden: true,
 		Short:  "Run a multi-agent crew against the current branch",
 		Long: `Run a multi-agent crew against the current branch: several worker
@@ -99,7 +100,7 @@ reports into a final verdict. Crews are saved as named profiles in Entire
 settings and clone-local preferences. On first run, guided setup writes a
 profile and asks before starting agents.
 
-Labs entry: scout is experimental. We are actively refining it based on user
+Labs entry: inspect is experimental. We are actively refining it based on user
 feedback.
 
 The session is recorded as part of the next checkpoint, so the metadata is
@@ -118,7 +119,7 @@ Flags:
   --edit         re-open the advanced profile skill picker
   --findings     browse local findings
   --agent NAME   run only one worker from the selected profile
-  --list         list configured scout profiles (their workers and master)
+  --list         list configured inspect profiles (their workers and master)
   --agents       list the worker agents you can pass to --agent for the profile
   --model NAME   override the model for the --agent worker (requires --agent)
   --models       list the models each agent advertises (optionally --agent NAME)
@@ -206,7 +207,7 @@ use 'entire attach --review <id>'.`,
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
 	cmd.Flags().BoolVar(&listAgents, "agents", false, "list the worker agents you can pass to --agent for the selected profile")
 	cmd.Flags().BoolVar(&listModels, "models", false, "list the models each review agent advertises (optionally filtered by --agent)")
-	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured scout profiles (workers and master)")
+	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured inspect profiles (workers and master)")
 	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile")
 	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent worker (requires --agent)")
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
@@ -266,7 +267,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 			return err
 		}
 		fmt.Fprintf(out, "Review profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
-		fmt.Fprintf(out, "Run `entire scout %s` to start.\n", profileName)
+		fmt.Fprintf(out, "Run `entire inspect %s` to start.\n", profileName)
 		return nil
 	}
 
@@ -282,7 +283,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if err := saveReviewProfile(ctx, name, profile, true); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Crew profile %q saved. Run `entire scout`, or `entire scout %s`, to start.\n", name, name)
+		fmt.Fprintf(out, "Crew profile %q saved. Run `entire inspect`, or `entire inspect %s`, to start.\n", name, name)
 		return nil
 	}
 
@@ -345,11 +346,11 @@ func runReviewListModels(ctx context.Context, cmd *cobra.Command, agentFilter st
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "These are common models/aliases, not an exhaustive list. Use one with:")
-	fmt.Fprintln(out, "  entire scout --agent <name> --model <model>")
+	fmt.Fprintln(out, "  entire inspect --agent <name> --model <model>")
 	return nil
 }
 
-// runReviewListProfiles prints the configured scout profiles with their workers
+// runReviewListProfiles prints the configured inspect profiles with their workers
 // and master, marking the default. Needs settings but no review run.
 func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) error {
 	out := cmd.OutOrStdout()
@@ -364,7 +365,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 	}
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
-		fmt.Fprintln(out, "No scout profiles configured. Create one with `entire scout --configure`.")
+		fmt.Fprintln(out, "No inspect profiles configured. Create one with `entire inspect --configure`.")
 		return nil
 	}
 	defaultName := strings.TrimSpace(s.ReviewDefaultProfile)
@@ -398,7 +399,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 		}
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Run one with `entire scout <name>`.")
+	fmt.Fprintln(out, "Run one with `entire inspect <name>`.")
 	return nil
 }
 
@@ -433,7 +434,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 				fmt.Fprintf(out, "  %s — %s%s\n", reviewWorkerLabel(worker, cfg), status, marker)
 			}
 			fmt.Fprintln(out)
-			fmt.Fprintln(out, "See all available agents and profiles with `entire scout --configure`.")
+			fmt.Fprintln(out, "See all available agents and profiles with `entire inspect --configure`.")
 			return nil
 		}
 	}
@@ -449,7 +450,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 		fmt.Fprintf(out, "  %-14s %s\n", e.Name, status)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Configure a profile with `entire scout --configure`.")
+	fmt.Fprintln(out, "Configure a profile with `entire inspect --configure`.")
 	return nil
 }
 
@@ -515,7 +516,7 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "Configure %q non-interactively, e.g.:\n", profileName)
-	fmt.Fprintf(out, "  entire scout --configure --profile %s --set-agents %s --set-master <agent>\n",
+	fmt.Fprintf(out, "  entire inspect --configure --profile %s --set-agents %s --set-master <agent>\n",
 		profileName, exampleAgentList(catalog))
 }
 
@@ -654,7 +655,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		cmd.SilenceUsage = true
 		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
 		fmt.Fprintln(cmd.ErrOrStderr(),
-			"Fix your Entire settings or clone-local review preferences and re-run `entire scout`.")
+			"Fix your Entire settings or clone-local review preferences and re-run `entire inspect`.")
 		return silentErr(err)
 	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
@@ -665,7 +666,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	profileOverride = strings.TrimSpace(profileOverride)
 	interactiveTTY := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
 
-	// Bare `entire scout` never auto-runs a profile. Without a TTY we cannot
+	// Bare `entire inspect` never auto-runs a profile. Without a TTY we cannot
 	// prompt, so list the profiles (or point at setup) and require an explicit
 	// selection rather than silently spawning a default crew.
 	if profileOverride == "" && !interactiveTTY {
@@ -673,10 +674,10 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		eo := cmd.ErrOrStderr()
 		if profs := nonZeroProfiles(s.ReviewProfiles); len(profs) > 0 {
 			ns := sortedProfileNames(profs)
-			fmt.Fprintf(eo, "Specify a profile to scout, e.g. `entire scout %s`.\n", ns[0])
+			fmt.Fprintf(eo, "Specify a profile to inspect, e.g. `entire inspect %s`.\n", ns[0])
 			fmt.Fprintf(eo, "Configured profiles: %s\n", strings.Join(ns, ", "))
 		} else {
-			fmt.Fprintln(eo, "No scout profiles configured. Run `entire scout --configure` in a terminal first.")
+			fmt.Fprintln(eo, "No inspect profiles configured. Run `entire inspect --configure` in a terminal first.")
 		}
 		return silentErr(errors.New("no profile specified"))
 	}
@@ -708,7 +709,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			}
 			profile = defaultProfile
 			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
-			fmt.Fprintln(out, "Configure later with `entire scout --configure`.")
+			fmt.Fprintln(out, "Configure later with `entire inspect --configure`.")
 			fmt.Fprintln(out)
 		}
 		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
@@ -731,7 +732,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		}
 	}
 
-	// Interactive bare `entire scout` with existing profiles: require a choice
+	// Interactive bare `entire inspect` with existing profiles: require a choice
 	// instead of defaulting silently.
 	if profileOverride == "" {
 		picked, pickErr := promptForProfileToRun(ctx, s)
@@ -1286,7 +1287,7 @@ func warnManifestNotWritten(out io.Writer, reason string) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Note: review skills ran but findings were not persisted.")
 	fmt.Fprintf(out, "  Reason: %s\n", reason)
-	fmt.Fprintln(out, "  `entire scout --findings` will not see this run.")
+	fmt.Fprintln(out, "  `entire inspect --findings` will not see this run.")
 	fmt.Fprintln(out, "  Re-run with `ENTIRE_LOG_LEVEL=debug` for diagnostic detail.")
 }
 
