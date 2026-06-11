@@ -2067,6 +2067,129 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	}
 }
 
+// TestWriteTemporary_PreservesSymlinkWithoutReadingTarget verifies that changed
+// worktree symlinks are snapshotted as git symlinks, not as the target contents.
+func TestWriteTemporary_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tests := []struct {
+		name              string
+		isFirstCheckpoint bool
+	}{
+		{
+			name:              "first checkpoint untracked symlink",
+			isFirstCheckpoint: true,
+		},
+		{
+			name:              "subsequent checkpoint new symlink",
+			isFirstCheckpoint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			externalDir := t.TempDir()
+
+			repo, err := git.PlainInit(tempDir, false)
+			if err != nil {
+				t.Fatalf("failed to init git repo: %v", err)
+			}
+
+			worktree, err := repo.Worktree()
+			if err != nil {
+				t.Fatalf("failed to get worktree: %v", err)
+			}
+
+			readmeFile := filepath.Join(tempDir, "README.md")
+			if err := os.WriteFile(readmeFile, []byte("# Test\n"), 0o644); err != nil {
+				t.Fatalf("failed to write README: %v", err)
+			}
+			if _, err := worktree.Add("README.md"); err != nil {
+				t.Fatalf("failed to add README: %v", err)
+			}
+			initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+				Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+			})
+			if err != nil {
+				t.Fatalf("failed to commit: %v", err)
+			}
+
+			secretContent := "SECRET DATA THAT MUST NOT ENTER CHECKPOINTS"
+			secretFile := filepath.Join(externalDir, "id_rsa")
+			if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+				t.Fatalf("failed to write external secret: %v", err)
+			}
+
+			linkPath := filepath.Join(tempDir, "leaked-key")
+			if err := os.Symlink(secretFile, linkPath); err != nil {
+				t.Skipf("cannot create symlink on this platform: %v", err)
+			}
+
+			t.Chdir(tempDir)
+
+			metadataDir := filepath.Join(tempDir, ".entire", "metadata", "test-session")
+			if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+				t.Fatalf("failed to create metadata dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(metadataDir, "full.jsonl"), []byte(`{"test": true}`), 0o644); err != nil {
+				t.Fatalf("failed to write transcript: %v", err)
+			}
+
+			var newFiles []string
+			if !tt.isFirstCheckpoint {
+				newFiles = []string{"leaked-key"}
+			}
+
+			store := NewGitStore(repo, DefaultV1Refs())
+			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
+				SessionID:         "test-session",
+				BaseCommit:        initialCommit.String(),
+				NewFiles:          newFiles,
+				MetadataDir:       ".entire/metadata/test-session",
+				MetadataDirAbs:    metadataDir,
+				CommitMessage:     "Checkpoint symlink",
+				AuthorName:        "Test",
+				AuthorEmail:       "test@test.com",
+				IsFirstCheckpoint: tt.isFirstCheckpoint,
+			})
+			if err != nil {
+				t.Fatalf("WriteTemporary() error = %v", err)
+			}
+
+			commit, err := repo.CommitObject(result.CommitHash)
+			if err != nil {
+				t.Fatalf("failed to get commit object: %v", err)
+			}
+			tree, err := commit.Tree()
+			if err != nil {
+				t.Fatalf("failed to get tree: %v", err)
+			}
+
+			entry, err := tree.FindEntry("leaked-key")
+			if err != nil {
+				t.Fatalf("leaked-key not found in checkpoint tree: %v", err)
+			}
+			if entry.Mode != filemode.Symlink {
+				t.Fatalf("leaked-key mode = %v, want %v", entry.Mode, filemode.Symlink)
+			}
+
+			file, err := tree.File("leaked-key")
+			if err != nil {
+				t.Fatalf("failed to get leaked-key file: %v", err)
+			}
+			content, err := file.Contents()
+			if err != nil {
+				t.Fatalf("failed to read leaked-key blob: %v", err)
+			}
+			if content != secretFile {
+				t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+			}
+			if content == secretContent {
+				t.Fatal("checkpoint stored symlink target contents instead of link target")
+			}
+		})
+	}
+}
+
 // TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles verifies that
 // the first checkpoint does NOT capture files that are in .gitignore.
 func TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles(t *testing.T) {
@@ -4193,6 +4316,97 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 
 	if len(entries) != 1 {
 		t.Errorf("expected 1 entry (regular.txt only), got %d: %v", len(entries), entries)
+	}
+}
+
+// TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget verifies that task
+// checkpoints use the same symlink-safe blob path as session checkpoints.
+func TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tempDir := t.TempDir()
+	externalDir := t.TempDir()
+
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	if _, err := worktree.Add("README.md"); err != nil {
+		t.Fatalf("failed to add README: %v", err)
+	}
+	initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	secretContent := "SECRET DATA THAT MUST NOT ENTER TASK CHECKPOINTS"
+	secretFile := filepath.Join(externalDir, "token")
+	if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+		t.Fatalf("failed to write external secret: %v", err)
+	}
+
+	linkPath := filepath.Join(tempDir, "reported-link")
+	if err := os.Symlink(secretFile, linkPath); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
+	}
+
+	t.Chdir(tempDir)
+
+	store := NewGitStore(repo, DefaultV1Refs())
+	commitHash, err := store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
+		SessionID:      "test-session",
+		BaseCommit:     initialCommit.String(),
+		ToolUseID:      "toolu_symlink123",
+		AgentID:        "agent1",
+		ModifiedFiles:  []string{"reported-link"},
+		CheckpointUUID: "test-uuid",
+		CommitMessage:  "Task checkpoint",
+		AuthorName:     "Test",
+		AuthorEmail:    "test@test.com",
+	})
+	if err != nil {
+		t.Fatalf("WriteTemporaryTask() error = %v", err)
+	}
+
+	commit, err := repo.CommitObject(commitHash)
+	if err != nil {
+		t.Fatalf("failed to get commit object: %v", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatalf("failed to get tree: %v", err)
+	}
+
+	entry, err := tree.FindEntry("reported-link")
+	if err != nil {
+		t.Fatalf("reported-link not found in task checkpoint tree: %v", err)
+	}
+	if entry.Mode != filemode.Symlink {
+		t.Fatalf("reported-link mode = %v, want %v", entry.Mode, filemode.Symlink)
+	}
+
+	file, err := tree.File("reported-link")
+	if err != nil {
+		t.Fatalf("failed to get reported-link file: %v", err)
+	}
+	content, err := file.Contents()
+	if err != nil {
+		t.Fatalf("failed to read reported-link blob: %v", err)
+	}
+	if content != secretFile {
+		t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+	}
+	if content == secretContent {
+		t.Fatal("task checkpoint stored symlink target contents instead of link target")
 	}
 }
 
