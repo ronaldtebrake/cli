@@ -204,7 +204,7 @@ func TestReviewCommandSmoke_IncludesCheckpointContextInPrompt(t *testing.T) {
 	var errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"review", "--agent", string(agent.AgentNameClaudeCode)})
+	cmd.SetArgs([]string{"review", "general", "--agent", string(agent.AgentNameClaudeCode)})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("entire review failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
@@ -267,7 +267,7 @@ func TestReviewCommandSmoke_IncludesInProgressSessionContextInPrompt(t *testing.
 	var errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"review", "--agent", string(agent.AgentNameClaudeCode)})
+	cmd.SetArgs([]string{"review", "general", "--agent", string(agent.AgentNameClaudeCode)})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("entire review failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
@@ -328,7 +328,7 @@ func TestReviewCommandSmoke_BaseFlagThreadsThroughToPromptAndBanner(t *testing.T
 	var errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"review", "--agent", string(agent.AgentNameClaudeCode), "--base", "feat/parent"})
+	cmd.SetArgs([]string{"review", "general", "--agent", string(agent.AgentNameClaudeCode), "--base", "feat/parent"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("entire review failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
@@ -372,7 +372,7 @@ func TestReviewCommandSmoke_BadBaseRefErrorsBeforeAgentSpawn(t *testing.T) {
 	var errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"review", "--agent", string(agent.AgentNameClaudeCode), "--base", "no-such-ref"})
+	cmd.SetArgs([]string{"review", "general", "--agent", string(agent.AgentNameClaudeCode), "--base", "no-such-ref"})
 
 	err := cmd.Execute()
 	if err == nil {

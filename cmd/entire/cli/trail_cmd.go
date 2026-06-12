@@ -760,7 +760,12 @@ func runTrailUpdate(ctx context.Context, w, errW io.Writer, insecureHTTP bool, s
 	// Build update request with only changed fields
 	updateReq := buildTrailUpdateRequest(found, statusStr, title, body, labelAdd, labelRemove)
 
-	resp, err := client.Patch(ctx, trailsBasePath(forge, owner, repoName)+"/"+found.ID, updateReq)
+	// The single-trail endpoint is keyed by trail number, not id; the server
+	// rejects an id here with "Invalid trail number format".
+	if found.Number <= 0 {
+		return fmt.Errorf("trail for branch %q has no number yet; cannot update", branch)
+	}
+	resp, err := client.Patch(ctx, trailsBasePath(forge, owner, repoName)+"/"+strconv.Itoa(found.Number), updateReq)
 	if err != nil {
 		return fmt.Errorf("failed to update trail: %w", err)
 	}

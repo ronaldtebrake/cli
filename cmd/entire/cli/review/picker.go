@@ -54,7 +54,7 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
-	fmt.Fprintln(out, "local review preferences; configure later with `entire scout --configure`.")
+	fmt.Fprintln(out, "local review preferences; configure later with `entire inspect --configure`.")
 	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
 
@@ -87,6 +87,7 @@ func RunReviewGuidedSetup(
 	reviewerFor func(string) reviewtypes.AgentReviewer,
 	profileName string,
 	firstRun bool,
+	s *settings.EntireSettings,
 ) (string, settings.ReviewProfileConfig, error) {
 	if firstRun {
 		if !ConfirmFirstRunSetup(ctx, out) {
@@ -104,20 +105,37 @@ func RunReviewGuidedSetup(
 	if profileName == "" {
 		profileName = DefaultProfileName
 	}
+	currentDefault := ""
+	if s != nil {
+		currentDefault = strings.TrimSpace(s.ReviewDefaultProfile)
+	}
+	customTask := ""
 	if !profileWasProvided {
-		pickedProfile, err := promptForSimpleReviewProfile(ctx)
+		pickedProfile, pickedTask, err := promptForReviewFocus(ctx, currentDefault)
 		if err != nil {
 			return "", settings.ReviewProfileConfig{}, err
 		}
 		profileName = pickedProfile
+		customTask = pickedTask
 	}
 
-	profile, err := promptForReviewCrew(ctx, profileName, launchable)
+	// Seed the flow from the existing profile (if any) so re-configuring edits
+	// the current crew/master rather than starting from scratch.
+	var existing settings.ReviewProfileConfig
+	if s != nil {
+		existing = s.ReviewProfiles[profileName]
+	}
+	existing.Agents = nonZeroAgentConfigs(existing.Agents)
+
+	profile, err := promptForReviewCrew(ctx, profileName, launchable, existing)
 	if err != nil {
 		return "", settings.ReviewProfileConfig{}, err
 	}
+	if customTask != "" {
+		profile.Task = customTask
+	}
 	if len(profile.Agents) > 1 {
-		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, launchable)
+		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, launchable, existing)
 		if err != nil {
 			return "", settings.ReviewProfileConfig{}, err
 		}
@@ -149,20 +167,113 @@ func launchableInstalledAgentNames(installed []types.AgentName, reviewerFor func
 	return names
 }
 
-func promptForSimpleReviewProfile(ctx context.Context) (string, error) {
+// customProfileName is the profile name used when the user writes a custom
+// task in the focus picker.
+const customProfileName = "custom"
+
+// reviewFocusCustomSentinel is the focus-picker option value for "write your
+// own task". Distinct from real profile names.
+const reviewFocusCustomSentinel = "__custom_task__"
+
+// promptForReviewFocus asks what the crew should review. The presets set a
+// named profile (task + default skills); "Custom…" lets the user write the
+// shared task directly. Returns (profileName, customTask); customTask is
+// non-empty only for the custom path. current pre-selects the profile being
+// edited.
+func promptForReviewFocus(ctx context.Context, current string) (string, string, error) {
+	current = strings.TrimSpace(current)
 	picked := DefaultProfileName
+	presets := []struct{ label, value string }{
+		{"General — correctness, regressions, tests", DefaultProfileName},
+		{"Security — auth, injection, secrets", "security"},
+		{"Accessibility — keyboard, screen readers, contrast", "accessibility"},
+	}
+	options := make([]huh.Option[string], 0, len(presets)+1)
+	for _, p := range presets {
+		label := p.label
+		if p.value == current {
+			label += "  (current)"
+			picked = p.value // pre-select the profile being edited
+		}
+		options = append(options, huh.NewOption(label, p.value))
+	}
+	customLabel := "Custom… — describe your own task"
+	if current == customProfileName {
+		customLabel += "  (current)"
+		picked = reviewFocusCustomSentinel
+	}
+	options = append(options, huh.NewOption(customLabel, reviewFocusCustomSentinel))
+
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("What kind of review?").
-			Options(
-				huh.NewOption("General — correctness, regressions, tests", DefaultProfileName),
-				huh.NewOption("Security — auth, injection, secrets", "security"),
-				huh.NewOption("Accessibility — keyboard, screen readers, contrast", "accessibility"),
-			).
+			Title("What should they review?").
+			Options(options...).
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review profile picker: %w", err)
+		return "", "", fmt.Errorf("review focus picker: %w", err)
+	}
+	if picked != reviewFocusCustomSentinel {
+		return picked, "", nil
+	}
+
+	task := ""
+	taskForm := newAccessibleForm(huh.NewGroup(
+		huh.NewText().
+			Title("Describe the review task").
+			Description("What should the crew look for? This becomes the shared task for every worker.").
+			Value(&task),
+	))
+	if err := taskForm.RunWithContext(ctx); err != nil {
+		return "", "", fmt.Errorf("custom task input: %w", err)
+	}
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return DefaultProfileName, "", nil // empty custom task → fall back to general
+	}
+	return customProfileName, task, nil
+}
+
+// promptForProfileToRun asks which configured profile to inspect. It pre-selects
+// the default but never runs without an explicit choice, so a bare
+// `entire inspect` doesn't silently spawn a crew.
+func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (string, error) {
+	profiles := nonZeroProfiles(s.ReviewProfiles)
+	names := sortedProfileNames(profiles)
+	if len(names) == 0 {
+		return "", errors.New("no configured profiles to choose from")
+	}
+	defaultName := strings.TrimSpace(s.ReviewDefaultProfile)
+	picked := defaultName
+	if _, ok := profiles[picked]; !ok {
+		picked = names[0]
+	}
+	options := make([]huh.Option[string], 0, len(names))
+	for _, name := range names {
+		p := profiles[name]
+		p.Agents = nonZeroAgentConfigs(p.Agents)
+		workers := make([]string, 0, len(p.Agents))
+		for _, w := range sortedProfileAgentNames(p) {
+			workers = append(workers, reviewAgentName(w, p.Agents[w]))
+		}
+		label := name
+		if name == defaultName {
+			label += " (default)"
+		}
+		if len(workers) > 0 {
+			label += " — " + strings.Join(workers, ", ")
+		}
+		options = append(options, huh.NewOption(label, name))
+	}
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Which profile should inspect the branch?").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("profile picker: %w", err)
 	}
 	return picked, nil
 }
@@ -179,10 +290,19 @@ type crewSlot struct {
 // slot per launchable agent (the guided default is "all agents"), then lets the
 // user add, edit, or remove slots from a list until Done. Duplicate slots (same
 // agent and model) are allowed; each becomes its own worker.
-func promptForReviewCrew(ctx context.Context, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
+func promptForReviewCrew(ctx context.Context, profileName string, launchable []string, existing settings.ReviewProfileConfig) (settings.ReviewProfileConfig, error) {
+	// Seed from the existing profile's workers when editing one; otherwise the
+	// guided default is one slot per launchable agent.
 	slots := make([]crewSlot, 0, len(launchable))
-	for _, name := range launchable {
-		slots = append(slots, crewSlot{agent: name})
+	if len(existing.Agents) > 0 {
+		for _, w := range sortedProfileAgentNames(existing) {
+			cfg := existing.Agents[w]
+			slots = append(slots, crewSlot{agent: reviewAgentName(w, cfg), model: strings.TrimSpace(cfg.Model)})
+		}
+	} else {
+		for _, name := range launchable {
+			slots = append(slots, crewSlot{agent: name})
+		}
 	}
 
 	const (
@@ -427,7 +547,7 @@ func modelInList(id string, models []agent.ModelInfo) bool {
 // promptForStandaloneMaster picks the standalone master (judge) as its own
 // agent + model, independent of the worker slots. Candidates are launchable
 // agents that can write text. Returns (agentName, model).
-func promptForStandaloneMaster(ctx context.Context, launchable []string) (string, string, error) {
+func promptForStandaloneMaster(ctx context.Context, launchable []string, existing settings.ReviewProfileConfig) (string, string, error) {
 	candidates := make([]string, 0, len(launchable))
 	for _, name := range launchable {
 		if agentSupportsTextGeneration(ctx, name) {
@@ -439,6 +559,15 @@ func promptForStandaloneMaster(ctx context.Context, launchable []string) (string
 	}
 
 	agentName := candidates[0]
+	// Pre-select the existing master when re-configuring.
+	if cur, _, ok := profileMasterIdentity(existing); ok {
+		for _, c := range candidates {
+			if c == cur {
+				agentName = cur
+				break
+			}
+		}
+	}
 	if len(candidates) > 1 {
 		options := make([]huh.Option[string], 0, len(candidates))
 		for _, name := range candidates {
@@ -476,11 +605,11 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 		// Aborting the confirm (Ctrl+C / Esc) is a clean "not now", not a
 		// command error. Surface it as picker-cancelled so the caller maps it
 		// to a silent exit via handlePickerError.
-		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
 		return false, ErrPickerCancelled
 	}
 	if !runNow {
-		fmt.Fprintln(out, "Not started. Run `entire scout` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
 	}
 	return runNow, nil
 }
@@ -525,13 +654,13 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 		if pathErr != nil {
 			return nil, errors.New(
 				"no installed agents have curated review skills; " +
-					"install an eligible agent and run `entire scout --edit`, " +
+					"install an eligible agent and run `entire inspect --edit`, " +
 					"or edit clone-local review preferences under review.<agent-name>",
 			)
 		}
 		return nil, fmt.Errorf(
 			"no installed agents have curated review skills; "+
-				"install an eligible agent and run `entire scout --edit`, "+
+				"install an eligible agent and run `entire inspect --edit`, "+
 				"or edit clone-local review preferences (%s) under review.<agent-name>",
 			prefsPath,
 		)
@@ -649,7 +778,7 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if err := saveReviewProfileConfig(ctx, profileName, merged, masterAgent); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire scout --edit --profile %s`.\n", profileName, profileName)
+	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire inspect --edit --profile %s`.\n", profileName, profileName)
 	return merged, nil
 }
 
@@ -944,7 +1073,7 @@ func VerifyConfiguredSkillsInstalled(ctx context.Context, ag agent.Agent, cfg se
 	}
 	return fmt.Errorf(
 		"configured review skill(s) not installed: %s\n"+
-			"run `entire scout --edit` to reconfigure, or install the plugin and retry",
+			"run `entire inspect --edit` to reconfigure, or install the plugin and retry",
 		strings.Join(missing, ", "),
 	)
 }

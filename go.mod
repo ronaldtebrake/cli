@@ -12,7 +12,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/creack/pty v1.1.24
 	github.com/denisbrodbeck/machineid v1.0.1
-	github.com/entireio/auth-go v0.4.1-0.20260603125945-62cd5140d2d4
+	github.com/entireio/auth-go v0.5.0
 	github.com/go-faster/errors v0.7.1
 	github.com/go-faster/jx v1.2.0
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.1.0.20260519112248-0095b064a6c6
@@ -22,6 +22,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.22
+	github.com/mattn/go-runewidth v0.0.23
 	github.com/muesli/termenv v0.16.0
 	github.com/ogen-go/ogen v1.20.3
 	github.com/posthog/posthog-go v1.13.2
@@ -103,7 +104,6 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/magiconair/properties v1.8.9 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mholt/archives v0.1.6-0.20260429171216-ef71b7a32fae // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect

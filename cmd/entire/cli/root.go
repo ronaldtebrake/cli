@@ -91,7 +91,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newPluginGroupCmd())     // 'plugin' (managed install/list/remove)
 
 	// Top-level lifecycle and standalone commands.
-	cmd.AddCommand(cliReview.NewCommand(buildReviewDeps()))        // `scout` (alias: review); hidden during maturation
+	cmd.AddCommand(cliReview.NewCommand(buildReviewDeps()))        // `inspect` (alias: review); hidden during maturation
 	cmd.AddCommand(investigate.NewCommand(buildInvestigateDeps())) // hidden during maturation; runs a multi-agent investigation
 	cmd.AddCommand(newOrgCmd())                                    // hidden during maturation; control-plane org management
 	cmd.AddCommand(newProjectCmd())                                // hidden during maturation; control-plane project management
@@ -110,15 +110,16 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newRecapCmd())
 
 	// Hidden top-level shortcuts. Functional but print a deprecation hint.
-	cmd.AddCommand(hideAsAlias(newRewindCmd(), "entire checkpoint rewind"))
 	cmd.AddCommand(hideAsAlias(newResumeCmd(), "entire session resume"))
 	cmd.AddCommand(hideAsAlias(newAttachCmd(), "entire session attach"))
 	cmd.AddCommand(hideAsAlias(newExplainCmd(), "entire checkpoint explain"))
 	cmd.AddCommand(hideAsAlias(newTraceCmd(), "entire doctor trace"))
 	cmd.AddCommand(newSearchCmd()) // 'entire search' = 'checkpoint search' (hidden, no hint)
 
-	// Deprecated top-level alias (functional; reset.go marks it Deprecated).
+	// Deprecated top-level commands (functional; the constructors mark them
+	// Deprecated, which also excludes them from help and completion).
 	cmd.AddCommand(newResetCmd())
+	cmd.AddCommand(newRewindCmd())
 
 	// Hidden infrastructure.
 	cmd.AddCommand(newHooksCmd())
