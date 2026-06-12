@@ -19,13 +19,6 @@ run = "gotestsum --format pkgname --format-icons text --format-hide-empty-pkg --
 description = "Run integration tests"
 run = "gotestsum --format testname --format-icons text --hide-summary skipped -- -tags=integration ./cmd/entire/cli/integration_test/... ./cmd/entire/cli/auth/..."
 
-[tasks."build:e2e"]
-description = "Build the CLI and git-remote-entire helper for e2e tests (the harness routes token storage to a file via ENTIRE_TOKEN_STORE so spawned binaries never touch the developer's OS keychain)"
-run = """
-go build ./cmd/entire
-go build ./cmd/git-remote-entire
-"""
-
 [tasks."test:ci"]
 description = "Run all tests (unit + integration + E2E canary) with race detection"
 run = """
