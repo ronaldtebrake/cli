@@ -50,8 +50,9 @@ func newRewindCmd() *cobra.Command {
 	var resetFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "rewind",
-		Short: "Browse checkpoints and rewind your session",
+		Use:        "rewind",
+		Short:      "Browse checkpoints and rewind your session",
+		Deprecated: "and will be removed in a future release",
 		Long: `Interactive command for rewinding and managing agent sessions.
 
 This command will show you an interactive list of recent checkpoints.  You'll be
@@ -693,7 +694,7 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 	}
 	defer repo.Close()
 
-	store := checkpoint.NewCommittedReadStore(ctx, repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	content, returnedSessionID, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, store, cpID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get session log: %w", err)
@@ -741,7 +742,7 @@ func restoreSessionTranscriptFromShadow(ctx context.Context, commitHash, metadat
 	}
 
 	// Get transcript from shadow branch commit tree
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	content, err := store.GetTranscriptFromCommit(ctx, hash, metadataDir, agent.Type())
 	if err != nil {
 		return "", fmt.Errorf("failed to get transcript from shadow branch: %w", err)

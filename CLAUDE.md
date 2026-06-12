@@ -28,7 +28,9 @@ shortcuts remain functional but hidden, and emit a deprecation hint pointing
 at the canonical group form.
 
 - `session` (alias: `sessions`): `list`, `info`, `stop`, `attach`, `resume`, `current`
-- `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `rewind`, `search`
+- `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `search`, plus
+  the deprecated `rewind` (functional, prints a cobra deprecation message, will
+  be removed in a future release)
 - `agent`: bare opens the interactive agent selector, plus `list`, `add`, `remove`
 - `configure`: bare prints help and a hint pointing at `entire agent`; flags
   manage non-agent settings (telemetry, git-hook installation mode, strategy
@@ -43,13 +45,14 @@ Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
 `configure`.
 
 Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
-`rewind` → `checkpoint rewind`, `resume` → `session resume`, `attach` →
-`session attach`, `explain` → `checkpoint explain`, `trace` → `doctor trace`.
+`resume` → `session resume`, `attach` → `session attach`, `explain` →
+`checkpoint explain`, `trace` → `doctor trace`.
 Cobra-native aliases (no hint): `sessions` → `session`, `cp`/`checkpoints` →
 `checkpoint`. The `search` top-level remains hidden without a hint.
 
-Deprecated top-level alias (functional, prints cobra deprecation message):
-`reset` → `clean`.
+Deprecated top-level commands (functional, print a cobra deprecation message):
+`reset` → `clean`, and `rewind` (no replacement, announces removal — same
+deprecation as `checkpoint rewind`).
 
 Hidden infrastructure commands: `hooks`, `trail`,
 `curl-bash-post-install`, `__send_analytics`.
@@ -171,6 +174,35 @@ t.Chdir(tmpDir)                                 // redirect CWD-based git resolu
 **Prefer `testutil.InitRepo()` over direct `git.PlainInit()` in tests.** When a test in this repo needs an initialized repository, use `testutil.InitRepo(t, dir)` unless the test specifically needs lower-level initialization behavior that the helper cannot provide. Do not call `git.PlainInit()` directly and then create commits or run CLI git operations without also reproducing the helper's repo-local config.
 
 **Do NOT** shell out to `git init`/`git commit` directly without setting user config and `--no-gpg-sign`, and **do NOT** run lifecycle/strategy handlers from the real repo CWD in tests.
+
+### Config/Cache/Keyring Isolation in Tests
+
+Tests must never read or write the developer's real `~/.config/entire`
+(contexts.json, version_check.json), `~/.cache/entire` (nodes.json,
+cluster_cores.json, api_discovery.json), or OS keychain. The developer may be
+using `entire` for real while tests run.
+
+- **Single resolver**: `internal/entireclient/userdirs` is the only place
+  that resolves the per-user config dir (`userdirs.Config()`:
+  `$ENTIRE_CONFIG_DIR` else `~/.config/entire`) and cache dir
+  (`userdirs.Cache()`: `$XDG_CACHE_HOME/entire` else `~/.cache/entire`).
+  Never derive these paths anywhere else.
+- **In-process safety net**: `userdirs` and the `tokenstore` default backend
+  detect `go test` (via `internal/testdirs`) and fall back to a throwaway
+  per-process temp directory when their env override is unset. The fallback
+  is shared across tests in one process — for per-test isolation still set
+  `t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())` and
+  `tokenstore.UseFileBackendForTesting(...)`.
+- **Spawned binaries are NOT covered**: `testing.Testing()` is false in a
+  subprocess. The integration and e2e TestMains set `ENTIRE_CONFIG_DIR`,
+  `XDG_CACHE_HOME`, `ENTIRE_TOKEN_STORE=file`, `ENTIRE_TOKEN_STORE_PATH`, and
+  `ENTIRE_TEST_AUTH_STORE_FILE` process-wide so every spawned `entire` (and
+  every agent-invoked hook) inherits isolation. Any new harness that spawns
+  the real binary must do the same.
+- **Legacy auth store**: `auth.NewStore()` talks straight to the zalando
+  keyring; packages whose tests can reach it need `keyring.MockInit()` in
+  `TestMain` (see `cmd/entire/cli/global_test.go`) — the `testdirs` fallback
+  does not cover it in-process.
 
 ### Spawning subprocesses in tests (TTY detection)
 
@@ -428,7 +460,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - **Worktree-specific branches** - each git worktree gets its own shadow branch namespace, preventing conflicts
 - **Supports multiple concurrent sessions** - checkpoints from different sessions in the same directory interleave on the same shadow branch
 - Condenses session logs to permanent `entire/checkpoints/v1` branch on user commits
-- When `checkpoints_version` is `1.1`, best-effort mirrors v1 metadata to the local-only `refs/entire/checkpoints/v1.1` read ref after entire-managed v1 writes and fetches; mirror failures are logged, not fatal. The resume bootstrap that promotes local v1 from origin's remote-tracking ref is the deliberate exception — it does not mirror and is skipped entirely in v1.1 mode. Read paths use the configured ref as-is.
+- When `checkpoints_version` is `1.1`, best-effort mirrors v1 metadata to the `refs/entire/checkpoints/v1.1` read ref after entire-managed v1 writes and fetches; mirror failures are logged, not fatal. The resolver also adds v1.1 to the push set, so `PrePush` pushes it to the configured remote alongside v1 (re-pointing the mirror at the current v1 tip first); v1.1 is a non-branch ref, so it gets no origin-tracking shadow and reads do not bootstrap it from origin (reads target v1.1 while Primary stays v1). The resume bootstrap that promotes local v1 from origin's remote-tracking ref is the deliberate exception — it does not mirror and is skipped entirely in v1.1 mode. Read paths use the configured ref as-is.
 - Uses the `post-rewrite` Git hook to keep local session linkage aligned after amend/rebase rewrites
 - Builds git trees in-memory using go-git plumbing APIs
 - Rewind restores files from shadow branch commit tree (does not use `git reset`)
