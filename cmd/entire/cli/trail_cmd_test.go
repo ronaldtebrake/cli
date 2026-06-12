@@ -82,57 +82,28 @@ func TestTrailWatchDescription(t *testing.T) {
 	}
 }
 
-func TestLimitTrailsKeepsMostRecentPrefix(t *testing.T) {
+func TestTrailListQueryEncodesFiltersAndLimit(t *testing.T) {
 	t.Parallel()
-	trails := []*trail.Metadata{
-		{Branch: "newest"},
-		{Branch: "middle"},
-		{Branch: "oldest"},
-	}
-
-	got := limitTrails(trails, 2)
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	if got[0].Branch != "newest" || got[1].Branch != "middle" {
-		t.Fatalf("got branches %q, %q; want newest, middle", got[0].Branch, got[1].Branch)
-	}
-
-	if all := limitTrails(trails, 3); len(all) != len(trails) {
-		t.Fatalf("limit 3 len = %d, want %d", len(all), len(trails))
+	got := trailListQuery([]trail.Status{trail.StatusOpen, trail.StatusDraft}, "alice", 10)
+	want := "?author=alice&limit=10&status=open%2Cdraft"
+	if got != want {
+		t.Fatalf("trailListQuery = %q, want %q", got, want)
 	}
 }
 
-func TestFilterTrailsByAuthor(t *testing.T) {
+func TestTrailListQueryAnyStatusOmitsStatusParam(t *testing.T) {
 	t.Parallel()
-	alice := trailListTestAuthorAlice
-	bob := trailListTestAuthorBob
-	trails := []*trail.Metadata{
-		{Branch: "mine-1", Author: &trail.Author{Login: &alice}},
-		{Branch: "theirs", Author: &trail.Author{Login: &bob}},
-		{Branch: "unknown"},
-		{Branch: "mine-2", Author: &trail.Author{Login: &alice}},
-	}
-
-	got := filterTrailsByAuthor(trails, trailListTestAuthorAlice)
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	if got[0].Branch != "mine-1" || got[1].Branch != "mine-2" {
-		t.Fatalf("got branches %q, %q; want mine-1, mine-2", got[0].Branch, got[1].Branch)
+	got := trailListQuery(nil, "", 10)
+	if got != "?limit=10" {
+		t.Fatalf("trailListQuery = %q, want %q", got, "?limit=10")
 	}
 }
 
-func TestFilterTrailsByAuthorIsCaseInsensitive(t *testing.T) {
+func TestTrailListQueryCapsLimitAtServerMax(t *testing.T) {
 	t.Parallel()
-	mixed := "Alice"
-	trails := []*trail.Metadata{
-		{Branch: "mine", Author: &trail.Author{Login: &mixed}},
-	}
-
-	got := filterTrailsByAuthor(trails, "alice")
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1 (case-insensitive)", len(got))
+	got := trailListQuery(nil, "", 5000)
+	if !strings.Contains(got, "limit=200") {
+		t.Fatalf("expected limit capped at 200, got %q", got)
 	}
 }
 
@@ -252,7 +223,7 @@ func TestPrintTrailListYourTrailsRelabelsAndSurfacesGhLogin(t *testing.T) {
 	}
 }
 
-func TestPrintTrailListAnyAuthorAnyStatusGroupsByStatus(t *testing.T) {
+func TestPrintTrailListAnyStatusShowsStatusColumn(t *testing.T) {
 	t.Parallel()
 	alice := trailListTestAuthorAlice
 	bob := trailListTestAuthorBob
@@ -263,16 +234,31 @@ func TestPrintTrailListAnyAuthorAnyStatusGroupsByStatus(t *testing.T) {
 	}, trailListDisplayOptions{
 		RequestedAuthor: "",
 		StatusFilters:   nil,
+		TotalMatched:    2,
 	})
 
 	text := out.String()
-	if strings.Index(text, "Open · 1") > strings.Index(text, "Draft · 1") {
-		t.Fatalf("expected open group before draft group, got:\n%s", text)
-	}
-	for _, want := range []string{"Recent trails · 2", "Open · 1", "Draft · 1", "feat/a", trailListTestAuthorAlice, "fix/b", trailListTestAuthorBob} {
+	for _, want := range []string{"Recent trails · 2", "STATUS", "open", "draft", "feat/a", trailListTestAuthorAlice, "fix/b", trailListTestAuthorBob} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q, got:\n%s", want, text)
 		}
+	}
+}
+
+func TestPrintTrailListSingleStatusFilterOmitsStatusColumn(t *testing.T) {
+	t.Parallel()
+	alice := trailListTestAuthorAlice
+	var out bytes.Buffer
+	printTrailList(&out, []*trail.Metadata{
+		{Branch: "feat/a", Status: trail.StatusOpen, Author: &trail.Author{Login: &alice}, UpdatedAt: time.Now()},
+	}, trailListDisplayOptions{
+		RequestedAuthor: "",
+		StatusFilters:   []trail.Status{trail.StatusOpen},
+		TotalMatched:    1,
+	})
+
+	if text := out.String(); strings.Contains(text, "STATUS") {
+		t.Fatalf("single-status list should not repeat the status as a column, got:\n%s", text)
 	}
 }
 
@@ -296,7 +282,7 @@ func TestPrintTrailListSingularRecentTrailWhenOne(t *testing.T) {
 	}
 }
 
-func TestPrintTrailListUnknownStatusGroupedInOtherBucket(t *testing.T) {
+func TestPrintTrailListUnknownStatusRendersInStatusColumn(t *testing.T) {
 	t.Parallel()
 	alice := trailListTestAuthorAlice
 	unknownStatus := trail.Status("experimental_review")
@@ -307,10 +293,13 @@ func TestPrintTrailListUnknownStatusGroupedInOtherBucket(t *testing.T) {
 	}, trailListDisplayOptions{
 		RequestedAuthor: "",
 		StatusFilters:   nil,
+		TotalMatched:    2,
 	})
 
+	// A status the CLI doesn't know yet must not disappear; it renders
+	// verbatim (underscores humanized) in the status column.
 	text := out.String()
-	for _, want := range []string{"Recent trails · 2", "Open · 1", "Other · 1", "feat/odd"} {
+	for _, want := range []string{"Recent trails · 2", "experimental review", "feat/odd"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q, got:\n%s", want, text)
 		}
@@ -327,14 +316,10 @@ func TestPrintTrailListTruncatedShowsShownOfTotal(t *testing.T) {
 		RequestedAuthor: "",
 		StatusFilters:   nil,
 		TotalMatched:    5,
-		StatusTotals:    map[trail.Status]int{trail.StatusOpen: 4, trail.StatusDraft: 1},
 	})
 
-	text := out.String()
-	for _, want := range []string{"Recent trails · 1/5", "Open · 1/4"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("output missing %q, got:\n%s", want, text)
-		}
+	if text := out.String(); !strings.Contains(text, "Recent trails · 1/5") {
+		t.Fatalf("expected truncated header 'Recent trails · 1/5', got:\n%s", text)
 	}
 }
 
@@ -348,31 +333,11 @@ func TestPrintTrailListTruncatedSingleStatusHeaderShowsShownOfTotal(t *testing.T
 		RequestedAuthor: "",
 		StatusFilters:   []trail.Status{trail.StatusOpen},
 		TotalMatched:    3,
-		StatusTotals:    map[trail.Status]int{trail.StatusOpen: 3},
 	})
 
 	// Pluralized by the total match count, not the truncated page size.
 	if text := out.String(); !strings.Contains(text, "Open · 1/3 trails") {
 		t.Fatalf("expected truncated header 'Open · 1/3 trails', got:\n%s", text)
-	}
-}
-
-func TestPrintTrailListTruncatedOtherBucketShowsShownOfTotal(t *testing.T) {
-	t.Parallel()
-	alice := trailListTestAuthorAlice
-	unknownStatus := trail.Status("experimental_review")
-	var out bytes.Buffer
-	printTrailList(&out, []*trail.Metadata{
-		{Branch: "feat/odd", Status: unknownStatus, Author: &trail.Author{Login: &alice}, UpdatedAt: time.Now()},
-	}, trailListDisplayOptions{
-		RequestedAuthor: "",
-		StatusFilters:   nil,
-		TotalMatched:    3,
-		StatusTotals:    map[trail.Status]int{unknownStatus: 2, trail.StatusOpen: 1},
-	})
-
-	if text := out.String(); !strings.Contains(text, "Other · 1/2") {
-		t.Fatalf("expected truncated 'Other · 1/2' group, got:\n%s", text)
 	}
 }
 
@@ -386,7 +351,6 @@ func TestPrintTrailListFullPageKeepsPlainCounts(t *testing.T) {
 		RequestedAuthor: "",
 		StatusFilters:   nil,
 		TotalMatched:    1,
-		StatusTotals:    map[trail.Status]int{trail.StatusOpen: 1},
 	})
 
 	text := out.String()

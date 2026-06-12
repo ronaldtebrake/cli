@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -31,6 +31,9 @@ const (
 	defaultTrailListStatus = string(trail.StatusOpen)
 	// trailListStatusAny disables the status filter; user-facing value for --status.
 	trailListStatusAny = "any"
+	// trailListServerMaxLimit is the most trails the server returns per
+	// request (the list endpoint clamps limit to 200).
+	trailListServerMaxLimit = 200
 )
 
 func newTrailCmd() *cobra.Command {
@@ -174,6 +177,18 @@ func runTrailListAll(ctx context.Context, w io.Writer, opts trailListOptions) er
 	if err != nil {
 		return err
 	}
+
+	authorFilter := opts.Author
+	currentUserLogin := ""
+	if authorFilter == trailListAuthorMe {
+		login, err := fetchCurrentUserLogin(ctx, execRunner{})
+		if err != nil {
+			return err
+		}
+		currentUserLogin = login
+		authorFilter = login
+	}
+
 	client, err := NewAuthenticatedAPIClient(ctx, opts.InsecureHTTP)
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -184,7 +199,10 @@ func runTrailListAll(ctx context.Context, w io.Writer, opts trailListOptions) er
 		return err
 	}
 
-	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo))
+	// Filtering, sorting (updated_at desc), and truncation all happen
+	// server-side; the response carries the total match count so a capped
+	// page never reads as the total number of matches.
+	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo)+trailListQuery(statusFilters, authorFilter, opts.Limit))
 	if err != nil {
 		return fmt.Errorf("failed to list trails: %w", err)
 	}
@@ -204,32 +222,11 @@ func runTrailListAll(ctx context.Context, w io.Writer, opts trailListOptions) er
 		trails = append(trails, listResp.Trails[i].ToMetadata())
 	}
 
-	authorFilter := opts.Author
-	currentUserLogin := ""
-	if authorFilter == trailListAuthorMe {
-		login, err := fetchCurrentUserLogin(ctx, execRunner{})
-		if err != nil {
-			return err
-		}
-		currentUserLogin = login
-		authorFilter = login
+	totalMatched := listResp.Total
+	if totalMatched < len(trails) {
+		// Older servers don't report a total; fall back to the page size.
+		totalMatched = len(trails)
 	}
-
-	if authorFilter != "" {
-		trails = filterTrailsByAuthor(trails, authorFilter)
-	}
-
-	if len(statusFilters) > 0 {
-		trails = filterTrailsByStatuses(trails, statusFilters)
-	}
-
-	// Sort by updated_at descending, then keep only the most recent rows.
-	sort.Slice(trails, func(i, j int) bool {
-		return trails[i].UpdatedAt.After(trails[j].UpdatedAt)
-	})
-	totalMatched := len(trails)
-	statusTotals := trailStatusCounts(trails)
-	trails = limitTrails(trails, opts.Limit)
 
 	if opts.JSON {
 		enc := json.NewEncoder(w)
@@ -250,10 +247,36 @@ func runTrailListAll(ctx context.Context, w io.Writer, opts trailListOptions) er
 		CurrentUser:     currentUserLogin,
 		StatusFilters:   statusFilters,
 		TotalMatched:    totalMatched,
-		StatusTotals:    statusTotals,
 	})
 
+	if opts.Limit > trailListServerMaxLimit && totalMatched > len(trails) {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Note: --limit %d exceeds the server maximum of %d trails per request.\n", opts.Limit, trailListServerMaxLimit)
+	}
+
 	return nil
+}
+
+// trailListQuery builds the server-side filter query for the trail list
+// endpoint. Empty statusFilters (--status any) omits the status param so the
+// server returns all statuses; the limit is capped at the server maximum.
+func trailListQuery(statusFilters []trail.Status, author string, limit int) string {
+	q := url.Values{}
+	if len(statusFilters) > 0 {
+		parts := make([]string, len(statusFilters))
+		for i, status := range statusFilters {
+			parts[i] = string(status)
+		}
+		q.Set("status", strings.Join(parts, ","))
+	}
+	if author != "" {
+		q.Set("author", author)
+	}
+	if limit > trailListServerMaxLimit {
+		limit = trailListServerMaxLimit
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	return "?" + q.Encode()
 }
 
 // printTrailListEmpty renders the empty-state message. It names the active
@@ -280,50 +303,6 @@ func printTrailListEmpty(w io.Writer, authorFilter string, statusFilters []trail
 	fmt.Fprintln(w, "  entire trail create   Create a trail for the current branch")
 	fmt.Fprintln(w, "  entire trail list     List recent trails")
 	fmt.Fprintln(w, "  entire trail update   Update trail metadata")
-}
-
-func limitTrails(trails []*trail.Metadata, limit int) []*trail.Metadata {
-	if len(trails) <= limit {
-		return trails
-	}
-	return trails[:limit]
-}
-
-// filterTrailsByAuthor matches case-insensitively because GitHub logins are
-// case-insensitive (e.g. "Alice" and "alice" identify the same user).
-func filterTrailsByAuthor(trails []*trail.Metadata, login string) []*trail.Metadata {
-	var filtered []*trail.Metadata
-	for _, t := range trails {
-		if strings.EqualFold(t.AuthorLogin(), login) {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
-}
-
-func filterTrailsByStatus(trails []*trail.Metadata, status trail.Status) []*trail.Metadata {
-	var filtered []*trail.Metadata
-	for _, t := range trails {
-		if t.Status == status {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
-}
-
-func filterTrailsByStatuses(trails []*trail.Metadata, statuses []trail.Status) []*trail.Metadata {
-	statusSet := make(map[trail.Status]bool, len(statuses))
-	for _, status := range statuses {
-		statusSet[status] = true
-	}
-
-	var filtered []*trail.Metadata
-	for _, t := range trails {
-		if statusSet[t.Status] {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
 }
 
 func parseTrailStatusFilter(filter string) ([]trail.Status, error) {
@@ -370,63 +349,20 @@ type trailListDisplayOptions struct {
 	RequestedAuthor string
 	CurrentUser     string
 	StatusFilters   []trail.Status
-	// TotalMatched is the number of trails matching the filters before
-	// --limit truncation. Counts render as "shown/total" when they differ so
-	// a full page doesn't read as the total number of matches.
+	// TotalMatched is the number of trails matching the filters server-side,
+	// before --limit truncation. Counts render as "shown/total" when they
+	// differ so a capped page doesn't read as the total number of matches.
 	TotalMatched int
-	// StatusTotals are the pre-truncation per-status counts backing the
-	// group headers in the grouped view.
-	StatusTotals map[trail.Status]int
 }
 
 func printTrailList(w io.Writer, trails []*trail.Metadata, opts trailListDisplayOptions) {
 	showAuthor := opts.RequestedAuthor == ""
-	// Group by status when the user filtered for 0 or 2+ statuses. A single
-	// status is already named in the header, so flat rows read more cleanly.
-	grouped := len(opts.StatusFilters) != 1
+	// Show the status column unless exactly one status is filtered — that
+	// status is already named in the header.
+	showStatus := len(opts.StatusFilters) != 1
 	printTrailListHeader(w, opts, len(trails))
 	fmt.Fprintln(w)
-	if !grouped {
-		printTrailRows(w, trails, showAuthor)
-		return
-	}
-
-	rendered := make(map[*trail.Metadata]bool, len(trails))
-	for _, status := range trailListStatusOrder(opts.StatusFilters) {
-		group := filterTrailsByStatus(trails, status)
-		if len(group) == 0 {
-			continue
-		}
-		for _, t := range group {
-			rendered[t] = true
-		}
-		fmt.Fprintf(w, "  %s · %s\n", trailStatusTitle(status), trailCountDisplay(len(group), opts.StatusTotals[status]))
-		fmt.Fprintln(w)
-		printTrailRows(w, group, showAuthor)
-		fmt.Fprintln(w)
-	}
-
-	// When no explicit status filter is set, surface trails with unknown
-	// statuses in an "Other" bucket so they don't silently disappear if the
-	// server adds a status the CLI hasn't learned about yet.
-	if len(opts.StatusFilters) == 0 {
-		var other []*trail.Metadata
-		for _, t := range trails {
-			if !rendered[t] {
-				other = append(other, t)
-			}
-		}
-		if len(other) > 0 {
-			otherTotal := opts.TotalMatched
-			for _, status := range trailListStatusOrder(nil) {
-				otherTotal -= opts.StatusTotals[status]
-			}
-			fmt.Fprintf(w, "  Other · %s\n", trailCountDisplay(len(other), otherTotal))
-			fmt.Fprintln(w)
-			printTrailRows(w, other, showAuthor)
-			fmt.Fprintln(w)
-		}
-	}
+	printTrailRows(w, trails, showAuthor, showStatus)
 }
 
 func printTrailListHeader(w io.Writer, opts trailListDisplayOptions, count int) {
@@ -460,15 +396,19 @@ func printTrailListHeader(w io.Writer, opts trailListDisplayOptions, count int) 
 	fmt.Fprintf(w, "  %s · %s %s\n", label, countStr, trailStatusListDisplay(opts.StatusFilters))
 }
 
-func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor bool) {
+func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor, showStatus bool) {
 	// tabwriter aligns by display columns instead of bytes, so multi-byte
 	// branch names or logins don't throw off the table.
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if showAuthor {
-		fmt.Fprintln(tw, "  NUM\tBRANCH\tTITLE\tAUTHOR\tUPDATED")
-	} else {
-		fmt.Fprintln(tw, "  NUM\tBRANCH\tTITLE\tUPDATED")
+	columns := []string{"NUM", "BRANCH", "TITLE"}
+	if showStatus {
+		columns = append(columns, "STATUS")
 	}
+	if showAuthor {
+		columns = append(columns, "AUTHOR")
+	}
+	columns = append(columns, "UPDATED")
+	fmt.Fprintln(tw, "  "+strings.Join(columns, "\t"))
 	for _, t := range trails {
 		number := "-"
 		if t.Number > 0 {
@@ -478,37 +418,17 @@ func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor bool) {
 		if title == "" {
 			title = "(untitled)"
 		}
-		if showAuthor {
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", number, t.Branch, title, t.AuthorLogin(), timeAgo(t.UpdatedAt))
-			continue
+		fields := []string{number, t.Branch, title}
+		if showStatus {
+			fields = append(fields, trailStatusDisplay(t.Status))
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", number, t.Branch, title, timeAgo(t.UpdatedAt))
+		if showAuthor {
+			fields = append(fields, t.AuthorLogin())
+		}
+		fields = append(fields, timeAgo(t.UpdatedAt))
+		fmt.Fprintln(tw, "  "+strings.Join(fields, "\t"))
 	}
 	_ = tw.Flush()
-}
-
-func trailListStatusOrder(filter []trail.Status) []trail.Status {
-	order := []trail.Status{
-		trail.StatusOpen,
-		trail.StatusDraft,
-		trail.StatusMerged,
-		trail.StatusClosed,
-	}
-	if len(filter) == 0 {
-		return order
-	}
-
-	allowed := make(map[trail.Status]bool, len(filter))
-	for _, status := range filter {
-		allowed[status] = true
-	}
-	var filtered []trail.Status
-	for _, status := range order {
-		if allowed[status] {
-			filtered = append(filtered, status)
-		}
-	}
-	return filtered
 }
 
 func trailStatusListDisplay(statuses []trail.Status) string {
@@ -531,14 +451,6 @@ func trailStatusDisplay(status trail.Status) string {
 	return strings.ReplaceAll(string(status), "_", " ")
 }
 
-func trailStatusTitle(status trail.Status) string {
-	display := trailStatusDisplay(status)
-	if display == "" {
-		return ""
-	}
-	return strings.ToUpper(display[:1]) + display[1:]
-}
-
 // trailCountDisplay renders a count as "shown/total" when --limit truncated
 // the list, so a capped page doesn't read as the total number of matches.
 func trailCountDisplay(shown, total int) string {
@@ -546,15 +458,6 @@ func trailCountDisplay(shown, total int) string {
 		return fmt.Sprintf("%d/%d", shown, total)
 	}
 	return strconv.Itoa(shown)
-}
-
-// trailStatusCounts tallies trails per status before --limit truncation.
-func trailStatusCounts(trails []*trail.Metadata) map[trail.Status]int {
-	counts := make(map[trail.Status]int, len(trails))
-	for _, t := range trails {
-		counts[t.Status]++
-	}
-	return counts
 }
 
 func pluralize(s string, count int) string {
@@ -980,7 +883,11 @@ func findTrailByNumber(ctx context.Context, client *api.Client, forge, owner, re
 }
 
 func findTrail(ctx context.Context, client *api.Client, forge, owner, repo string, match func(api.TrailResource) bool) (*api.TrailResource, error) {
-	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo))
+	// The list endpoint paginates (default 50 rows); request the server max
+	// so lookups don't miss less recently updated trails. Trails beyond the
+	// first 200 are still invisible here — fixing that needs a server-side
+	// branch filter or the by-number detail endpoint.
+	resp, err := client.Get(ctx, trailsBasePath(forge, owner, repo)+trailListQuery(nil, "", trailListServerMaxLimit))
 	if err != nil {
 		return nil, fmt.Errorf("list trails: %w", err)
 	}
