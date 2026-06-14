@@ -309,7 +309,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		ID:     "trl_1",
 		Number: 42,
 		Title:  "Add token refresh",
-		Status: "in_review",
+		Status: "open",
 		Branch: "feat/token-refresh",
 		Base:   "main",
 	}}, comments, false, defaultTrailReviewListOptions(), countTrailReviewComments(comments))
@@ -340,7 +340,7 @@ func TestPrintTrailReviewDashboard_UsesSeparateCountsWhenFilteredCommentsEmpty(t
 		ID:     "trl_1",
 		Number: 42,
 		Title:  "Add token refresh",
-		Status: "in_review",
+		Status: "open",
 		Branch: "feat/token-refresh",
 		Base:   "main",
 	}}, nil, false, defaultTrailReviewListOptions(), counts)
