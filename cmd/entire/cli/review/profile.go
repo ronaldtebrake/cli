@@ -219,7 +219,7 @@ func judgeLabel(j judgeSpec) string {
 func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) (string, settings.ReviewConfig, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
-		return "", settings.ReviewConfig{}, errors.New("empty review worker selector")
+		return "", settings.ReviewConfig{}, errors.New("empty review inspector selector")
 	}
 	if cfg, ok := profile.Agents[selector]; ok && !cfg.IsZero() {
 		return selector, cfg, nil
@@ -240,11 +240,11 @@ func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) 
 	case 0:
 		configured := sortedProfileAgentNames(profile)
 		if len(configured) == 0 {
-			return "", settings.ReviewConfig{}, fmt.Errorf("review worker or agent %q is not configured", selector)
+			return "", settings.ReviewConfig{}, fmt.Errorf("review inspector or agent %q is not configured", selector)
 		}
-		return "", settings.ReviewConfig{}, fmt.Errorf("review worker or agent %q is not configured; configured workers: %s", selector, strings.Join(configured, ", "))
+		return "", settings.ReviewConfig{}, fmt.Errorf("review inspector or agent %q is not configured; configured inspectors: %s", selector, strings.Join(configured, ", "))
 	default:
-		return "", settings.ReviewConfig{}, fmt.Errorf("agent %q has multiple review workers (%s); choose one by worker name", selector, strings.Join(matches, ", "))
+		return "", settings.ReviewConfig{}, fmt.Errorf("agent %q has multiple review inspectors (%s); choose one by inspector name", selector, strings.Join(matches, ", "))
 	}
 }
 

@@ -53,7 +53,7 @@ func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
+	fmt.Fprintln(out, "You'll choose a review focus and inspector agents. They're saved to")
 	fmt.Fprintln(out, "local review preferences; configure later with `entire inspect --configure`.")
 	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
@@ -135,13 +135,14 @@ func RunReviewGuidedSetup(
 		profile.Task = customTask
 	}
 	if len(profile.Agents) > 1 {
-		masterAgent, masterModel, err := promptForStandaloneMaster(ctx, launchable, existing)
+		judges, chair, err := promptForJudges(ctx, launchable, existing)
 		if err != nil {
 			return "", settings.ReviewProfileConfig{}, err
 		}
-		profile.MasterAgent = masterAgent
-		profile.MasterModel = masterModel
+		profile.Judges = judges
+		profile.Chair = chair
 		profile.Master = ""
+		profile.MasterAgent = ""
 	}
 	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
 	fmt.Fprintln(out)
@@ -221,7 +222,7 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	taskForm := newAccessibleForm(huh.NewGroup(
 		huh.NewText().
 			Title("Describe the review task").
-			Description("What should the crew look for? This becomes the shared task for every worker.").
+			Description("What should the crew look for? This becomes the shared task for every inspector.").
 			Value(&task),
 	))
 	if err := taskForm.RunWithContext(ctx); err != nil {
@@ -291,20 +292,32 @@ type crewSlot struct {
 // user add, edit, or remove slots from a list until Done. Duplicate slots (same
 // agent and model) are allowed; each becomes its own worker.
 func promptForReviewCrew(ctx context.Context, profileName string, launchable []string, existing settings.ReviewProfileConfig) (settings.ReviewProfileConfig, error) {
-	// Seed from the existing profile's workers when editing one; otherwise the
+	// Seed from the existing profile's inspectors when editing one; otherwise the
 	// guided default is one slot per launchable agent.
-	slots := make([]crewSlot, 0, len(launchable))
+	seed := make([]crewSlot, 0, len(launchable))
 	if len(existing.Agents) > 0 {
 		for _, w := range sortedProfileAgentNames(existing) {
 			cfg := existing.Agents[w]
-			slots = append(slots, crewSlot{agent: reviewAgentName(w, cfg), model: strings.TrimSpace(cfg.Model)})
+			seed = append(seed, crewSlot{agent: reviewAgentName(w, cfg), model: strings.TrimSpace(cfg.Model)})
 		}
 	} else {
 		for _, name := range launchable {
-			slots = append(slots, crewSlot{agent: name})
+			seed = append(seed, crewSlot{agent: name})
 		}
 	}
+	slots, err := pickSlotList(ctx, "Review crew", "Select a slot to edit or remove it; + Add slot to add one.", launchable, seed)
+	if err != nil {
+		return settings.ReviewProfileConfig{}, err
+	}
+	return buildCrewProfile(ctx, profileName, slots), nil
+}
 
+// pickSlotList renders the single-screen add/edit/remove slot list used for both
+// inspectors and judges. candidates are the agents offered when adding a slot;
+// seed pre-populates the list. Returns at least one slot (Done is unavailable
+// while empty).
+func pickSlotList(ctx context.Context, title, desc string, candidates []string, seed []crewSlot) ([]crewSlot, error) {
+	slots := append([]crewSlot(nil), seed...)
 	const (
 		actAdd     = "add"
 		actDone    = "done"
@@ -315,9 +328,9 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 		for i, s := range slots {
 			options = append(options, huh.NewOption(fmt.Sprintf("%d  %s", i+1, slotLabel(s)), slotPrefix+strconv.Itoa(i)))
 		}
-		options = append(options, huh.NewOption("+ Add slot", actAdd))
+		options = append(options, huh.NewOption("+ Add", actAdd))
 		if len(slots) > 0 {
-			options = append(options, huh.NewOption(fmt.Sprintf("Done · %d slot(s)", len(slots)), actDone))
+			options = append(options, huh.NewOption(fmt.Sprintf("Done · %d", len(slots)), actDone))
 		}
 		picked := actDone
 		if len(slots) == 0 {
@@ -325,28 +338,28 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 		}
 		form := newAccessibleForm(huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Review crew").
-				Description("Select a slot to edit or remove it; + Add slot to add one.").
+				Title(title).
+				Description(desc).
 				Options(options...).
 				Height(reviewPickerHeight(len(options))).
 				Value(&picked),
 		))
 		if err := form.RunWithContext(ctx); err != nil {
-			return settings.ReviewProfileConfig{}, fmt.Errorf("review crew picker: %w", err)
+			return nil, fmt.Errorf("slot picker: %w", err)
 		}
 
 		switch {
 		case picked == actAdd:
-			slot, err := promptCrewSlot(ctx, launchable)
+			slot, err := promptCrewSlot(ctx, candidates)
 			if err != nil {
-				return settings.ReviewProfileConfig{}, err
+				return nil, err
 			}
 			slots = append(slots, slot)
 		case picked == actDone:
 			if len(slots) == 0 {
 				continue
 			}
-			return buildCrewProfile(ctx, profileName, slots), nil
+			return slots, nil
 		case strings.HasPrefix(picked, slotPrefix):
 			idx, convErr := strconv.Atoi(strings.TrimPrefix(picked, slotPrefix))
 			if convErr != nil || idx < 0 || idx >= len(slots) {
@@ -354,13 +367,13 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 			}
 			action, err := promptSlotAction(ctx, slots[idx])
 			if err != nil {
-				return settings.ReviewProfileConfig{}, err
+				return nil, err
 			}
 			switch action {
 			case "edit":
-				slot, err := promptCrewSlot(ctx, launchable)
+				slot, err := promptCrewSlot(ctx, candidates)
 				if err != nil {
-					return settings.ReviewProfileConfig{}, err
+					return nil, err
 				}
 				slots[idx] = slot
 			case "remove":
@@ -544,10 +557,11 @@ func modelInList(id string, models []agent.ModelInfo) bool {
 	return false
 }
 
-// promptForStandaloneMaster picks the standalone master (judge) as its own
-// agent + model, independent of the worker slots. Candidates are launchable
-// agents that can write text. Returns (agentName, model).
-func promptForStandaloneMaster(ctx context.Context, launchable []string, existing settings.ReviewProfileConfig) (string, string, error) {
+// promptForJudges picks the panel of judges (each its own agent + model) that
+// evaluate the inspectors' reports, and the chair that merges a multi-judge
+// panel. Candidates are launchable agents that can write a verdict (text
+// generation). Returns (judges, chair).
+func promptForJudges(ctx context.Context, launchable []string, existing settings.ReviewProfileConfig) ([]settings.ReviewConfig, string, error) {
 	candidates := make([]string, 0, len(launchable))
 	for _, name := range launchable {
 		if agentSupportsTextGeneration(ctx, name) {
@@ -555,41 +569,58 @@ func promptForStandaloneMaster(ctx context.Context, launchable []string, existin
 		}
 	}
 	if len(candidates) == 0 {
-		return "", "", errors.New("no installed agent can write the final report")
+		return nil, "", errors.New("no installed agent can write a verdict")
 	}
 
-	agentName := candidates[0]
-	// Pre-select the existing master when re-configuring.
-	if cur, _, ok := profileMasterIdentity(existing); ok {
-		for _, c := range candidates {
-			if c == cur {
-				agentName = cur
-				break
-			}
+	// Seed from existing judges, else a single default judge.
+	var seed []crewSlot
+	if existJudges, _ := profileJudges(existing); len(existJudges) > 0 {
+		for _, j := range existJudges {
+			seed = append(seed, crewSlot(j))
 		}
+	} else {
+		seed = []crewSlot{{agent: candidates[0]}}
 	}
-	if len(candidates) > 1 {
-		options := make([]huh.Option[string], 0, len(candidates))
-		for _, name := range candidates {
-			options = append(options, huh.NewOption(labelForSimpleAgent(name), name))
-		}
-		form := newAccessibleForm(huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Choose the review master").
-				Description("Evaluates the workers' reports and writes the final verdict.").
-				Options(options...).
-				Height(reviewPickerHeight(len(options))).
-				Value(&agentName),
-		))
-		if err := form.RunWithContext(ctx); err != nil {
-			return "", "", fmt.Errorf("master agent picker: %w", err)
-		}
-	}
-	model, err := promptCrewModel(ctx, agentName)
+
+	slots, err := pickSlotList(ctx, "Judges", "Each judge renders a verdict; with >1 a chair merges them. + Add to add a judge.", candidates, seed)
 	if err != nil {
-		return "", "", fmt.Errorf("master model picker: %w", err)
+		return nil, "", err
 	}
-	return agentName, model, nil
+
+	judges := make([]settings.ReviewConfig, len(slots))
+	for i, s := range slots {
+		judges[i] = settings.ReviewConfig{Agent: s.agent, Model: s.model}
+	}
+	if len(judges) < 2 {
+		return judges, "", nil
+	}
+
+	// Pick the chair from the panel.
+	options := make([]huh.Option[string], 0, len(judges))
+	for _, j := range judges {
+		options = append(options, huh.NewOption(judgeLabel(judgeSpec{agent: j.Agent, model: j.Model}), chairKey(j)))
+	}
+	picked := chairKey(judges[0])
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Chair (writes the final verdict)").
+			Description("Merges the panel's verdicts, surfacing agreement and dissent.").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return nil, "", fmt.Errorf("chair picker: %w", err)
+	}
+	return judges, picked, nil
+}
+
+// chairKey is the Chair selector for a judge: "agent" or "agent:model".
+func chairKey(j settings.ReviewConfig) string {
+	if strings.TrimSpace(j.Model) != "" {
+		return j.Agent + ":" + j.Model
+	}
+	return j.Agent
 }
 
 func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
@@ -899,8 +930,8 @@ func promptForReviewMasterAgent(ctx context.Context, choices []AgentChoice, save
 	picked := defaultAgentPick(choices, saved)
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("Choose review master").
-			Description("The master critically evaluates worker reports and writes the final report.").
+			Title("Choose chair judge").
+			Description("The chair critically evaluates the inspectors' reports and writes the final verdict.").
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),

@@ -95,11 +95,11 @@ func NewCommand(deps Deps) *cobra.Command {
 		// inspect --help` and the command works normally.
 		Hidden: true,
 		Short:  "Run a multi-agent crew against the current branch",
-		Long: `Run a multi-agent crew against the current branch: several worker
-agents inspect the change in parallel, then a master agent synthesizes their
-reports into a final verdict. Crews are saved as named profiles in Entire
-settings and clone-local preferences. On first run, guided setup writes a
-profile and asks before starting agents.
+		Long: `Run a multi-agent crew against the current branch: several inspector
+agents inspect the change in parallel, then a panel of judges renders the final
+verdict (a chair merges the panel when there is more than one judge). Crews are
+saved as named profiles in Entire settings and clone-local preferences. On first
+run, guided setup writes a profile and asks before starting agents.
 
 Labs entry: inspect is experimental. We are actively refining it based on user
 feedback.
@@ -111,19 +111,19 @@ Flags:
   --configure    set up a crew profile (shows available agents + profiles).
                  With --set-* flags it writes the profile non-interactively;
                  otherwise it opens the wizard (interactive) without starting agents.
-  --set-agents   with --configure: comma-separated worker agents for the profile
+  --set-agents   with --configure: comma-separated inspector agents for the profile
   --set-judge    with --configure: a judge as agent[=model] (repeatable; >1 = panel)
   --set-chair    with --configure: the judge that merges a multi-judge panel
   --set-task     with --configure: the profile's canonical task text
-  --set-model    with --configure: per-worker model as agent=model (repeatable)
-  --set-slot     with --configure: a worker slot as agent[=model] (repeatable;
+  --set-model    with --configure: per-inspector model as agent=model (repeatable)
+  --set-slot     with --configure: an inspector slot as agent[=model] (repeatable;
                  the same agent/model may repeat to run it multiple times)
   --edit         re-open the advanced profile skill picker
   --findings     browse local findings
-  --agent NAME   run only one worker from the selected profile
-  --list         list configured inspect profiles (their workers and master)
-  --agents       list the worker agents you can pass to --agent for the profile
-  --model NAME   override the model for the --agent worker (requires --agent)
+  --agent NAME   run only one inspector from the selected profile
+  --list         list configured inspect profiles (their inspectors and judges)
+  --agents       list the inspector agents you can pass to --agent for the profile
+  --model NAME   override the model for the --agent inspector (requires --agent)
   --models       list the models each agent advertises (optionally --agent NAME)
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
@@ -174,7 +174,7 @@ use 'entire attach --review <id>'.`,
 				return errors.New("--configure, --edit, and --findings are mutually exclusive")
 			}
 			if modelOverride != "" && agentOverride == "" {
-				return errors.New("--model requires --agent (the model applies to a single worker)")
+				return errors.New("--model requires --agent (the model applies to a single inspector)")
 			}
 			profileName := profileOverride
 			if len(args) == 1 {
@@ -201,19 +201,19 @@ use 'entire attach --review <id>'.`,
 		},
 	}
 	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
-	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: worker agents for the profile (comma-separated)")
+	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: inspector agents for the profile (comma-separated)")
 	cmd.Flags().StringArrayVar(&setJudges, "set-judge", nil, "with --configure: a judge as agent[=model] (repeatable; multiple judges form a panel)")
 	cmd.Flags().StringVar(&setChair, "set-chair", "", "with --configure: the judge (agent[=model]) that merges a multi-judge panel")
 	cmd.Flags().StringVar(&setTask, "set-task", "", "with --configure: the profile's canonical task text")
-	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-worker model as agent=model (repeatable)")
-	cmd.Flags().StringArrayVar(&setSlots, "set-slot", nil, "with --configure: a worker slot as agent[=model] (repeatable; same agent/model may repeat)")
+	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-inspector model as agent=model (repeatable)")
+	cmd.Flags().StringArrayVar(&setSlots, "set-slot", nil, "with --configure: an inspector slot as agent[=model] (repeatable; same agent/model may repeat)")
 	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the advanced review profile skill picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
-	cmd.Flags().BoolVar(&listAgents, "agents", false, "list the worker agents you can pass to --agent for the selected profile")
+	cmd.Flags().BoolVar(&listAgents, "agents", false, "list the inspector agents you can pass to --agent for the selected profile")
 	cmd.Flags().BoolVar(&listModels, "models", false, "list the models each review agent advertises (optionally filtered by --agent)")
-	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured inspect profiles (workers and master)")
-	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile")
-	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent worker (requires --agent)")
+	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured inspect profiles (inspectors and judges)")
+	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured inspector from the selected profile")
+	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent inspector (requires --agent)")
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
@@ -384,23 +384,26 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 		}
 		fmt.Fprintf(out, "  %s%s\n", name, marker)
 
-		workers := make([]string, 0, len(p.Agents))
+		inspectors := make([]string, 0, len(p.Agents))
 		for _, w := range sortedProfileAgentNames(p) {
 			cfg := p.Agents[w]
 			model := strings.TrimSpace(cfg.Model)
 			if model == "" {
 				model = "default"
 			}
-			workers = append(workers, reviewAgentName(w, cfg)+" · "+model)
+			inspectors = append(inspectors, reviewAgentName(w, cfg)+" · "+model)
 		}
-		fmt.Fprintf(out, "    workers: %s\n", strings.Join(workers, ", "))
+		fmt.Fprintf(out, "    inspectors: %s\n", strings.Join(inspectors, ", "))
 
-		if masterAgent, masterModel, ok := profileMasterIdentity(p); ok {
-			label := masterAgent
-			if strings.TrimSpace(masterModel) != "" {
-				label += " · " + masterModel
+		if judges, chair := profileJudges(p); len(judges) > 0 {
+			labels := make([]string, len(judges))
+			for i, j := range judges {
+				labels[i] = judgeLabel(j)
+				if len(judges) > 1 && i == chair {
+					labels[i] += " (chair)"
+				}
 			}
-			fmt.Fprintf(out, "    master:  %s\n", label)
+			fmt.Fprintf(out, "    judges:     %s\n", strings.Join(labels, ", "))
 		}
 	}
 	fmt.Fprintln(out)
@@ -425,7 +428,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 	if err == nil && s != nil {
 		if name, profile, selErr := selectReviewProfile(s, profileOverride); selErr == nil {
 			profile.Agents = nonZeroAgentConfigs(profile.Agents)
-			fmt.Fprintf(out, "Workers in review profile %q (pass one to --agent):\n", name)
+			fmt.Fprintf(out, "Inspectors in profile %q (pass one to --agent):\n", name)
 			for _, worker := range sortedProfileAgentNames(profile) {
 				cfg := profile.Agents[worker]
 				status := reviewHooksInstalledStatus
