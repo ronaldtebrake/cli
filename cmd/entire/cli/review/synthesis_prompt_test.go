@@ -102,11 +102,11 @@ func TestComposeSynthesisPrompt_PerRunPromptAppended(t *testing.T) {
 	if !strings.Contains(prompt, perRun) {
 		t.Errorf("prompt missing per-run instructions %q\nfull prompt:\n%s", perRun, prompt)
 	}
-	// Per-run prompt should appear after the verdict template.
-	verdictIdx := strings.Index(prompt, "Priority order")
+	// Per-run prompt should appear after the verdict instructions.
+	verdictIdx := strings.Index(prompt, "actionable findings")
 	perRunIdx := strings.Index(prompt, perRun)
 	if verdictIdx < 0 || perRunIdx < 0 || perRunIdx < verdictIdx {
-		t.Errorf("per-run prompt should appear after verdict template\nfull prompt:\n%s", prompt)
+		t.Errorf("per-run prompt should appear after verdict instructions\nfull prompt:\n%s", prompt)
 	}
 }
 
@@ -150,9 +150,10 @@ func TestComposeSynthesisPrompt_Deterministic(t *testing.T) {
 	}
 }
 
-// TestComposeSynthesisPrompt_SectionsPresent verifies all four required
-// verdict sections appear in the prompt template.
-func TestComposeSynthesisPrompt_SectionsPresent(t *testing.T) {
+// TestComposeSynthesisPrompt_MinimalVerdictInstructions verifies the prompt asks
+// for a concise verdict plus an actionable-findings list and explicitly forbids
+// filler, rather than mandating a fixed multi-section template.
+func TestComposeSynthesisPrompt_MinimalVerdictInstructions(t *testing.T) {
 	t.Parallel()
 	summary := makeSummaryWithNarratives([]struct {
 		name      string
@@ -165,14 +166,20 @@ func TestComposeSynthesisPrompt_SectionsPresent(t *testing.T) {
 
 	prompt := review.ExposedComposeSynthesisPrompt(summary, "")
 
-	for _, section := range []string{
-		"Common findings",
-		"Unique findings",
-		"Disagreements",
-		"Priority order",
+	for _, want := range []string{
+		"verdict",
+		"actionable findings",
+		"nothing else",
+		"no filler",
 	} {
-		if !strings.Contains(prompt, section) {
-			t.Errorf("prompt missing required section %q\nfull prompt:\n%s", section, prompt)
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing expected instruction %q\nfull prompt:\n%s", want, prompt)
+		}
+	}
+	// The old rigid section template should be gone.
+	for _, banned := range []string{"Executive verdict", "Needs verification"} {
+		if strings.Contains(prompt, banned) {
+			t.Errorf("prompt should not mandate fixed section %q\nfull prompt:\n%s", banned, prompt)
 		}
 	}
 }

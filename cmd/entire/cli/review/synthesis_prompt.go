@@ -26,15 +26,15 @@ import (
 //
 //	...
 //
-//	<instructions to write a tight verdict: lead with a one-line decision,
-//	then only the sections that have real content (Common/Unique findings,
-//	Disagreements, Priority order), proportional to the size of the change>
+//	<instructions to output only a one-line verdict plus a short bullet list
+//	of actionable findings — no headings, preamble, or filler>
 //
 //	<perRunPrompt, if any — appended as user's per-run instructions>
 //
-// The instructions deliberately do not mandate a fixed multi-section template:
-// forcing every header produced padded "none" filler on small/clean changes,
-// so sections are opt-in and the judge is told to stay proportional.
+// The instructions deliberately do not mandate a multi-section template:
+// forcing fixed headers produced padded "none" filler on small/clean changes.
+// The judge writes a verdict and only the findings that matter, proportional
+// to the change.
 //
 // Agents with no usable narrative (empty AssistantText) are filtered out
 // upstream by usableAgentRuns, so the header count and the body are both
@@ -69,20 +69,15 @@ func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string,
 	}
 
 	b.WriteString(`
-Critically evaluate the worker reports. Do not blindly summarize.
+Critically evaluate the worker reports — judge, don't summarize.
+  - Keep only findings backed by concrete evidence (file, function, behavior, test, or diff detail).
+  - Drop unsupported or speculative claims. Merge duplicates. Resolve contradictions on the merits.
 
-Rules:
-  - Prefer findings backed by concrete evidence (file, function, behavior, test, or diff detail).
-  - Discard unsupported or speculative claims unless they are clearly labeled as needing verification.
-  - Identify contradictions between workers and decide which claim is better supported.
-  - Merge duplicate findings.
+Output exactly this, nothing else:
+  - One line: the verdict (approve / approve with nits / request changes) and a one-sentence reason.
+  - Then a short bullet list of actionable findings, most important first, one line each with a file/symbol pointer. Omit the list entirely when nothing is actionable.
 
-Write a tight final report:
-  - Open with a one-line verdict (approve / approve with nits / request changes) and a one-sentence rationale.
-  - Then list only the findings that matter, highest priority first, each as a single bullet with an evidence pointer.
-  - Include a section only when it has real content; omit empty sections instead of writing "none". Use these as needed, in this order: Common findings, Unique findings, Disagreements (or rejected false positives), Priority order / next actions.
-
-Be brief and proportional to the change: a small or clean change should get a verdict and a few bullets, nothing more. Do not pad, restate the diff, or invent findings to fill a template.`)
+No preamble, no section headings, no restating the diff or task, no filler. Be proportional: a clean change is a single line.`)
 
 	if perRunPrompt != "" {
 		b.WriteString("\n\nPer-run user instructions:\n")
