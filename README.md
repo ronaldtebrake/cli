@@ -254,6 +254,13 @@ go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
 | `entire doctor trace` | Show hook performance traces                                                                 |
 | `entire version` | Show Entire CLI version                                                                           |
 
+`entire blame` and `entire why` are experimental Labs commands. Run `entire
+labs` to discover them. `entire blame <file>` shows which current file lines
+came from an Entire checkpoint, and `entire why <file>:<line>` jumps from a
+specific line back to the prompt, session, and checkpoint that created it. Use
+`entire blame <file> --long` for the full agent, model, author, and session
+table.
+
 ### `entire enable` Flags
 
 | Flag                                        | Description                                                                                                       |
