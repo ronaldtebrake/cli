@@ -482,14 +482,14 @@ func lastUsedSortKey(s api.AuthSession) string {
 	return *s.LastUsedAt
 }
 
-// formatAuthDate renders an RFC3339 timestamp as YYYY-MM-DD in local time,
+// formatAuthDate renders an RFC3339 timestamp as YYYY-MM-DD in its encoded zone,
 // falling back to a dash (empty) or the raw value (unparseable).
 func formatAuthDate(s string) string {
 	if s == "" {
 		return placeholderDash
 	}
 	if ts, err := time.Parse(time.RFC3339, s); err == nil {
-		return ts.Local().Format("2006-01-02")
+		return ts.Format("2006-01-02")
 	}
 	return s
 }

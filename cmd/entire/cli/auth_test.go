@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/auth-go/sts"
 	"github.com/entireio/auth-go/tokenmanager"
@@ -123,6 +124,19 @@ func TestRunAuthStatus_RendersSessionsTable(t *testing.T) {
 	}
 	if !strings.Contains(got, "entire logout --everywhere") {
 		t.Fatalf("output = %q, want logout hint tying the table to logout", got)
+	}
+}
+
+func TestFormatAuthDate_DoesNotShiftUTCDateToLocalTimezone(t *testing.T) {
+	oldLocal := time.Local
+	time.Local = time.FixedZone("PST", -8*60*60)
+	t.Cleanup(func() {
+		time.Local = oldLocal
+	})
+
+	got := formatAuthDate("2026-01-01T00:00:00Z")
+	if got != "2026-01-01" {
+		t.Fatalf("formatAuthDate() = %q, want %q", got, "2026-01-01")
 	}
 }
 
