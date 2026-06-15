@@ -360,13 +360,22 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 			if convErr != nil || idx < 0 || idx >= len(slots) {
 				continue
 			}
-			action, err := promptSlotAction(ctx, slots[idx])
+			// The agent identifies the slot, so editing defaults to the model
+			// (the common case). Swapping the agent is offered as a distinct action,
+			// and only when there is more than one candidate to switch to.
+			action, err := promptSlotAction(ctx, slots[idx], len(candidates) > 1)
 			if err != nil {
 				return nil, err
 			}
 			switch action {
-			case "edit":
-				slot, err := promptCrewSlot(ctx, candidates, slots[idx])
+			case "model":
+				model, err := promptCrewModel(ctx, slots[idx].agent, slots[idx].model)
+				if err != nil {
+					return nil, err
+				}
+				slots[idx].model = model
+			case "agent":
+				slot, err := promptChangeAgent(ctx, candidates, slots[idx])
 				if err != nil {
 					return nil, err
 				}
@@ -381,9 +390,28 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 // promptCrewSlot prompts for one slot: an agent then a model. seed pre-selects
 // the current agent/model when editing an existing slot (zero value when adding).
 func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (crewSlot, error) {
-	agentName, err := promptCrewAgent(ctx, launchable, seed.agent)
+	agentName, err := promptCrewAgent(ctx, launchable, seed.agent, false)
 	if err != nil {
 		return crewSlot{}, err
+	}
+	model, err := promptCrewModel(ctx, agentName, seed.model)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	return crewSlot{agent: agentName, model: model}, nil
+}
+
+// promptChangeAgent swaps the agent on an existing slot. Because advertised
+// models are agent-specific, picking a different agent re-prompts for the model
+// (seeded with the current one, so a still-valid/custom value is preserved).
+// Keeping the same agent leaves the slot untouched.
+func promptChangeAgent(ctx context.Context, candidates []string, seed crewSlot) (crewSlot, error) {
+	agentName, err := promptCrewAgent(ctx, candidates, seed.agent, true)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	if agentName == seed.agent {
+		return seed, nil
 	}
 	model, err := promptCrewModel(ctx, agentName, seed.model)
 	if err != nil {
@@ -413,17 +441,23 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 	return profile
 }
 
-// promptSlotAction asks what to do with an existing slot row.
-func promptSlotAction(ctx context.Context, slot crewSlot) (string, error) {
+// promptSlotAction asks what to do with an existing slot row. The model is the
+// primary edit (the agent identifies the slot); "Change agent" is only offered
+// when allowAgentChange is set (more than one candidate agent exists).
+func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool) (string, error) {
+	options := []huh.Option[string]{huh.NewOption("Change model", "model")}
+	if allowAgentChange {
+		options = append(options, huh.NewOption("Change agent", "agent"))
+	}
+	options = append(options,
+		huh.NewOption("Remove", "remove"),
+		huh.NewOption("Cancel", "cancel"),
+	)
 	picked := "cancel"
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title(slotLabel(slot)).
-			Options(
-				huh.NewOption("Edit", "edit"),
-				huh.NewOption("Remove", "remove"),
-				huh.NewOption("Cancel", "cancel"),
-			).
+			Options(options...).
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
@@ -440,9 +474,10 @@ func slotLabel(s crewSlot) string {
 	return labelForSimpleAgent(s.agent) + " · " + model
 }
 
-// promptCrewAgent picks the agent for a new slot. Auto-selects when only one
-// launchable agent exists.
-func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string) (string, error) {
+// promptCrewAgent picks the agent for a slot. Auto-selects when only one
+// launchable agent exists. editing tailors the title for changing an existing
+// slot's agent versus choosing one for a brand-new slot.
+func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string, editing bool) (string, error) {
 	if len(launchable) == 1 {
 		return launchable[0], nil
 	}
@@ -459,9 +494,13 @@ func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string)
 			}
 		}
 	}
+	title := "Add a slot — which agent?"
+	if editing {
+		title = "Change agent"
+	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("Add a slot — which agent?").
+			Title(title).
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),
