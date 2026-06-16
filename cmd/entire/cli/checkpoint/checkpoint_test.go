@@ -4233,10 +4233,9 @@ func TestMetadataDirectoryWalkersAllowDotDotPrefixedNames(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
-	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
+	require.NoError(t, err)
 
 	metadataDir := filepath.Join(tempDir, "metadata")
 	generatedDir := filepath.Join(metadataDir, "..generated")
