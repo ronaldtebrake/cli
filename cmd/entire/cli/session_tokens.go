@@ -533,8 +533,12 @@ func writeTokenRecommendations(w io.Writer, recs []sessionTokensRecommendation) 
 }
 
 func writeTokenUsageSection(w io.Writer, tokens *sessionTokensUsage) {
+	writeTokenUsageSectionWithTitle(w, "Token usage", tokens)
+}
+
+func writeTokenUsageSectionWithTitle(w io.Writer, title string, tokens *sessionTokensUsage) {
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Token usage")
+	fmt.Fprintln(w, title)
 	if tokens != nil {
 		fmt.Fprintf(w, "Total:  %s tokens\n", formatTokenCount(tokens.Total))
 		parts := []string{

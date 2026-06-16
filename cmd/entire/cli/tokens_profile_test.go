@@ -55,7 +55,7 @@ func TestTokensProfileCmd_TextOutputAggregatesCommittedCheckpoints(t *testing.T)
 		"Checkpoints analyzed: 4",
 		"With token data:      3",
 		"Missing token data:   1",
-		"Token usage",
+		"Checkpoint-observed token usage",
 		"Total:  3.5k tokens",
 		"Cache read: 800",
 		"API calls: 33",
@@ -66,6 +66,7 @@ func TestTokensProfileCmd_TextOutputAggregatesCommittedCheckpoints(t *testing.T)
 		"Missing token data: 1 checkpoint",
 		"Recommendations",
 		"Use `entire search` for prior decisions/checkpoints before broad re-investigation.",
+		"Token totals are summed from analyzed checkpoints and may include overlapping checkpoint history",
 		"Tool-level search/read spend is not captured yet",
 	}
 	for _, check := range checks {
@@ -74,7 +75,7 @@ func TestTokensProfileCmd_TextOutputAggregatesCommittedCheckpoints(t *testing.T)
 		}
 	}
 
-	tokenUsageIndex := strings.Index(out, "Token usage")
+	tokenUsageIndex := strings.Index(out, "Checkpoint-observed token usage")
 	recommendationsIndex := strings.Index(out, "Recommendations")
 	if tokenUsageIndex == -1 || recommendationsIndex == -1 {
 		t.Fatalf("expected token usage and recommendations sections, got:\n%s", out)
@@ -112,6 +113,13 @@ func TestTokensProfileCmd_JSONOutput(t *testing.T) {
 	var result tokensProfileReport
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("expected valid JSON, got parse error: %v\noutput: %s", err, stdout.String())
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatalf("expected valid JSON object, got parse error: %v\noutput: %s", err, stdout.String())
+	}
+	if raw["usage_scope"] != "checkpoint_observed" {
+		t.Fatalf("usage_scope = %v, want checkpoint_observed", raw["usage_scope"])
 	}
 	if result.CheckpointsAnalyzed != 2 {
 		t.Fatalf("checkpoints_analyzed = %d, want 2", result.CheckpointsAnalyzed)

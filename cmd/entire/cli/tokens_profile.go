@@ -15,6 +15,7 @@ import (
 
 type tokensProfileReport struct {
 	Source                   string                        `json:"source"`
+	UsageScope               string                        `json:"usage_scope"`
 	CheckpointsAvailable     int                           `json:"checkpoints_available"`
 	CheckpointsAnalyzed      int                           `json:"checkpoints_analyzed"`
 	CheckpointsWithTokenData int                           `json:"checkpoints_with_token_data"`
@@ -45,6 +46,8 @@ var tokensProfileSignalDefinitions = []tokensProfileSignalDefinition{
 	{id: "subagent-heavy", label: "Subagent-heavy sessions"},
 	{id: "missing-token-data", label: "Missing token data"},
 }
+
+const tokensProfileUsageScopeCheckpointObserved = "checkpoint_observed"
 
 func newTokensGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -133,6 +136,7 @@ func buildTokensProfileReport(ctx context.Context, store *checkpoint.GitStore, i
 	infos = limitTokensProfileCheckpoints(infos, limit)
 	report := tokensProfileReport{
 		Source:               "committed_checkpoints",
+		UsageScope:           tokensProfileUsageScopeCheckpointObserved,
 		CheckpointsAvailable: checkpointsAvailable,
 		CheckpointsAnalyzed:  len(infos),
 	}
@@ -356,6 +360,9 @@ func tokensProfileLimitations(report tokensProfileReport) []string {
 	if report.MetadataReadWarnings > 0 {
 		limitations = append(limitations, fmt.Sprintf("%d checkpoint%s had incomplete session metadata; profile used root token summaries or readable sessions where available.", report.MetadataReadWarnings, pluralSuffix(report.MetadataReadWarnings)))
 	}
+	if report.Tokens != nil {
+		limitations = append(limitations, "Token totals are summed from analyzed checkpoints and may include overlapping checkpoint history; treat them as checkpoint-observed volume, not guaranteed unique session spend.")
+	}
 	if report.CheckpointsAnalyzed > 0 {
 		limitations = append(limitations, "Tool-level search/read spend is not captured yet; this profile infers patterns from token totals, cache/context replay, API call counts, and subagent totals.")
 	}
@@ -383,7 +390,7 @@ func writeTokensProfileText(w io.Writer, report tokensProfileReport) {
 		fmt.Fprintf(w, "Metadata warnings:    %d\n", report.MetadataReadWarnings)
 	}
 
-	writeTokenUsageSection(w, report.Tokens)
+	writeTokenUsageSectionWithTitle(w, "Checkpoint-observed token usage", report.Tokens)
 	writeTokensProfileSignals(w, report.Signals)
 	if len(report.Recommendations) > 0 {
 		writeTokenRecommendations(w, report.Recommendations)
