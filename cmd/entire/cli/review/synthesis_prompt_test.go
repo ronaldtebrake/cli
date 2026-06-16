@@ -184,8 +184,8 @@ func TestComposeSynthesisPrompt_MinimalVerdictInstructions(t *testing.T) {
 	}
 }
 
-// TestComposeSynthesisPrompt_AgentCountInHeader verifies the agent count
-// in the header reflects only agents with usable narratives.
+// TestComposeSynthesisPrompt_AgentCountInHeader verifies the inspector count
+// in the header reflects only inspectors with usable narratives.
 func TestComposeSynthesisPrompt_AgentCountInHeader(t *testing.T) {
 	t.Parallel()
 	summary := makeSummaryWithNarratives([]struct {
@@ -200,7 +200,7 @@ func TestComposeSynthesisPrompt_AgentCountInHeader(t *testing.T) {
 
 	prompt := review.ExposedComposeSynthesisPrompt(summary, "")
 
-	if !strings.Contains(prompt, "2 agents") {
-		t.Errorf("header should say '2 agents' (agent-c excluded), got:\n%s", prompt)
+	if !strings.Contains(prompt, "2 inspectors") {
+		t.Errorf("header should say '2 inspectors' (agent-c excluded), got:\n%s", prompt)
 	}
 }

@@ -13,13 +13,16 @@ import (
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
 
-// composeSynthesisPrompt builds the LLM prompt asking the provider to
-// synthesize a unified verdict across N agent reviews. Format:
+// composeSynthesisPrompt builds the LLM prompt asking the single judge to
+// consolidate the N inspector reports into one verdict. Format:
 //
-//	You reviewed the same code change with N agents. Here are their reports:
+//	You are the judge for this code review. N inspectors independently
+//	reviewed the same change.
+//
+//	Inspector reports:
 //
 //	─── claude-code ───
-//	<narrative from agent's AssistantText events, joined>
+//	<narrative from the inspector's AssistantText events, joined>
 //
 //	─── codex ───
 //	<narrative>
@@ -36,9 +39,9 @@ import (
 // The judge writes a verdict and only the findings that matter, proportional
 // to the change.
 //
-// Agents with no usable narrative (empty AssistantText) are filtered out
+// Inspectors with no usable narrative (empty AssistantText) are filtered out
 // upstream by usableAgentRuns, so the header count and the body are both
-// scoped to agents that produced narrative output. SynthesisSink already
+// scoped to inspectors that produced narrative output. SynthesisSink already
 // guards on len(usable) >= 2 before calling, so the empty case won't reach
 // the LLM in production.
 func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string, profileName string, task string) string {
@@ -49,14 +52,14 @@ func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string,
 
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "You reviewed the same code change with %d agents. You are the final reviewer; critically adjudicate their reports instead of blindly summarizing.\n", len(usable))
+	fmt.Fprintf(&b, "You are the judge for this code review. %d inspectors independently reviewed the same change.\n", len(usable))
 	if profileName != "" {
 		fmt.Fprintf(&b, "Review profile: %s\n", profileName)
 	}
 	if strings.TrimSpace(task) != "" {
 		fmt.Fprintf(&b, "Canonical task: %s\n", strings.TrimSpace(task))
 	}
-	b.WriteString("\nHere are their reports:\n")
+	b.WriteString("\nInspector reports:\n")
 
 	for _, run := range usable {
 		narrative := joinAssistantText(run.Buffer)
@@ -69,7 +72,7 @@ func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string,
 	}
 
 	b.WriteString(`
-Critically evaluate the worker reports — judge, don't summarize.
+Consolidate the inspector reports into one verdict — judge critically, don't just summarize.
   - Keep only findings backed by concrete evidence (file, function, behavior, test, or diff detail).
   - Drop unsupported or speculative claims. Merge duplicates. Resolve contradictions on the merits.
 
