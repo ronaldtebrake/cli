@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/entireio/auth-go/sts"
-	"github.com/entireio/auth-go/tokens"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trail"
+	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
+	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
 
 const (
@@ -22,14 +25,17 @@ const (
 )
 
 func TestRunTrailListAll_PrintsLoginHintWhenNotLoggedIn(t *testing.T) {
-	// No t.Parallel: SetManagerForTest mutates package-level auth state.
-	store := newAuthMemStore()
-	mgr := newResolveTestManager(t, store, func(context.Context, sts.ExchangeRequest) (*tokens.TokenSet, error) {
-		t.Fatal("exchange should not run when no core token is stored")
-		return nil, errors.New("unreachable")
-	})
-	t.Cleanup(auth.SetManagerForTest(t, mgr))
-	t.Cleanup(auth.SetResolveContextForAPIForTest(t, auth.DiscoveryUnavailableForTest))
+	// No t.Parallel: SetResolveContextForAPIForTest and
+	// tokenstore.UseFileBackendForTesting mutate package-level state.
+	//
+	// Discovery selects a context whose keyring slot holds nothing, so the
+	// per-context provider reports ErrNotLoggedIn.
+	t.Cleanup(tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json")))
+	c := &contexts.Context{Name: "me@core", CoreURL: "https://core.example", Handle: "me", KeychainService: "kc:me"}
+	t.Cleanup(auth.SetResolveContextForAPIForTest(t,
+		func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+			return c, nil
+		}))
 
 	var out, errOut bytes.Buffer
 	err := runTrailListAll(t.Context(), &out, &errOut, defaultTrailListOptions(false))
@@ -53,14 +59,16 @@ func TestRunTrailListAll_PrintsLoginHintWhenNotLoggedIn(t *testing.T) {
 }
 
 func TestRunTrailListAll_ValidatesOptionsBeforeAuth(t *testing.T) {
-	// No t.Parallel: SetManagerForTest mutates package-level auth state.
-	store := newAuthMemStore()
-	mgr := newResolveTestManager(t, store, func(context.Context, sts.ExchangeRequest) (*tokens.TokenSet, error) {
-		t.Fatal("exchange should not run for invalid local options")
-		return nil, errors.New("unreachable")
-	})
-	t.Cleanup(auth.SetManagerForTest(t, mgr))
-	t.Cleanup(auth.SetResolveContextForAPIForTest(t, auth.DiscoveryUnavailableForTest))
+	// No t.Parallel: SetResolveContextForAPIForTest mutates package-level
+	// auth state.
+	//
+	// Discovery must never run for invalid local options: validation has to
+	// short-circuit before any auth resolution.
+	t.Cleanup(auth.SetResolveContextForAPIForTest(t,
+		func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+			t.Fatal("discovery should not run for invalid local options")
+			return nil, errors.New("unreachable")
+		}))
 
 	opts := defaultTrailListOptions(false)
 	opts.Limit = 0
