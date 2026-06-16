@@ -33,37 +33,15 @@ const (
 	lastUsedJustNow = "just now"
 )
 
-// requireSecureBaseURL enforces TLS unless insecureHTTPAuth is set. Every
-// command that sends a bearer token over the network (login, logout,
-// auth status) must call this so credentials don't leak over plaintext HTTP
-// without explicit opt-in.
-//
-// Both the auth and data API origins are checked: the bearer travels to the
-// auth host for login + session management, and to the data host for
-// search/activity/dispatch/etc. When both origins resolve to the same host
-// (e.g. an explicitly collapsed single-host deployment) the redundant second
-// parse is skipped.
-//
-// When the opt-in flag is set, the tokenmanager's matching HTTP guard is
-// also relaxed via auth.EnableInsecureHTTP — otherwise an STS exchange
-// against a private-network http:// auth host would fail at the
-// tokenmanager layer even though the per-command TLS check was waived.
-func requireSecureBaseURL(insecureHTTPAuth bool) error {
+// applyInsecureHTTPAuth relaxes the tokenmanager's HTTP guard when the user
+// passed --insecure-http-auth, and reports whether per-target TLS checks
+// should be skipped. status/logout enforce TLS on the specific core they
+// dial (the active context's), not on any global origin.
+func applyInsecureHTTPAuth(insecureHTTPAuth bool) bool {
 	if insecureHTTPAuth {
 		auth.EnableInsecureHTTP()
-		return nil
 	}
-	dataURL, authURL := api.BaseURL(), api.AuthBaseURL()
-	if err := api.RequireSecureURL(dataURL); err != nil {
-		return fmt.Errorf("base URL check: %w", err)
-	}
-	if authURL == dataURL {
-		return nil
-	}
-	if err := api.RequireSecureURL(authURL); err != nil {
-		return fmt.Errorf("auth base URL check: %w", err)
-	}
-	return nil
+	return insecureHTTPAuth
 }
 
 // newAuthSessionsClient builds an api.Client for entire-core's login-session
@@ -152,16 +130,12 @@ func newAuthStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
-				return err
-			}
-			target, err := resolveStatusTarget(cmd.Context(), auth.NewContextStore(), auth.Contexts, auth.RefreshedLoginToken, api.AuthBaseURL())
+			target, err := resolveStatusTarget(cmd.Context(), auth.Contexts, auth.RefreshedLoginToken)
 			if err != nil {
 				return err
 			}
-			// We send the session token to target.coreURL; enforce TLS on it
-			// too (it may differ from AuthBaseURL when a context is active).
-			if !insecureHTTPAuth {
+			// We send the session token to target.coreURL; enforce TLS on it.
+			if !applyInsecureHTTPAuth(insecureHTTPAuth) && target.coreURL != "" {
 				if err := api.RequireSecureURL(target.coreURL); err != nil {
 					return fmt.Errorf("context login server URL check: %w", err)
 				}
@@ -202,39 +176,33 @@ type contextsProvider func() ([]*contexts.Context, string, error)
 type loginTokenResolver func(ctx context.Context, c *contexts.Context) (string, error)
 
 // statusTarget is the resolved core to act against: the active context's
-// CoreURL + its session token, or (no active context) the configured
-// AuthBaseURL + legacy keyring entry. Shared by `auth status` (profile +
-// session list) and `logout` (revocation) so both hit the same login server.
+// CoreURL + its session token. Zero coreURL/token means not logged in.
+// Shared by `auth status` (profile + session list) and `logout`
+// (revocation) so both hit the same login server.
 type statusTarget struct {
 	coreURL       string
 	token         string
-	activeContext string // "" when falling back to the legacy entry
+	activeContext string
 	totalContexts int
 }
 
 // resolveStatusTarget picks the core + token for `entire auth status` (and
-// `logout`). The active contexts.json context wins (so `auth use` retargets
-// status onto that login server); otherwise it falls back to the legacy keyring
-// entry keyed by the configured auth host.
+// `logout`) from the active contexts.json context (so `auth use` retargets
+// status onto that login server). No active context means not logged in —
+// the zero-token target renders the `entire login` hint.
 //
-// For the active context the token is resolved through resolveLogin, which
-// transparently re-mints an expired login JWT from the stored refresh token.
-// This is the point of the refresh: an expired-but-refreshable session must
-// report "logged in", not "re-login" — the same false negative
-// auth.ResolveControlPlaneTarget already avoids for org/repo/project/grant.
-// `logout` benefits too: the refreshed bearer can authenticate the revoke call
-// instead of failing on an expired token. When refresh fails (revoked family,
-// network, opaque token), we fall back to the stored token and let the /me
-// liveness probe be the arbiter — preserving the accurate "no longer valid"
-// outcome for a genuinely dead session (ErrReauthRequired → expired token →
-// 401 → re-login).
+// The token is resolved through resolveLogin, which transparently re-mints
+// an expired login JWT from the stored refresh token: an
+// expired-but-refreshable session must report "logged in", not "re-login",
+// and `logout`'s revoke call gets a bearer that still authenticates. When
+// refresh fails (revoked family, network, opaque token), the raw stored
+// token is used and the /me liveness probe is the arbiter — preserving the
+// accurate "no longer valid" outcome for a genuinely dead session.
 //
 // A genuine contexts.json read/parse error is surfaced, not swallowed — a
 // missing file reads as "no contexts" (no error), so an error here means the
-// file is corrupt or unreadable, which the user must see. This keeps status
-// symmetric with the control-plane commands (auth.ResolveControlPlaneTarget),
-// which fail the same way rather than silently degrading to a stale identity.
-func resolveStatusTarget(ctx context.Context, store tokenStore, listContexts contextsProvider, resolveLogin loginTokenResolver, fallbackBaseURL string) (statusTarget, error) {
+// file is corrupt or unreadable, which the user must see.
+func resolveStatusTarget(ctx context.Context, listContexts contextsProvider, resolveLogin loginTokenResolver) (statusTarget, error) {
 	all, current, err := listContexts()
 	if err != nil {
 		return statusTarget{}, fmt.Errorf("load contexts: %w", err)
@@ -244,21 +212,17 @@ func resolveStatusTarget(ctx context.Context, store tokenStore, listContexts con
 		if c.Name != current || c.CoreURL == "" {
 			continue
 		}
-		// Prefer a refreshed token; fall back to the raw stored token so a
-		// refresh failure degrades to today's behaviour rather than dropping
-		// to the legacy entry.
 		if tok, terr := resolveLogin(ctx, c); terr == nil && tok != "" {
 			return statusTarget{coreURL: c.CoreURL, token: tok, activeContext: c.Name, totalContexts: total}, nil
 		}
 		if tok, terr := auth.LoginTokenForContext(c); terr == nil && tok != "" {
 			return statusTarget{coreURL: c.CoreURL, token: tok, activeContext: c.Name, totalContexts: total}, nil
 		}
+		// Active context with no readable token: report against its core so
+		// the not-logged-in message names the right login server.
+		return statusTarget{coreURL: c.CoreURL, activeContext: c.Name, totalContexts: total}, nil
 	}
-	tok, gerr := store.GetToken(fallbackBaseURL)
-	if gerr != nil {
-		tok = "" // best-effort: a keyring read failure just reads as "no token"
-	}
-	return statusTarget{coreURL: fallbackBaseURL, token: tok, totalContexts: total}, nil
+	return statusTarget{totalContexts: total}, nil
 }
 
 // defaultFetchProfile fetches a user's profile from coreURL's GET /me with the
@@ -297,7 +261,11 @@ func defaultListAuthSessions(ctx context.Context, coreURL, token string) ([]api.
 // listed so the effect of `logout` / `logout --everywhere` is visible.
 func runAuthStatus(ctx context.Context, w io.Writer, fetchProfile profileFetcher, listSessions authSessionLister, t statusTarget) error {
 	if t.token == "" {
-		fmt.Fprintf(w, "Not logged in to %s\n", t.coreURL)
+		if t.coreURL == "" {
+			fmt.Fprintln(w, "Not logged in.")
+		} else {
+			fmt.Fprintf(w, "Not logged in to %s\n", t.coreURL)
+		}
 		fmt.Fprintln(w, "Run 'entire login' to authenticate.")
 		return nil
 	}
