@@ -390,7 +390,7 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 	// the API refresh happens earlier on `entire enable`, outside the prompt path.
 	// Marking "decided" before checking the cache means a missing/stale false
 	// cache fails closed (no hint for this session) rather than retrying/spamming.
-	won := false
+	mutated := false
 	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
 		if state.ContextInjectionDecided {
 			return strategy.ErrMutationSkip
@@ -402,7 +402,7 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 			return strategy.ErrMutationSkip
 		}
 		state.ContextInjectionDecided = true
-		won = true
+		mutated = true
 		return nil
 	})
 	if mutErr != nil && !errors.Is(mutErr, strategy.ErrStateNotFound) {
@@ -410,8 +410,12 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 			slog.String("error", mutErr.Error()))
 		return
 	}
+	// Only proceed after the state mutation was persisted. If saving the updated
+	// state failed, mutErr was non-nil above and we returned without injecting,
+	// leaving a later turn free to retry safely.
+	won := mutErr == nil && mutated
 	if !won {
-		return // already decided for this session (or no session state yet)
+		return // already decided for this session, skipped kind, or no session state yet
 	}
 
 	// Only advertise trails when they're literally enabled for this repo on the API.
