@@ -979,8 +979,8 @@ func addDirectoryToEntriesWithAbsPath(repo *git.Repository, dirPathAbs, dirPathR
 			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
 		}
 
-		// Prevent path traversal via symlinks pointing outside the metadata dir
-		if strings.HasPrefix(relWithinDir, "..") {
+		// Prevent path traversal via unexpected relative paths outside the metadata dir.
+		if paths.IsRelativeTraversal(relWithinDir) {
 			return fmt.Errorf("path traversal detected: %s", relWithinDir)
 		}
 
@@ -1041,7 +1041,7 @@ func addDirectoryToChanges(repo *git.Repository, dirPathAbs, dirPathRel string) 
 		if relErr != nil {
 			return fmt.Errorf("failed to get relative path for %s: %w", path, relErr)
 		}
-		if strings.HasPrefix(relWithinDir, "..") {
+		if paths.IsRelativeTraversal(relWithinDir) {
 			return fmt.Errorf("path traversal detected: %s", relWithinDir)
 		}
 
