@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -20,5 +21,7 @@ func (c *Client) TrailsEnabled(ctx context.Context, forge, owner, repo string) (
 		return false, fmt.Errorf("probe trails enablement: %w", err)
 	}
 	defer resp.Body.Close()
+	// Drain (bounded) so net/http can reuse the connection; the body is unused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16)) //nolint:errcheck // best-effort drain
 	return resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices, nil
 }

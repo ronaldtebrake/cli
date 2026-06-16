@@ -381,20 +381,22 @@ const trailsEnabledProbeTimeout = 3 * time.Second
 // trailsEnabledForRepo reports whether Entire trails are literally enabled for
 // this repo on the API. It resolves the origin remote to a supported forge and
 // probes the trails endpoint; a successful response means trails are
-// provisioned/enabled. Best-effort and bounded by a short timeout — an
-// unresolved remote, missing auth, or any API/transport error reports false, so
-// we never advertise trails we can't confirm are enabled.
+// provisioned/enabled. Best-effort and bounded by a single short timeout that
+// covers both client construction (which may do /.well-known discovery and a
+// token exchange) and the probe — an unresolved remote, missing auth, or any
+// API/transport error reports false, so we never advertise trails we can't
+// confirm are enabled.
 func trailsEnabledForRepo(ctx context.Context) bool {
 	forge, owner, repo, err := resolveTrailRemote(ctx)
 	if err != nil {
 		return false
 	}
-	client, err := NewAuthenticatedAPIClient(ctx, false)
+	probeCtx, cancel := context.WithTimeout(ctx, trailsEnabledProbeTimeout)
+	defer cancel()
+	client, err := NewAuthenticatedAPIClient(probeCtx, false)
 	if err != nil {
 		return false // not authenticated → trails aren't enabled for us
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, trailsEnabledProbeTimeout)
-	defer cancel()
 	enabled, err := client.TrailsEnabled(probeCtx, forge, owner, repo)
 	return err == nil && enabled
 }
@@ -410,18 +412,27 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 	}
 	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
 
-	// Claim first so the trails-enabled probe (a network call) runs at most once
-	// per session: the turn that wins the claim probes; later turns return here.
-	// Trails enablement is a stable per-repo setting, so consuming the claim when
-	// trails are disabled correctly suppresses injection for the whole session.
-	claimed, err := strategy.ClaimContextInjection(ctx, event.SessionID)
-	if err != nil {
-		logging.Warn(logCtx, "failed to claim context injection marker",
-			slog.String("error", err.Error()))
+	// Decide once per session, recorded on the session state itself (not a
+	// separate marker file). Winning the check-and-set means this turn owns the
+	// decision; the trails-enabled probe (a network call) then runs at most once
+	// per session. Marking "decided" even when trails are disabled stops later
+	// turns from re-probing, since enablement is stable for the session.
+	won := false
+	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
+		if state.ContextInjectionDecided {
+			return strategy.ErrMutationSkip
+		}
+		state.ContextInjectionDecided = true
+		won = true
+		return nil
+	})
+	if mutErr != nil && !errors.Is(mutErr, strategy.ErrStateNotFound) {
+		logging.Warn(logCtx, "failed to record context injection decision",
+			slog.String("error", mutErr.Error()))
 		return
 	}
-	if !claimed {
-		return // already injected (or attempted) for this session
+	if !won {
+		return // already decided for this session (or no session state yet)
 	}
 
 	// Only advertise trails when they're literally enabled for this repo on the API.

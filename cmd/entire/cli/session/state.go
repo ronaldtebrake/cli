@@ -225,6 +225,13 @@ type State struct {
 	// than being captured by hooks during normal agent execution.
 	AttachedManually bool `json:"attached_manually,omitempty"`
 
+	// ContextInjectionDecided records that the once-per-session model-context
+	// injection (e.g. the `entire trail` pointer) has been handled for this
+	// session, so the dispatcher neither re-probes the API nor re-injects on
+	// later turns. Set on the first turn regardless of whether anything was
+	// injected, since trail enablement is stable for the session.
+	ContextInjectionDecided bool `json:"context_injection_decided,omitempty"`
+
 	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor")
 	AgentType types.AgentType `json:"agent_type,omitempty"`
 

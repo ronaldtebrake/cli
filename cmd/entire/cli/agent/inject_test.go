@@ -52,6 +52,7 @@ func TestRenderAdditionalContextHookOutput_EmptyTextRendersNothing(t *testing.T)
 type injectorStub struct{ Agent }
 
 func (injectorStub) InjectionEvent() EventType { return TurnStart }
+
 //nolint:unparam // signature is dictated by the ContextInjector interface
 func (injectorStub) RenderContextInjection(ContextInjection) ([]byte, error) {
 	return []byte("x"), nil

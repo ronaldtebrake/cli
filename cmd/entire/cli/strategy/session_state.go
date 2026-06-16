@@ -373,35 +373,6 @@ func ClaimSessionStartBanner(ctx context.Context, sessionID string) (claimed boo
 	return true, nil
 }
 
-// ClaimContextInjection records that Entire's model-facing context injection
-// has been emitted for a session, so the injection happens at most once per
-// session. First-writer-wins, mirroring ClaimSessionStartBanner (and cleaned up
-// by ClearSessionState, which removes every "<sessionID>." file).
-//
-// Returns (claimed=true) when this call won the race and the caller should emit
-// the injection; (claimed=false) when an earlier call already claimed it.
-func ClaimContextInjection(ctx context.Context, sessionID string) (claimed bool, err error) {
-	if vErr := validation.ValidateSessionID(sessionID); vErr != nil {
-		return false, fmt.Errorf("invalid session ID: %w", vErr)
-	}
-
-	root, rErr := openSessionStateRoot(ctx)
-	if rErr != nil {
-		return false, rErr
-	}
-	defer root.Close()
-
-	f, oErr := root.OpenFile(sessionID+".injected", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if oErr != nil {
-		if errors.Is(oErr, os.ErrExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to create injection marker file: %w", oErr)
-	}
-	_ = f.Close()
-	return true, nil
-}
-
 // LoadAgentTypeHint reads the agent type hint written by SessionStart.
 // Returns empty string if the hint file doesn't exist, can't be read, or the
 // value isn't a registered agent type.
