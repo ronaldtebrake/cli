@@ -783,3 +783,67 @@ func TestReviewRunModelMatches(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThinking
+// pins the used-session tracking: two inspectors on the same agent whose models
+// normalize identically (claude-sonnet:high / :low -> claude-sonnet), with
+// sessions that start in the same second, must still link to distinct sessions
+// rather than both grabbing the most recent match.
+func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThinking(t *testing.T) {
+	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
+	summary := reviewtypes.RunSummary{
+		StartedAt: started,
+		AgentRuns: []reviewtypes.AgentRun{
+			{
+				Name:      "claude-code",
+				AgentName: "claude-code",
+				Model:     "claude-sonnet:high",
+				Status:    reviewtypes.AgentStatusSucceeded,
+				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "high finding"}},
+			},
+			{
+				Name:      "claude-code",
+				AgentName: "claude-code",
+				Model:     "claude-sonnet:low",
+				Status:    reviewtypes.AgentStatusSucceeded,
+				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "low finding"}},
+			},
+		},
+	}
+	// Both sessions resolve to the same model and start in the same second, so
+	// only used-session tracking can keep the two workers on distinct sessions.
+	sameStart := started.Add(time.Second)
+	states := []*session.State{
+		{
+			SessionID:    "sess-1",
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    sameStart,
+			AgentType:    agenttypes.AgentType("Claude Code"),
+			ModelName:    "claude-sonnet-4-5",
+		},
+		{
+			SessionID:    "sess-2",
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    sameStart,
+			AgentType:    agenttypes.AgentType("Claude Code"),
+			ModelName:    "claude-sonnet-4-5",
+		},
+	}
+
+	manifest := buildLocalReviewManifestFromSummary("/repo", "abc123", summary, states, "")
+
+	if len(manifest.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2 (each inspector linked to a session)", len(manifest.Sources))
+	}
+	a, b := manifest.Sources[0].SessionID, manifest.Sources[1].SessionID
+	if a == b {
+		t.Fatalf("both inspectors linked to the same session %q; used-session tracking must keep them distinct", a)
+	}
+	if !(a == "sess-1" || a == "sess-2") || !(b == "sess-1" || b == "sess-2") {
+		t.Errorf("sessions = {%q, %q}, want the two distinct sessions sess-1 and sess-2", a, b)
+	}
+}
