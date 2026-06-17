@@ -147,6 +147,34 @@ func TestResolveTrailRemote_RejectsUnsupportedForge(t *testing.T) {
 	}
 }
 
+// TestTrailsEnabledForRepo_ReadsClonePreference verifies the prompt-path gate
+// is a local clone-preference read only. The API enablement decision itself
+// (2xx => enabled) is covered by api.TestClient_TrailsEnabled.
+//
+// Not parallel: uses t.Chdir() to point clone preferences at a fake repo.
+func TestTrailsEnabledForRepo_ReadsClonePreference(t *testing.T) {
+	repoDir := t.TempDir()
+	testutil.InitRepo(t, repoDir)
+	t.Chdir(repoDir)
+	ctx := context.Background()
+
+	if trailsEnabledForRepo(ctx) {
+		t.Fatal("expected trails disabled when cache is absent")
+	}
+	if err := saveTrailsEnabledForRepo(ctx, false); err != nil {
+		t.Fatalf("save false cache: %v", err)
+	}
+	if trailsEnabledForRepo(ctx) {
+		t.Fatal("expected trails disabled when cache is false")
+	}
+	if err := saveTrailsEnabledForRepo(ctx, true); err != nil {
+		t.Fatalf("save true cache: %v", err)
+	}
+	if !trailsEnabledForRepo(ctx) {
+		t.Fatal("expected trails enabled when cache is true")
+	}
+}
+
 func TestTrailWatchDescription(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
