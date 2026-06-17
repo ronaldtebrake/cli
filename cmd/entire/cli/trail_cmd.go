@@ -645,11 +645,22 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 	}
 
 	if needsCreation {
+		// needsCreation is a local-only signal, so the branch may still exist on
+		// origin (e.g. a teammate pushed it and we never fetched). In that case the
+		// remote branch is not ours, and our push may merely fast-forward it; we
+		// must not delete it during cleanup. Only treat the remote branch as
+		// created-by-us when it did not already exist before our push.
+		existedOnOrigin, existErr := branchExistsOnOrigin(branch)
+		if existErr != nil {
+			// Be conservative: if we cannot tell, do not delete the remote branch.
+			fmt.Fprintf(errW, "Warning: could not check whether branch %s already exists on origin: %v\n", branch, existErr)
+			existedOnOrigin = true
+		}
 		if err := pushBranchToOrigin(branch); err != nil {
 			cleanupCreatedTrailBranch(repo, branch, localBranchCreated, false, errW)
 			return fmt.Errorf("failed to push branch %q: %w", branch, err)
 		}
-		remoteBranchPushed = true
+		remoteBranchPushed = !existedOnOrigin
 		fmt.Fprintf(w, "Pushed branch %s to origin\n", branch)
 	}
 
@@ -1208,6 +1219,20 @@ func pushBranchToOrigin(branchName string) error {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// branchExistsOnOrigin reports whether origin already has a branch with the
+// given name, so callers can avoid treating a pre-existing remote branch as one
+// they created.
+func branchExistsOnOrigin(branchName string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", "origin", branchName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return strings.TrimSpace(string(output)) != "", nil
 }
 
 func deleteBranchFromOrigin(branchName string) error {
