@@ -42,22 +42,14 @@ func buildReviewDeps() cliReview.Deps {
 // destination. It lives in the cli package because the data API client and
 // auth flow do.
 func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict string) error {
-	verdict = strings.TrimSpace(verdict)
-	if verdict == "" {
+	if strings.TrimSpace(verdict) == "" {
 		return errors.New("no review output to post")
 	}
-	body := verdict
-	if p := strings.TrimSpace(profileName); p != "" {
-		body = fmt.Sprintf("Review verdict (profile: %s)\n\n%s", p, verdict)
-	}
+	input := reviewTrailFindingInput(profileName, verdict)
 	return runAuthenticatedDataAPI(ctx, out, false, func(ctx context.Context, client *api.Client) error {
 		target, err := resolveTrailReviewTarget(ctx, client, "")
 		if err != nil {
 			return err
-		}
-		input := api.TrailReviewCommentInput{
-			ClientID: generateTrailReviewClientID(),
-			Body:     stringPtr(body),
 		}
 		if _, err := createTrailReviewFinding(ctx, client, target.Trail.ID, input); err != nil {
 			return err
@@ -72,6 +64,21 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 		}
 		return nil
 	})
+}
+
+// reviewTrailFindingInput builds the trail finding payload for a review verdict.
+// The verdict spans the whole change, so it uses "whole_change" granularity: the
+// API requires a valid granularity and rejects a zero/empty value with a 400.
+func reviewTrailFindingInput(profileName, verdict string) api.TrailReviewCommentInput {
+	body := strings.TrimSpace(verdict)
+	if p := strings.TrimSpace(profileName); p != "" {
+		body = fmt.Sprintf("Review verdict (profile: %s)\n\n%s", p, body)
+	}
+	return api.TrailReviewCommentInput{
+		ClientID: generateTrailReviewClientID(),
+		Body:     stringPtr(body),
+		Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"},
+	}
 }
 
 // trailWebURL builds the browser URL for a trail, matching the server's
