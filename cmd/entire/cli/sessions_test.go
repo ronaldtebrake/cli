@@ -1239,6 +1239,61 @@ func reportHasSessionRecommendation(report sessionTokensReport, id string) bool 
 	return false
 }
 
+func TestRecommendationRules_CacheWritePressure(t *testing.T) {
+	t.Parallel()
+
+	recs := recommendationRules(tokenRecommendationSignals{
+		Tokens: &sessionTokensUsage{
+			Total:      50_000,
+			CacheWrite: 6_000,
+		},
+	})
+
+	if !recommendationsIncludeID(recs, "cache-write-pressure") {
+		t.Fatalf("expected cache-write-pressure recommendation, got %+v", recs)
+	}
+}
+
+func TestRecommendationRules_OutputPressure(t *testing.T) {
+	t.Parallel()
+
+	recs := recommendationRules(tokenRecommendationSignals{
+		Tokens: &sessionTokensUsage{
+			Total:  100_000,
+			Output: 3_500,
+		},
+	})
+
+	if !recommendationsIncludeID(recs, "output-pressure") {
+		t.Fatalf("expected output-pressure recommendation, got %+v", recs)
+	}
+}
+
+func TestRecommendationRules_OutputPressureWithLargeCacheReplay(t *testing.T) {
+	t.Parallel()
+
+	recs := recommendationRules(tokenRecommendationSignals{
+		Tokens: &sessionTokensUsage{
+			Total:     10_000_000,
+			CacheRead: 9_800_000,
+			Output:    100_000,
+		},
+	})
+
+	if !recommendationsIncludeID(recs, "output-pressure") {
+		t.Fatalf("expected output-pressure recommendation for high absolute output, got %+v", recs)
+	}
+}
+
+func recommendationsIncludeID(recs []sessionTokensRecommendation, id string) bool {
+	for _, rec := range recs {
+		if rec.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTokensCmd_AgentBriefPrioritizesNextAction(t *testing.T) {
 	setupStopTestRepo(t)
 
@@ -1272,10 +1327,13 @@ func TestTokensCmd_AgentBriefPrioritizesNextAction(t *testing.T) {
 		"Session: test-tokens-brief",
 		"Token usage: 6213.6k total; 97.4% cache/context replay; 70 API calls.",
 		"Next best action:",
-		"Summarize the useful findings, then batch the next diagnostic step.",
+		"Use at most 3 batched reads before answering.",
+		"Avoid broad grep, broad diffs, broad tests, and repeated token diagnostics; keep the answer tight.",
 		"Signals:",
 		"- Cache/context replay dominates token volume.",
 		"- API call count is high for one session.",
+		"- Cache write/new context pressure is elevated.",
+		"- Output pressure is elevated.",
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
@@ -1338,7 +1396,8 @@ func TestTokensCmd_AgentBriefHighCacheReplayWithoutHighAPICalls(t *testing.T) {
 	out := stdout.String()
 	checks := []string{
 		"Token usage: 637.7k total; 95.5% cache/context replay; 3 API calls.",
-		"Summarize the current useful findings before continuing, and keep the next prompt narrow.",
+		"Use at most 2 focused reads after summarizing known findings, then answer.",
+		"Avoid broad grep, broad diffs, and broad tests.",
 		"- Cache/context replay dominates token volume.",
 	}
 	for _, check := range checks {
@@ -1379,7 +1438,8 @@ func TestTokensCmd_AgentBriefHighAPICallsWithoutCacheReplay(t *testing.T) {
 	out := stdout.String()
 	checks := []string{
 		"Token usage: 11k total; 25 API calls.",
-		"Batch the next diagnostic step around one narrowed hypothesis before making more tool calls.",
+		"Use at most 3 batched reads before answering.",
+		"Avoid broad grep, broad diffs, broad tests, and repeated token diagnostics; keep the answer tight.",
 		"- API call count is high for one session.",
 	}
 	for _, check := range checks {
@@ -1424,6 +1484,110 @@ func TestTokensCmd_AgentBriefNoTokenData(t *testing.T) {
 		"Signals:",
 		"- Token usage is unavailable for this session.",
 		"- Context pressure is high.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+}
+
+func TestSessionTokensAgentBriefClassAwareCostProxy(t *testing.T) {
+	t.Parallel()
+
+	tokens := &sessionTokensUsage{
+		Total:      50_000,
+		CacheWrite: 6_000,
+		Output:     3_500,
+		APICalls:   4,
+	}
+	report := sessionTokensReport{
+		SessionID:       "test-cost-proxy-brief",
+		Tokens:          tokens,
+		Recommendations: recommendationRules(tokenRecommendationSignals{Tokens: tokens}),
+	}
+
+	var stdout bytes.Buffer
+	writeSessionTokensAgentBrief(&stdout, report)
+
+	out := stdout.String()
+	checks := []string{
+		"Session token brief",
+		"Session: test-cost-proxy-brief",
+		"Use at most 3 batched reads",
+		"Avoid broad grep, broad diffs, broad tests",
+		"keep the answer tight",
+		"- Cache write/new context pressure is elevated.",
+		"- Output pressure is elevated.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+}
+
+func TestCheckpointTokensAgentBriefClassAwareCostProxy(t *testing.T) {
+	t.Parallel()
+
+	tokens := &sessionTokensUsage{
+		Total:      50_000,
+		CacheWrite: 6_000,
+		Output:     3_500,
+		APICalls:   4,
+	}
+	report := checkpointTokensReport{
+		CheckpointID:    "c05e500cafe0",
+		Tokens:          tokens,
+		Recommendations: recommendationRules(tokenRecommendationSignals{Tokens: tokens}),
+	}
+
+	var stdout bytes.Buffer
+	writeCheckpointTokensAgentBrief(&stdout, report)
+
+	out := stdout.String()
+	checks := []string{
+		"Checkpoint token brief",
+		"Checkpoint: c05e500cafe0",
+		"Use at most 3 batched reads",
+		"Avoid broad grep, broad diffs, broad tests",
+		"keep the answer tight",
+		"- Cache write/new context pressure is elevated.",
+		"- Output pressure is elevated.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+}
+
+func TestCheckpointTokensAgentBriefCombinesOutputAndReplayPressure(t *testing.T) {
+	t.Parallel()
+
+	tokens := &sessionTokensUsage{
+		Total:     10_000_000,
+		CacheRead: 9_800_000,
+		Output:    100_000,
+		APICalls:  25,
+	}
+	report := checkpointTokensReport{
+		CheckpointID:    "c05e501cafe0",
+		Tokens:          tokens,
+		Recommendations: recommendationRules(tokenRecommendationSignals{Tokens: tokens}),
+	}
+
+	var stdout bytes.Buffer
+	writeCheckpointTokensAgentBrief(&stdout, report)
+
+	out := stdout.String()
+	checks := []string{
+		"Use at most 3 batched reads",
+		"Avoid broad grep, broad diffs, broad tests",
+		"keep the answer tight",
+		"- Cache/context replay dominates token volume.",
+		"- API call count is high for one session.",
+		"- Output pressure is elevated.",
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
@@ -1521,6 +1685,21 @@ func TestTokensCmd_JSONAndAgentBriefAreMutuallyExclusive(t *testing.T) {
 
 	cmd := newTokensCmd()
 	cmd.SetArgs([]string{"test-session", "--json", "--agent-brief"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error for --json with --agent-brief")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+}
+
+func TestCheckpointTokensCmd_JSONAndAgentBriefAreMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+
+	cmd := newCheckpointGroupCmd()
+	cmd.SetArgs([]string{"tokens", "abc123", "--json", "--agent-brief"})
 
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil {
@@ -1739,6 +1918,96 @@ func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {
 	}
 	if tokenUsageIndex > recommendationsIndex {
 		t.Fatalf("expected token usage before recommendations, got:\n%s", out)
+	}
+}
+
+func TestCheckpointTokensCmd_AgentBriefGivesOperationalBudget(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("b1efbeefcafe")
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "checkpoint-token-brief",
+		Strategy:     strategy.StrategyNameManualCommit,
+		Branch:       "e2e-triage-fix",
+		Agent:        testAgentClaude,
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"why is slack failing"}]}}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+		TokenUsage: &agent.TokenUsage{
+			InputTokens:         94,
+			CacheCreationTokens: 122171,
+			CacheReadTokens:     6052424,
+			OutputTokens:        38956,
+			APICallCount:        70,
+		},
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	cmd := newCheckpointGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"tokens", "b1efbeef", "--agent-brief"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := stdout.String()
+	checks := []string{
+		"Checkpoint token brief",
+		"Checkpoint: b1efbeefcafe",
+		"Token usage: 6213.6k total; 97.4% cache/context replay; 70 API calls.",
+		"Next best action:",
+		"Use at most 3 batched reads before answering.",
+		"Avoid broad grep, broad diffs, broad tests, and repeated token diagnostics; keep the answer tight.",
+		"Signals:",
+		"- Cache/context replay dominates token volume.",
+		"- API call count is high for one session.",
+		"- Cache write/new context pressure is elevated.",
+		"- Output pressure is elevated.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
+	}
+	for _, verboseSection := range []string{"Recommendations", "Likely contributors", "Limitations"} {
+		if strings.Contains(out, verboseSection) {
+			t.Fatalf("expected agent brief to omit %s section, got:\n%s", verboseSection, out)
+		}
+	}
+}
+
+func TestCheckpointTokensCmd_AgentBriefMissingTokenData(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+	cpID := id.MustCheckpointID("deadcafebeef")
+	writeCommittedTokenCheckpoint(ctx, t, store, cpID, "checkpoint-token-missing-brief", nil)
+
+	cmd := newCheckpointGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"tokens", "deadcafe", "--agent-brief"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := stdout.String()
+	checks := []string{
+		"Checkpoint token brief",
+		"Checkpoint: deadcafebeef",
+		"Token usage: unavailable.",
+		"Do not spend extra commands on token optimization for this checkpoint.",
+		"- Token usage is unavailable for this session.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("expected %q in output, got:\n%s", check, out)
+		}
 	}
 }
 
@@ -2049,6 +2318,7 @@ func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 			InputTokens:         200_000,
 			CacheCreationTokens: 50_000,
 			CacheReadTokens:     750_000,
+			OutputTokens:        10_000,
 			APICallCount:        10,
 		},
 	}); err != nil {
@@ -2065,8 +2335,9 @@ func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 		AuthorEmail:  "test@example.com",
 		TokenUsage: &agent.TokenUsage{
 			InputTokens:         150_000,
-			CacheCreationTokens: 50_000,
+			CacheCreationTokens: 25_000,
 			CacheReadTokens:     300_000,
+			OutputTokens:        25_000,
 			APICallCount:        4,
 		},
 	}); err != nil {
@@ -2091,12 +2362,16 @@ func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 		"Comparison",
 		"Baseline: aaa111bbb222",
 		"Caveat: Total tokens include cache/context replay; use the cache/context replay delta below before treating total direction as work saved or added.",
-		"Total tokens: down 50% (1000k -> 500k)",
+		"Total tokens: down 50.5% (1010k -> 500k)",
+		"Input: down 25% (200k -> 150k)",
 		"Cache/context replay: down 60% (750k -> 300k)",
+		"Cache write: down 50% (50k -> 25k)",
+		"Output: up 150% (10k -> 25k)",
 		"API calls: down 60% (10 -> 4)",
 		"Qualification",
 		"Observed total token use decreased for this checkpoint comparison.",
 		"This does not prove quality was preserved",
+		"Cost-proxy pressure increased for output",
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
@@ -2121,10 +2396,11 @@ func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 		TokenUsage: &agent.TokenUsage{
-			InputTokens:     100,
-			CacheReadTokens: 300,
-			OutputTokens:    100,
-			APICallCount:    5,
+			InputTokens:         100,
+			CacheCreationTokens: 50,
+			CacheReadTokens:     300,
+			OutputTokens:        100,
+			APICallCount:        5,
 		},
 	}); err != nil {
 		t.Fatalf("WriteCommitted() baseline error = %v", err)
@@ -2138,10 +2414,11 @@ func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 		TokenUsage: &agent.TokenUsage{
-			InputTokens:     120,
-			CacheReadTokens: 480,
-			OutputTokens:    200,
-			APICallCount:    8,
+			InputTokens:         120,
+			CacheCreationTokens: 80,
+			CacheReadTokens:     480,
+			OutputTokens:        200,
+			APICallCount:        8,
 		},
 	}); err != nil {
 		t.Fatalf("WriteCommitted() current error = %v", err)
@@ -2175,11 +2452,11 @@ func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 	if result.Comparison.Total == nil {
 		t.Fatalf("expected total delta, got nil")
 	}
-	if result.Comparison.Total.Baseline != 500 || result.Comparison.Total.Current != 800 {
+	if result.Comparison.Total.Baseline != 550 || result.Comparison.Total.Current != 880 {
 		t.Fatalf("unexpected total delta: %+v", result.Comparison.Total)
 	}
-	if result.Comparison.Total.Change != 300 {
-		t.Fatalf("expected total change 300, got %+v", result.Comparison.Total)
+	if result.Comparison.Total.Change != 330 {
+		t.Fatalf("expected total change 330, got %+v", result.Comparison.Total)
 	}
 	if result.Comparison.Total.Direction != checkpointDeltaDirectionUp {
 		t.Fatalf("expected total direction up, got %+v", result.Comparison.Total)
@@ -2189,6 +2466,65 @@ func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 	}
 	if result.Comparison.CacheReadCaveat == "" {
 		t.Fatalf("expected cache read caveat, got %+v", result.Comparison)
+	}
+	if result.Comparison.Input == nil || result.Comparison.Input.Change != 20 {
+		t.Fatalf("expected input change 20, got %+v", result.Comparison.Input)
+	}
+	if result.Comparison.CacheWrite == nil || result.Comparison.CacheWrite.Change != 30 {
+		t.Fatalf("expected cache write change 30, got %+v", result.Comparison.CacheWrite)
+	}
+	if result.Comparison.Output == nil || result.Comparison.Output.Change != 100 {
+		t.Fatalf("expected output change 100, got %+v", result.Comparison.Output)
+	}
+}
+
+func TestCheckpointTokensCmd_JSONComparisonQualifiesCostProxyPressure(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+	baselineID := id.MustCheckpointID("c0a111c0a111")
+	currentID := id.MustCheckpointID("c0a222c0a222")
+
+	writeCommittedTokenCheckpoint(ctx, t, store, baselineID, "checkpoint-token-cost-proxy-baseline", &agent.TokenUsage{
+		InputTokens:     100_000,
+		CacheReadTokens: 100_000,
+		APICallCount:    6,
+	})
+	writeCommittedTokenCheckpoint(ctx, t, store, currentID, "checkpoint-token-cost-proxy-current", &agent.TokenUsage{
+		InputTokens:         50_000,
+		CacheCreationTokens: 30_000,
+		OutputTokens:        30_000,
+		APICallCount:        4,
+	})
+
+	cmd := newCheckpointGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"tokens", "c0a222", "--compare", "c0a111", "--json"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	var result checkpointTokensReport
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected valid JSON, got parse error: %v\noutput: %s", err, stdout.String())
+	}
+	if result.Comparison == nil {
+		t.Fatalf("expected comparison, got nil")
+	}
+	if result.Comparison.Status != checkpointComparisonStatusObservedReduction {
+		t.Fatalf("expected observed reduction, got %q", result.Comparison.Status)
+	}
+	checks := []string{
+		"Cost-proxy pressure increased",
+		"cache write",
+		"output",
+	}
+	for _, check := range checks {
+		if !strings.Contains(result.Comparison.Qualification, check) {
+			t.Fatalf("expected %q in qualification, got %q", check, result.Comparison.Qualification)
+		}
 	}
 }
 
