@@ -598,3 +598,29 @@ func (s *liveTokenSink) AgentEvent(agent string, ev reviewtypes.Event) {
 func (s *liveTokenSink) RunFinished(reviewtypes.RunSummary) {
 	s.finished <- struct{}{}
 }
+
+// TestRunMulti_FallsBackToConfigModel verifies that when a reviewer carries no
+// model metadata (does not implement reviewerRunMetadata), RunMulti falls back
+// to the run config's model — mirroring Run — so session-to-manifest matching
+// still sees the model that was actually requested.
+func TestRunMulti_FallsBackToConfigModel(t *testing.T) {
+	t.Parallel()
+	ra := &stubReviewer{name: "agent-a", events: []reviewtypes.Event{
+		reviewtypes.Started{},
+		reviewtypes.AssistantText{Text: "a"},
+		reviewtypes.Finished{Success: true},
+	}}
+	rec := &stubSinkRecorder{}
+	cfg := reviewtypes.RunConfig{Model: "claude-sonnet-4-5"}
+
+	summary, err := RunMulti(context.Background(), []reviewtypes.AgentReviewer{ra}, cfg, []reviewtypes.Sink{rec})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	if got := summary.AgentRuns[0].Model; got != "claude-sonnet-4-5" {
+		t.Errorf("AgentRun.Model = %q, want fallback to cfg.Model %q", got, "claude-sonnet-4-5")
+	}
+}

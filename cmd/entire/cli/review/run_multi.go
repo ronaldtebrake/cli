@@ -110,10 +110,17 @@ func RunMulti(
 
 	states := make([]*perAgentState, len(reviewers))
 	for i, r := range reviewers {
+		// Mirror Run's fallback: when a reviewer carries no model metadata, use
+		// the run config's model so session-to-manifest matching still sees the
+		// model that was actually requested.
+		model := reviewerModelName(r)
+		if model == "" {
+			model = cfg.Model
+		}
 		states[i] = &perAgentState{
 			name:      r.Name(),
 			agentName: reviewerActualAgentName(r),
-			model:     reviewerModelName(r),
+			model:     model,
 			startedAt: time.Now(),
 		}
 	}
