@@ -447,12 +447,18 @@ func reviewRunModelMatches(want, got string) bool {
 }
 
 // modelComponentsMatch reports whether the shorter component list `short`
-// identifies the same model as the longer `long`: `short` must appear as a
-// contiguous run of whole components in `long`, and the component immediately
-// after that run must be purely numeric (a version or date). Requiring a
-// numeric boundary is what lets "sonnet"/"claude-sonnet" match
+// identifies the same model as the strictly longer `long`: `short` must appear
+// as a contiguous run of whole components in `long`, and the component
+// immediately after that run must be purely numeric (a version or date).
+// Requiring a numeric boundary is what lets "sonnet"/"claude-sonnet" match
 // "claude-sonnet-4-5" while rejecting variant suffixes like "gpt-4o-mini" and
 // bare version fragments like "4-5".
+//
+// Equal-length cases are intentionally rejected here (`len(short) >= len(long)`):
+// identical ids already returned true via reviewRunModelMatches's `want == got`
+// short-circuit before this helper runs, and two *distinct* equal-length ids
+// (e.g. "claude-sonnet" vs "claude-opus") are different models that must not
+// match. Legitimate matches are always strict subsets, so `short` is shorter.
 func modelComponentsMatch(short, long []string) bool {
 	if len(short) == 0 || len(short) >= len(long) {
 		return false

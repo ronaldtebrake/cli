@@ -773,6 +773,12 @@ func TestReviewRunModelMatches(t *testing.T) {
 		{"version fragment does not match", "4-5", "claude-sonnet-4-5", false},
 		{"different families do not match", "gpt-4o-mini", "claude-sonnet-4-5", false},
 		{"opus does not match sonnet", "opus", "claude-sonnet-4-5", false},
+		// Identical ids match regardless of component count (via the want==got
+		// short-circuit), but two distinct equal-length ids must not.
+		{"identical multi-component ids match", "claude-sonnet-4-5", "claude-sonnet-4-5", true},
+		{"thinking-suffix-only difference matches", "claude-sonnet:high", "claude-sonnet:low", true},
+		{"equal-length different family does not match", "claude-sonnet", "claude-opus", false},
+		{"equal-length different version does not match", "claude-sonnet-4", "claude-sonnet-5", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

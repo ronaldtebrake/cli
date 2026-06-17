@@ -591,3 +591,36 @@ func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
 		t.Errorf("fast status = %v, want Succeeded", byName["fast"].Status)
 	}
 }
+
+// TestRun_ParentCancelIsNotTimeout pins the timeout-vs-cancel distinction: when
+// the parent context is cancelled (user Ctrl+C) before an inspector's deadline
+// can fire, the inspector is classified Cancelled, not failed-by-timeout. The
+// detection reads only the agent context, whose Err() is immutable once set.
+func TestRun_ParentCancelIsNotTimeout(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the (1h) inspector deadline can elapse
+	rec := &stubSinkRecorder{}
+	summary, err := Run(
+		ctx,
+		&ctxReviewer{name: "claude-code"},
+		reviewtypes.RunConfig{InspectorTimeout: time.Hour},
+		[]reviewtypes.Sink{rec},
+	)
+	if err != nil && strings.Contains(err.Error(), "timed out") {
+		t.Errorf("returned err = %v, must not be a timeout for a parent cancel", err)
+	}
+	if !summary.Cancelled {
+		t.Error("expected Cancelled=true for a parent-cancelled run")
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusCancelled {
+		t.Errorf("status = %v, want Cancelled", run.Status)
+	}
+	if run.Err != nil && strings.Contains(run.Err.Error(), "timed out") {
+		t.Errorf("err = %v, must not be a timeout for a parent cancel", run.Err)
+	}
+}

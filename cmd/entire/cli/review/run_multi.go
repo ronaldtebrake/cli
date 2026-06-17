@@ -156,10 +156,12 @@ func RunMulti(
 			finishedAt := time.Now()
 			states[idx].waitErr = waitErr
 			states[idx].finishedAt = finishedAt
-			// A per-inspector timeout fired iff this agent's deadline elapsed
-			// while the parent run context is still live (a parent cancellation
-			// is a user Ctrl+C, classified as Cancelled).
-			states[idx].timedOut = ac.Err() == context.DeadlineExceeded && ctx.Err() == nil
+			// ac.Err() is immutable once set, so DeadlineExceeded means THIS
+			// agent's deadline fired first; a parent cancellation (user Ctrl+C)
+			// propagates as Canceled instead. Reading only ac is race-free —
+			// also sampling the parent ctx could change between the two reads and
+			// misclassify a real timeout as a cancellation.
+			states[idx].timedOut = ac.Err() == context.DeadlineExceeded
 			if shouldEmitSyntheticRunError(ctx, waitErr) {
 				fanIn <- taggedEvent{agentIdx: idx, ev: reviewtypes.RunError{Err: waitErr}}
 			}

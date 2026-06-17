@@ -74,6 +74,9 @@ func Run(
 
 	// Bound the inspector so a stuck agent can't hang the review forever. The
 	// deadline applies only to this agent; cancellation kills its process.
+	// defer runs at function return (after proc.Wait below), so agentCtx stays
+	// live for the whole run; deferring here — not after Start — also releases
+	// the timer on the Start-error path instead of leaking it.
 	timeout := inspectorTimeout(cfg)
 	agentCtx, cancelAgent := context.WithTimeout(ctx, timeout)
 	defer cancelAgent()
@@ -133,10 +136,12 @@ func Run(
 
 	waitErr := proc.Wait()
 	finished := time.Now()
-	// A per-inspector timeout fired iff this agent's deadline elapsed while the
-	// parent run context is still live (a parent cancellation is a user Ctrl+C,
-	// classified as Cancelled instead).
-	timedOut := agentCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil
+	// agentCtx.Err() is immutable once set, so DeadlineExceeded means this
+	// inspector's own deadline fired first; a parent cancellation (user Ctrl+C)
+	// propagates as Canceled instead. Reading only agentCtx is therefore
+	// race-free — no need to also sample the parent ctx, which could change
+	// between the two reads and misclassify a real timeout.
+	timedOut := agentCtx.Err() == context.DeadlineExceeded
 	if shouldEmitSyntheticRunError(ctx, waitErr) {
 		synthEvent := reviewtypes.RunError{Err: waitErr}
 		buffer = append(buffer, synthEvent)
