@@ -883,30 +883,38 @@ func FlattenTree(repo *git.Repository, tree *object.Tree, prefix string, entries
 
 // fileExists checks if a file exists at the given path.
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Lstat(path)
 	return err == nil
 }
 
 // createBlobFromFile creates a blob object from a file in the working directory.
 func createBlobFromFile(repo *git.Repository, filePath string) (plumbing.Hash, filemode.FileMode, error) {
-	info, err := os.Stat(filePath)
+	info, err := os.Lstat(filePath)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	// Determine file mode
 	mode := filemode.Regular
-	if info.Mode()&0o111 != 0 {
-		mode = filemode.Executable
-	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		mode = filemode.Symlink
+	} else if info.Mode()&0o111 != 0 {
+		mode = filemode.Executable
 	}
 
 	// Read file contents
-	content, err := os.ReadFile(filePath) //nolint:gosec // filePath comes from walking the repository
-	if err != nil {
-		return plumbing.ZeroHash, 0, fmt.Errorf("failed to read file: %w", err)
+	var content []byte
+	if mode == filemode.Symlink {
+		target, readErr := os.Readlink(filePath)
+		if readErr != nil {
+			return plumbing.ZeroHash, 0, fmt.Errorf("failed to read symlink: %w", readErr)
+		}
+		content = []byte(target)
+	} else {
+		content, err = os.ReadFile(filePath) //nolint:gosec // filePath comes from walking the repository
+		if err != nil {
+			return plumbing.ZeroHash, 0, fmt.Errorf("failed to read file: %w", err)
+		}
 	}
 
 	// Create blob object
@@ -971,8 +979,8 @@ func addDirectoryToEntriesWithAbsPath(repo *git.Repository, dirPathAbs, dirPathR
 			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
 		}
 
-		// Prevent path traversal via symlinks pointing outside the metadata dir
-		if strings.HasPrefix(relWithinDir, "..") {
+		// Prevent path traversal via unexpected relative paths outside the metadata dir.
+		if paths.IsRelativeTraversal(relWithinDir) {
 			return fmt.Errorf("path traversal detected: %s", relWithinDir)
 		}
 
@@ -1033,7 +1041,7 @@ func addDirectoryToChanges(repo *git.Repository, dirPathAbs, dirPathRel string) 
 		if relErr != nil {
 			return fmt.Errorf("failed to get relative path for %s: %w", path, relErr)
 		}
-		if strings.HasPrefix(relWithinDir, "..") {
+		if paths.IsRelativeTraversal(relWithinDir) {
 			return fmt.Errorf("path traversal detected: %s", relWithinDir)
 		}
 

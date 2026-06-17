@@ -72,10 +72,6 @@ func NewRepoTokenSource(ctx context.Context, clusterHost string) (*RepoTokenSour
 		return nil, errors.New("repo-scoped token exchange requires a target cluster host")
 	}
 
-	// Bridge any pre-contexts.json login so the resolver can match it.
-	// Best-effort: a migration failure must not block resolution.
-	_, _ = MigrateLegacyLoginContext() //nolint:errcheck // best-effort bridge; resolution proceeds regardless
-
 	httpClient := &http.Client{Timeout: repoExchangeTimeout, Transport: repoExchangeTransportForTest}
 	clusterCtx, err := resolveContextForCluster(ctx, userdirs.Config(), userdirs.Cache(), clusterHost, httpClient, nil)
 	if err != nil {

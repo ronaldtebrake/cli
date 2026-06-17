@@ -1,8 +1,7 @@
-package auth
+package tokenstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -36,21 +35,18 @@ func keyringTimeout() time.Duration {
 	return d
 }
 
-// newKeyringContext returns a context that cancels after the configured
-// keyring timeout. Callers must invoke the returned cancel to release
-// the timer regardless of which select branch wins.
-func newKeyringContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), keyringTimeout())
-}
+// callKeyringWithTimeout runs fn in a goroutine and returns its result,
+// or a descriptive error if the configured keyring timeout elapses
+// first. The goroutine continues running — a blocked D-Bus syscall
+// can't be cancelled from Go — and its eventual result is discarded.
+// The buffered result channel keeps the goroutine from leaking forever
+// waiting to publish into a receiver that's already gone. fn's own
+// error (including ErrNotFound) propagates unchanged on the fast path;
+// only the timeout branch wraps.
+func callKeyringWithTimeout(op string, fn func() (string, error)) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), keyringTimeout())
+	defer cancel()
 
-// callKeyringWithContext runs fn in a goroutine and returns its result,
-// or a descriptive error if ctx is cancelled (e.g. its deadline
-// elapses) first. The goroutine continues running — a blocked D-Bus
-// syscall can't be cancelled from Go — and its eventual result is
-// discarded. The buffered result channel keeps the goroutine from
-// leaking forever waiting to publish into a receiver that's already
-// gone.
-func callKeyringWithContext(ctx context.Context, op string, fn func() (string, error)) (string, error) {
 	type result struct {
 		val string
 		err error
@@ -64,13 +60,10 @@ func callKeyringWithContext(ctx context.Context, op string, fn func() (string, e
 	case r := <-ch:
 		return r.val, r.err
 	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf(
-				"%s timed out: OS keyring (%s) appears unavailable; set %s to a longer duration to wait further: %w",
-				op, keyringProviderName(), keyringTimeoutEnvVar, ctx.Err(),
-			)
-		}
-		return "", fmt.Errorf("%s cancelled: %w", op, ctx.Err())
+		return "", fmt.Errorf(
+			"%s timed out: OS keyring (%s) appears unavailable; set %s to a longer duration to wait further: %w",
+			op, keyringProviderName(), keyringTimeoutEnvVar, ctx.Err(),
+		)
 	}
 }
 

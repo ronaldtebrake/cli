@@ -1,4 +1,4 @@
-package auth
+package tokenstore
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-func TestCallKeyringWithContext_ReturnsValueWhenFast(t *testing.T) {
+func TestCallKeyringWithTimeout_ReturnsValueWhenFast(t *testing.T) {
 	t.Parallel()
 
-	got, err := callKeyringWithContext(context.Background(), "get", func() (string, error) {
+	got, err := callKeyringWithTimeout("get", func() (string, error) {
 		return "token", nil
 	})
 	if err != nil {
@@ -22,11 +22,11 @@ func TestCallKeyringWithContext_ReturnsValueWhenFast(t *testing.T) {
 	}
 }
 
-func TestCallKeyringWithContext_PropagatesInnerError(t *testing.T) {
+func TestCallKeyringWithTimeout_PropagatesInnerError(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("backend exploded")
-	_, err := callKeyringWithContext(context.Background(), "get", func() (string, error) {
+	_, err := callKeyringWithTimeout("get", func() (string, error) {
 		return "", sentinel
 	})
 	if !errors.Is(err, sentinel) {
@@ -34,14 +34,25 @@ func TestCallKeyringWithContext_PropagatesInnerError(t *testing.T) {
 	}
 }
 
-func TestCallKeyringWithContext_DeadlineExceeded(t *testing.T) {
+// A missing-credential error must reach the caller unchanged so the
+// errors.Is(err, ErrNotFound) checks scattered through the auth package
+// keep working through the timeout wrapper.
+func TestCallKeyringWithTimeout_PropagatesNotFound(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	_, err := callKeyringWithTimeout("get", func() (string, error) {
+		return "", ErrNotFound
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+func TestCallKeyringWithTimeout_DeadlineExceeded(t *testing.T) {
+	t.Setenv(keyringTimeoutEnvVar, "50ms")
 
 	start := time.Now()
-	_, err := callKeyringWithContext(ctx, "get", func() (string, error) {
+	_, err := callKeyringWithTimeout("get", func() (string, error) {
 		time.Sleep(5 * time.Second)
 		return "should not be returned", nil
 	})
@@ -62,30 +73,6 @@ func TestCallKeyringWithContext_DeadlineExceeded(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("timeout error %q missing %q", msg, want)
 		}
-	}
-}
-
-func TestCallKeyringWithContext_ExternalCancellation(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-
-	_, err := callKeyringWithContext(ctx, "get", func() (string, error) {
-		time.Sleep(5 * time.Second)
-		return "should not be returned", nil
-	})
-	if err == nil {
-		t.Fatal("expected cancellation error, got nil")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled wrapped, got %v", err)
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("plain cancel should not surface as DeadlineExceeded: %v", err)
 	}
 }
 
@@ -121,17 +108,12 @@ func TestKeyringTimeout_IgnoresNonPositiveValue(t *testing.T) {
 	}
 }
 
-func TestNewKeyringContext_HasDeadline(t *testing.T) {
-	t.Setenv(keyringTimeoutEnvVar, "250ms")
+// keyringProviderName must always name something the timeout error can
+// point at, including on unrecognised platforms.
+func TestKeyringProviderName_NonEmpty(t *testing.T) {
+	t.Parallel()
 
-	ctx, cancel := newKeyringContext()
-	defer cancel()
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		t.Fatal("expected context with deadline, got none")
-	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > 250*time.Millisecond {
-		t.Fatalf("deadline out of expected window: remaining=%s", remaining)
+	if keyringProviderName() == "" {
+		t.Fatal("keyringProviderName returned empty string")
 	}
 }

@@ -26,17 +26,12 @@ func TestMain(m *testing.M) {
 	testutil.SetRunDir(runDir)
 
 	// Route every spawned entire binary (and the git hooks that invoke it) at
-	// file-backed token stores so e2e never touches the developer's real OS
-	// keychain. These env vars are inherited by child processes:
-	//   - internal/entireclient/tokenstore honors ENTIRE_TOKEN_STORE/_PATH
-	//     unconditionally (always compiled).
-	//   - the auth package's legacy keyring store honors
-	//     ENTIRE_TEST_AUTH_STORE_FILE only in -tags=authfilestore builds, which
-	//     the build:e2e task produces.
+	// the file-backed token store so e2e never touches the developer's real
+	// OS keychain. internal/entireclient/tokenstore honors these env vars
+	// unconditionally, and they are inherited by child processes.
 	// In-process keyring.MockInit() cannot help here: the binary is a subprocess.
 	os.Setenv("ENTIRE_TOKEN_STORE", "file")
 	os.Setenv("ENTIRE_TOKEN_STORE_PATH", filepath.Join(runDir, "e2e-tokenstore.json"))
-	os.Setenv("ENTIRE_TEST_AUTH_STORE_FILE", filepath.Join(runDir, "e2e-auth-tokens.json"))
 
 	// Same for the CLI's config and cache directories: contexts.json,
 	// version_check.json, and the discovery caches must never resolve to the

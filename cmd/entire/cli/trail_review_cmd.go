@@ -269,7 +269,7 @@ func runTrailReviewDashboard(cmd *cobra.Command, selector string, opts trailRevi
 		if strings.TrimSpace(selector) == "" && errors.Is(err, errTrailReviewDefaultTargetNotFound) {
 			fmt.Fprintln(cmd.OutOrStdout(), "No trail found for the current branch; showing trails in this repo.")
 			fmt.Fprintln(cmd.OutOrStdout())
-			return runTrailListAll(cmd.Context(), cmd.OutOrStdout(), trailListOptions{Status: trailListStatusAny, Limit: defaultTrailListLimit, InsecureHTTP: trailInsecureHTTP(cmd)})
+			return runTrailListAll(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), trailListOptions{Status: trailListStatusAny, Limit: defaultTrailListLimit, InsecureHTTP: trailInsecureHTTP(cmd)})
 		}
 		return err
 	}
@@ -423,15 +423,18 @@ func runTrailReviewWatchWithClient(cmd *cobra.Command, client *api.Client, targe
 }
 
 func authenticatedTrailReviewTarget(cmd *cobra.Command, selector string) (*api.Client, trailReviewTarget, error) {
-	client, err := NewAuthenticatedAPIClient(cmd.Context(), trailInsecureHTTP(cmd))
-	if err != nil {
-		return nil, trailReviewTarget{}, fmt.Errorf("authentication required: %w", err)
-	}
-	target, err := resolveTrailReviewTarget(cmd.Context(), client, selector)
+	var target trailReviewTarget
+	var resolvedClient *api.Client
+	err := runAuthenticatedDataAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+		var err error
+		resolvedClient = client
+		target, err = resolveTrailReviewTarget(ctx, client, selector)
+		return err
+	})
 	if err != nil {
 		return nil, trailReviewTarget{}, err
 	}
-	return client, target, nil
+	return resolvedClient, target, nil
 }
 
 func resolveTrailReviewTarget(ctx context.Context, client *api.Client, selector string) (trailReviewTarget, error) {

@@ -145,7 +145,13 @@ func IsSubpath(parent, child string) bool {
 	if err != nil {
 		return false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return !IsRelativeTraversal(rel)
+}
+
+// IsRelativeTraversal reports whether rel escapes its base directory.
+// It accepts both OS-native paths and Git-style slash-normalized paths.
+func IsRelativeTraversal(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`)
 }
 
 // ToRelativePath converts an absolute path to relative.
@@ -165,7 +171,7 @@ func ToRelativePath(absPath, cwd string) string {
 		return absPath
 	}
 	relPath, err := filepath.Rel(cwd, absPath)
-	if err != nil || strings.HasPrefix(relPath, "..") {
+	if err != nil || IsRelativeTraversal(relPath) {
 		return ""
 	}
 
