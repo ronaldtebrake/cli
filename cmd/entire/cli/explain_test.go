@@ -2419,9 +2419,18 @@ func TestRunExplainCheckpoint_FullUsesV1Transcript(t *testing.T) {
 	require.Contains(t, output, "v1 raw fallback prompt")
 }
 
-func TestRunExplainCheckpoint_FullCompactsExternalNativeTranscript(t *testing.T) {
-	// Cannot use t.Parallel() because external agent discovery mutates the
-	// package-level agent registry and this test changes cwd/PATH.
+type externalTranscriptCompactorOptions struct {
+	name              string
+	agentType         types.AgentType
+	compactTranscript []byte
+	requiredMarker    string
+	forbiddenMarker   string
+	fail              bool
+}
+
+func setupExternalTranscriptExplainRepo(t *testing.T) (*git.Repository, string) {
+	t.Helper()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
@@ -2444,25 +2453,50 @@ func TestRunExplainCheckpoint_FullCompactsExternalNativeTranscript(t *testing.T)
 		0o644,
 	))
 
-	const (
-		name      = "checkpoint-display"
-		agentType = types.AgentType("Checkpoint Display Agent")
-	)
-	compactTranscript := []byte(
-		`{"v":1,"agent":"checkpoint-display","cli_version":"test","type":"user","content":[{"text":"external native prompt"}]}` + "\n" +
-			`{"v":1,"agent":"checkpoint-display","cli_version":"test","type":"assistant","content":[{"type":"text","text":"external native reply"}]}` + "\n",
-	)
+	return repo, tmpDir
+}
+
+func compactTranscriptForExternalDisplayTest(agentName, userText, assistantText string) []byte {
+	return []byte(fmt.Sprintf(
+		`{"v":1,"agent":%q,"cli_version":"test","type":"user","content":[{"text":%q}]}`+"\n"+
+			`{"v":1,"agent":%q,"cli_version":"test","type":"assistant","content":[{"type":"text","text":%q}]}`+"\n",
+		agentName,
+		userText,
+		agentName,
+		assistantText,
+	))
+}
+
+func installExternalTranscriptCompactor(t *testing.T, opts externalTranscriptCompactorOptions) {
+	t.Helper()
+
+	forbiddenCheck := ""
+	if opts.forbiddenMarker != "" {
+		forbiddenCheck = `    if grep -q '` + opts.forbiddenMarker + `' "$3"; then
+      echo "unexpected unscoped transcript" >&2
+      exit 1
+    fi
+`
+	}
+
+	failureCheck := ""
+	if opts.fail {
+		failureCheck = `    echo "forced compaction failure" >&2
+    exit 7
+`
+	}
+
 	script := `#!/bin/sh
 case "$1" in
   info)
-    echo '{"protocol_version":1,"name":"` + name + `","type":"` + string(agentType) + `","description":"External checkpoint display test agent","is_preview":false,"protected_dirs":[],"hook_names":[],"capabilities":{"hooks":false,"transcript_analyzer":false,"transcript_preparer":false,"token_calculator":false,"compact_transcript":true,"text_generator":false,"hook_response_writer":false,"subagent_aware_extractor":false}}'
+    echo '{"protocol_version":1,"name":"` + opts.name + `","type":"` + string(opts.agentType) + `","description":"External checkpoint display test agent","is_preview":false,"protected_dirs":[],"hook_names":[],"capabilities":{"hooks":false,"transcript_analyzer":false,"transcript_preparer":false,"token_calculator":false,"compact_transcript":true,"text_generator":false,"hook_response_writer":false,"subagent_aware_extractor":false}}'
     ;;
   compact-transcript)
-    if [ "$2" != "--session-ref" ] || ! grep -q 'EXTERNAL_NATIVE_TRANSCRIPT' "$3"; then
+    if [ "$2" != "--session-ref" ] || ! grep -q '` + opts.requiredMarker + `' "$3"; then
       echo "missing native transcript" >&2
       exit 1
     fi
-    echo '{"transcript":"` + base64.StdEncoding.EncodeToString(compactTranscript) + `"}'
+` + forbiddenCheck + failureCheck + `    echo '{"transcript":"` + base64.StdEncoding.EncodeToString(opts.compactTranscript) + `"}'
     ;;
   *)
     echo '{}'
@@ -2470,8 +2504,68 @@ case "$1" in
 esac
 `
 	externalDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(externalDir, "entire-agent-"+name), []byte(script), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(externalDir, "entire-agent-"+opts.name), []byte(script), 0o755))
 	t.Setenv("PATH", externalDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func writeExternalTemporaryCheckpointForExplainTest(
+	t *testing.T,
+	repo *git.Repository,
+	tmpDir string,
+	sessionID string,
+	agentType types.AgentType,
+	nativeTranscript []byte,
+	fileContent string,
+) string {
+	t.Helper()
+
+	metadataDir := filepath.Join(tmpDir, ".entire", "metadata", sessionID)
+	require.NoError(t, os.MkdirAll(metadataDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(metadataDir, paths.PromptFileName), []byte("temporary external checkpoint prompt"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(metadataDir, paths.TranscriptFileName), nativeTranscript, 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(metadataDir, paths.MetadataFileName),
+		[]byte(fmt.Sprintf(`{"agent":%q}`+"\n", agentType)),
+		0o644,
+	))
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte(fileContent), 0o644))
+
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	result, err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteTemporary(context.Background(), checkpoint.WriteTemporaryOptions{
+		SessionID:         sessionID,
+		BaseCommit:        head.Hash().String()[:7],
+		ModifiedFiles:     []string{"test.txt"},
+		MetadataDir:       ".entire/metadata/" + sessionID,
+		MetadataDirAbs:    metadataDir,
+		CommitMessage:     "temporary external checkpoint",
+		AuthorName:        "Test",
+		AuthorEmail:       "test@example.com",
+		IsFirstCheckpoint: false,
+	})
+	require.NoError(t, err)
+	require.False(t, result.Skipped)
+
+	return result.CommitHash.String()
+}
+
+func TestRunExplainCheckpoint_FullCompactsExternalNativeTranscript(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	repo, _ := setupExternalTranscriptExplainRepo(t)
+
+	const (
+		name      = "checkpoint-display-full"
+		agentType = types.AgentType("Checkpoint Display Full Agent")
+	)
+	installExternalTranscriptCompactor(t, externalTranscriptCompactorOptions{
+		name:              name,
+		agentType:         agentType,
+		compactTranscript: compactTranscriptForExternalDisplayTest(name, "external native prompt", "external native reply"),
+		requiredMarker:    "EXTERNAL_NATIVE_TRANSCRIPT",
+	})
 
 	cpID := id.MustCheckpointID("d4e5f6a1b2c3")
 	ctx := context.Background()
@@ -2489,13 +2583,184 @@ esac
 	}))
 
 	var buf, errBuf bytes.Buffer
-	err = runExplainCheckpoint(ctx, &buf, &errBuf, "d4e5f6", false, false, true, false, false, false, false, 0)
+	err := runExplainCheckpoint(ctx, &buf, &errBuf, "d4e5f6", false, false, true, false, false, false, false, 0)
 	require.NoError(t, err)
 
 	output := buf.String()
 	require.Contains(t, output, "[User] external native prompt")
 	require.Contains(t, output, "[Assistant] external native reply")
 	require.NotContains(t, output, "(failed to parse transcript)")
+}
+
+func TestRunExplainCheckpoint_VerboseCompactsScopedExternalNativeTranscript(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	repo, _ := setupExternalTranscriptExplainRepo(t)
+
+	const (
+		name      = "checkpoint-display-verbose"
+		agentType = types.AgentType("Checkpoint Display Verbose Agent")
+	)
+	installExternalTranscriptCompactor(t, externalTranscriptCompactorOptions{
+		name:              name,
+		agentType:         agentType,
+		compactTranscript: compactTranscriptForExternalDisplayTest(name, "scoped external prompt", "scoped external reply"),
+		requiredMarker:    "EXTERNAL_NATIVE_SCOPE",
+		forbiddenMarker:   "EXTERNAL_NATIVE_BEFORE",
+	})
+
+	cpID := id.MustCheckpointID("e5f6a1b2c3d4")
+	ctx := context.Background()
+	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+
+	nativeTranscript := []byte("EXTERNAL_NATIVE_BEFORE\nEXTERNAL_NATIVE_SCOPE\nuser=scoped external prompt\nassistant=scoped external reply\n")
+	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID:              cpID,
+		SessionID:                 "session-external-verbose",
+		Strategy:                  "manual-commit",
+		Transcript:                redact.AlreadyRedacted(nativeTranscript),
+		Agent:                     agentType,
+		CheckpointTranscriptStart: 1,
+		AuthorName:                "Test",
+		AuthorEmail:               "test@example.com",
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err := runExplainCheckpoint(ctx, &buf, &errBuf, "e5f6a1", false, true, false, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "Transcript (checkpoint scope)")
+	require.Contains(t, output, "[User] scoped external prompt")
+	require.Contains(t, output, "[Assistant] scoped external reply")
+	require.NotContains(t, output, "(failed to parse transcript)")
+}
+
+func TestRunExplainAuto_TemporaryFullCompactsExternalNativeTranscript(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	repo, tmpDir := setupExternalTranscriptExplainRepo(t)
+
+	const (
+		name      = "temporary-display-full"
+		agentType = types.AgentType("Temporary Display Full Agent")
+	)
+	installExternalTranscriptCompactor(t, externalTranscriptCompactorOptions{
+		name:              name,
+		agentType:         agentType,
+		compactTranscript: compactTranscriptForExternalDisplayTest(name, "temporary external prompt", "temporary external reply"),
+		requiredMarker:    "TEMP_EXTERNAL_NATIVE_TRANSCRIPT",
+	})
+
+	tempCheckpointSHA := writeExternalTemporaryCheckpointForExplainTest(
+		t,
+		repo,
+		tmpDir,
+		"session-temp-external-full",
+		agentType,
+		[]byte("TEMP_EXTERNAL_NATIVE_TRANSCRIPT\nuser=temporary external prompt\nassistant=temporary external reply\n"),
+		"temporary full content",
+	)
+
+	var buf, errBuf bytes.Buffer
+	err := runExplainAuto(context.Background(), &buf, &errBuf, tempCheckpointSHA, true, false, true, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "Transcript (full session)")
+	require.Contains(t, output, "[User] temporary external prompt")
+	require.Contains(t, output, "[Assistant] temporary external reply")
+	require.NotContains(t, output, "(failed to parse transcript)")
+}
+
+func TestRunExplainAuto_TemporaryVerboseCompactsScopedExternalNativeTranscript(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	repo, tmpDir := setupExternalTranscriptExplainRepo(t)
+
+	const (
+		name      = "temporary-display-verbose"
+		agentType = types.AgentType("Temporary Display Verbose Agent")
+	)
+	installExternalTranscriptCompactor(t, externalTranscriptCompactorOptions{
+		name:              name,
+		agentType:         agentType,
+		compactTranscript: compactTranscriptForExternalDisplayTest(name, "temporary scoped prompt", "temporary scoped reply"),
+		requiredMarker:    "TEMP_EXTERNAL_NATIVE_SCOPE",
+		forbiddenMarker:   "TEMP_EXTERNAL_NATIVE_BEFORE",
+	})
+
+	sessionID := "session-temp-external-verbose"
+	_ = writeExternalTemporaryCheckpointForExplainTest(
+		t,
+		repo,
+		tmpDir,
+		sessionID,
+		agentType,
+		[]byte("TEMP_EXTERNAL_NATIVE_BEFORE\n"),
+		"temporary verbose parent content",
+	)
+	tempCheckpointSHA := writeExternalTemporaryCheckpointForExplainTest(
+		t,
+		repo,
+		tmpDir,
+		sessionID,
+		agentType,
+		[]byte("TEMP_EXTERNAL_NATIVE_BEFORE\nTEMP_EXTERNAL_NATIVE_SCOPE\nuser=temporary scoped prompt\nassistant=temporary scoped reply\n"),
+		"temporary verbose child content",
+	)
+
+	var buf, errBuf bytes.Buffer
+	err := runExplainAuto(context.Background(), &buf, &errBuf, tempCheckpointSHA, true, true, false, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "Transcript (checkpoint scope)")
+	require.Contains(t, output, "[User] temporary scoped prompt")
+	require.Contains(t, output, "[Assistant] temporary scoped reply")
+	require.NotContains(t, output, "(failed to parse transcript)")
+}
+
+func TestRunExplainCheckpoint_FullFallsBackWhenExternalCompactionFails(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	repo, _ := setupExternalTranscriptExplainRepo(t)
+
+	const (
+		name      = "checkpoint-display-fallback"
+		agentType = types.AgentType("Checkpoint Display Fallback Agent")
+	)
+	installExternalTranscriptCompactor(t, externalTranscriptCompactorOptions{
+		name:              name,
+		agentType:         agentType,
+		compactTranscript: compactTranscriptForExternalDisplayTest(name, "unused prompt", "unused reply"),
+		requiredMarker:    "EXTERNAL_NATIVE_TRANSCRIPT",
+		fail:              true,
+	})
+
+	cpID := id.MustCheckpointID("f6a1b2c3d4e5")
+	ctx := context.Background()
+	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+
+	nativeTranscript := []byte("EXTERNAL_NATIVE_TRANSCRIPT\nuser=unparseable native prompt\nassistant=unparseable native reply\n")
+	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-external-fallback",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted(nativeTranscript),
+		Agent:        agentType,
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err := runExplainCheckpoint(ctx, &buf, &errBuf, "f6a1b2", false, false, true, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "(failed to parse transcript)")
+	require.NotContains(t, output, "[User] unused prompt")
+	require.NotContains(t, output, "[Assistant] unused reply")
 }
 
 func TestListCommittedForExplain_ReturnsV1Only(t *testing.T) {
