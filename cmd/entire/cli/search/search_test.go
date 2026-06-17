@@ -105,6 +105,17 @@ func TestParseGitHubRemote_NonGitHubHTTPS(t *testing.T) {
 	}
 }
 
+func TestParseGitHubRemote_EntireMirror(t *testing.T) {
+	t.Parallel()
+	owner, repo, err := ParseGitHubRemote("entire://aws-us-east-2.entire.io/gh/entirehq/entire.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != testOwner || repo != testRepo {
+		t.Errorf("got %s/%s, want %s/%s", owner, repo, testOwner, testRepo)
+	}
+}
+
 // -- Search() tests --
 
 func TestSearch_URLConstruction(t *testing.T) {
