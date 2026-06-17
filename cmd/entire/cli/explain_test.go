@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -2416,6 +2417,85 @@ func TestRunExplainCheckpoint_FullUsesV1Transcript(t *testing.T) {
 
 	output := buf.String()
 	require.Contains(t, output, "v1 raw fallback prompt")
+}
+
+func TestRunExplainCheckpoint_FullCompactsExternalNativeTranscript(t *testing.T) {
+	// Cannot use t.Parallel() because external agent discovery mutates the
+	// package-level agent registry and this test changes cwd/PATH.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "test.txt", "test")
+	testutil.GitAdd(t, tmpDir, "test.txt")
+	testutil.GitCommit(t, tmpDir, "initial commit")
+
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, ".entire", "settings.json"),
+		[]byte(`{"enabled":true,"external_agents":true}`),
+		0o644,
+	))
+
+	const (
+		name      = "checkpoint-display"
+		agentType = types.AgentType("Checkpoint Display Agent")
+	)
+	compactTranscript := []byte(
+		`{"v":1,"agent":"checkpoint-display","cli_version":"test","type":"user","content":[{"text":"external native prompt"}]}` + "\n" +
+			`{"v":1,"agent":"checkpoint-display","cli_version":"test","type":"assistant","content":[{"type":"text","text":"external native reply"}]}` + "\n",
+	)
+	script := `#!/bin/sh
+case "$1" in
+  info)
+    echo '{"protocol_version":1,"name":"` + name + `","type":"` + string(agentType) + `","description":"External checkpoint display test agent","is_preview":false,"protected_dirs":[],"hook_names":[],"capabilities":{"hooks":false,"transcript_analyzer":false,"transcript_preparer":false,"token_calculator":false,"compact_transcript":true,"text_generator":false,"hook_response_writer":false,"subagent_aware_extractor":false}}'
+    ;;
+  compact-transcript)
+    if [ "$2" != "--session-ref" ] || ! grep -q 'EXTERNAL_NATIVE_TRANSCRIPT' "$3"; then
+      echo "missing native transcript" >&2
+      exit 1
+    fi
+    echo '{"transcript":"` + base64.StdEncoding.EncodeToString(compactTranscript) + `"}'
+    ;;
+  *)
+    echo '{}'
+    ;;
+esac
+`
+	externalDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(externalDir, "entire-agent-"+name), []byte(script), 0o755))
+	t.Setenv("PATH", externalDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cpID := id.MustCheckpointID("d4e5f6a1b2c3")
+	ctx := context.Background()
+	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+
+	nativeTranscript := []byte("EXTERNAL_NATIVE_TRANSCRIPT\nuser=external native prompt\nassistant=external native reply\n")
+	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-external-display",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted(nativeTranscript),
+		Agent:        agentType,
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err = runExplainCheckpoint(ctx, &buf, &errBuf, "d4e5f6", false, false, true, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "[User] external native prompt")
+	require.Contains(t, output, "[Assistant] external native reply")
+	require.NotContains(t, output, "(failed to parse transcript)")
 }
 
 func TestListCommittedForExplain_ReturnsV1Only(t *testing.T) {
