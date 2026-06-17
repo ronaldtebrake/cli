@@ -46,9 +46,8 @@ func NewClient(token string) *Client {
 }
 
 // NewClientWithBaseURL creates a new authenticated API client targeting an
-// explicit base URL. Use this for endpoints that live on the auth host (e.g.
-// auth-token management) when ENTIRE_AUTH_BASE_URL splits the auth origin
-// from the data API origin.
+// explicit base URL. Use this for endpoints that live on a login server
+// rather than the data API (e.g. auth-session management).
 func NewClientWithBaseURL(token, baseURL string) *Client {
 	return &Client{
 		httpClient: &http.Client{

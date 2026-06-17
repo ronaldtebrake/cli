@@ -10,39 +10,26 @@ import (
 )
 
 // NewAuthenticatedAPIClient creates an API client targeting api.BaseURL()
-// (the data API origin) carrying a token valid for that audience.
-//
-// Resolution: looks up the core token from the keyring, then either uses
-// it directly (single-host setup, or when the core token's `aud` already
-// covers api.BaseURL()) or performs an RFC 8693 token exchange against
-// the auth host to obtain a token scoped to the data API. Exchanged
-// tokens are cached in-memory keyed off the wire-affecting fields of
-// the request — see tokenmanager.cacheKey for the precise key shape.
+// (the data API origin) carrying a token valid for that audience, minted by
+// exchanging the matching login context's JWT at its own core (see
+// auth.ResolveDataAPIToken).
 //
 // Pass insecureHTTP=true to allow plain HTTP base URLs for local
-// development. Both api.BaseURL() and api.AuthBaseURL() are validated:
-// the bearer travels to the data host on resource requests, and the
-// core token travels to the auth host during the exchange step.
+// development. Only the data origin is checked here — the bearer travels
+// there on resource requests; the exchange leg is guarded by the
+// per-context token manager (https required outside loopback/opt-in).
 func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
-	dataURL, authURL := api.BaseURL(), api.AuthBaseURL()
+	dataURL := api.BaseURL()
 	if insecureHTTP {
 		auth.EnableInsecureHTTP()
-	} else {
-		if err := api.RequireSecureURL(dataURL); err != nil {
-			return nil, fmt.Errorf("base URL check: %w", err)
-		}
-		if authURL != dataURL {
-			if err := api.RequireSecureURL(authURL); err != nil {
-				return nil, fmt.Errorf("auth base URL check: %w", err)
-			}
-		}
+	} else if err := api.RequireSecureURL(dataURL); err != nil {
+		return nil, fmt.Errorf("base URL check: %w", err)
 	}
 
 	// ResolveDataAPIToken discovers which login context the data host trusts
 	// (via its /.well-known/entire-api.json) and exchanges that context's
-	// token for the advertised audience, falling back to static resolution
-	// when the host doesn't advertise discovery. It normalises dataURL to an
-	// origin internally.
+	// token for the advertised audience. It normalises dataURL to an origin
+	// internally.
 	token, err := auth.ResolveDataAPIToken(ctx, dataURL)
 	if err != nil {
 		if errors.Is(err, auth.ErrNotLoggedIn) {

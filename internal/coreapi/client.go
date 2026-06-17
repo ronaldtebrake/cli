@@ -23,12 +23,10 @@ const apiBasePath = "/api/v1"
 // commands target a login server directly — unlike `git clone` or the data
 // API, there's no resource host to match a context against — so the active
 // contexts.json login is used as-is, and `entire auth use <ctx>` retargets the
-// control plane onto that login server. ENTIRE_AUTH_BASE_URL / the default is
-// only the fallback when no context is active, not an override. The Core API
-// is served at <host>/api/v1. The bearer is resolved lazily per request; for
-// an active context it re-mints silently from the stored refresh token, and
-// for the fallback path an RFC 8693 exchange happens transparently when the
-// stored token's audience doesn't cover the host.
+// control plane onto that login server; with no active context this errors
+// with the `entire login` hint. The Core API is served at <host>/api/v1. The
+// bearer is resolved lazily per request, re-minting silently from the stored
+// refresh token.
 func New() (*Client, error) {
 	target, err := auth.ResolveControlPlaneTarget()
 	if err != nil {
@@ -44,9 +42,9 @@ func New() (*Client, error) {
 
 // NewWithBearer returns a *Client targeting an explicit core origin with a
 // fixed bearer token — no per-request resolution or STS exchange. Used when a
-// command must hit a specific login server rather than the configured
-// AuthBaseURL: e.g. `entire auth status` querying /me on the active context's
-// core with that context's session token.
+// command must hit a specific login server with a token already in hand:
+// e.g. `entire auth status` querying /me on the active context's core with
+// that context's session token.
 func NewWithBearer(coreBaseURL, token string) (*Client, error) {
 	base := strings.TrimRight(coreBaseURL, "/")
 	client, err := NewClient(base+apiBasePath, staticBearer{token: token})
@@ -84,13 +82,12 @@ type providerSource struct {
 func (p *providerSource) BearerAuth(ctx context.Context, _ OperationName) (BearerAuth, error) {
 	token, err := p.provide(ctx)
 	if err != nil {
-		// The static fallback path returns a bare ErrNotLoggedIn sentinel with
-		// no helpful text, so add the standard login hint. The active-context
-		// path (NewRefreshingLoginProvider) instead returns a tailored message
-		// that already names the context, its login server, and the exact
-		// re-login command — surface that verbatim rather than burying it under
-		// a generic prefix. Other failures (STS rejection, network) are
-		// likewise self-descriptive.
+		// The per-context provider returns a tailored message that already
+		// names the context, its login server, and the exact re-login command
+		// — surface it verbatim rather than burying it under a generic prefix;
+		// other failures (STS rejection, network) are likewise
+		// self-descriptive. A bare ErrNotLoggedIn (no tailored text) gets the
+		// standard login hint as a backstop.
 		if errors.Is(err, auth.ErrNotLoggedIn) {
 			return BearerAuth{}, fmt.Errorf("not logged in — run 'entire login': %w", err)
 		}
