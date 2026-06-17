@@ -16,6 +16,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -89,6 +90,7 @@ func NewCommand(deps Deps) *cobra.Command {
 	var setJudge string
 	var setOutput string
 	var setLocal bool
+	var inspectTimeout time.Duration
 	var setTask string
 	var setModels []string
 	var setSlots []string
@@ -131,6 +133,8 @@ Flags:
   --models       list the models each agent advertises (optionally --agent NAME)
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
+  --timeout DUR  max time each inspector may run before it's cancelled and
+                 marked failed (default 10m). Siblings and the judge proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
                  Default: first existing of origin/HEAD, origin/main,
@@ -202,7 +206,7 @@ use 'entire attach --review <id>'.`,
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
 			}
-			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, deps)
+			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, inspectTimeout, deps)
 		},
 	}
 	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
@@ -223,6 +227,7 @@ use 'entire attach --review <id>'.`,
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
+	cmd.Flags().DurationVar(&inspectTimeout, "timeout", defaultInspectorTimeout, "max time each inspector may run before it is cancelled and marked failed")
 	// The listing modes and the action modes each select a distinct command
 	// behavior; combining them silently runs one and drops the rest, so reject
 	// the combination up front with a clear cobra error.
@@ -680,7 +685,7 @@ func reviewAgentNames(deps Deps) []string {
 }
 
 // runReview executes the main review flow.
-func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOverride, baseOverride, profileOverride, perRunPrompt string, deps Deps) error {
+func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOverride, baseOverride, profileOverride, perRunPrompt string, timeout time.Duration, deps Deps) error {
 	out := cmd.OutOrStdout()
 	silentErr := deps.NewSilentError
 
@@ -817,7 +822,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		if modelOverride != "" {
 			cfg.Model = modelOverride
 		}
-		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, outputMode, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, outputMode, timeout, cfg, installed, deps, out)
 	}
 
 	if missing := missingInstalledProfileAgents(profile.Agents, installed); len(missing) > 0 {
@@ -836,7 +841,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		return silentErr(err)
 	case 1:
 		cfg := profile.Agents[eligible[0].Name]
-		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, outputMode, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, outputMode, timeout, cfg, installed, deps, out)
 	default:
 		launchableEligible := computeLaunchableEligibleForProfile(profile, installed, deps.ReviewerFor)
 		if len(launchableEligible) != len(eligible) {
@@ -857,7 +862,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			return silentErr(err)
 		}
-		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, judge, outputMode, baseOverride, perRunPrompt, deps, out)
+		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, judge, outputMode, timeout, baseOverride, perRunPrompt, deps, out)
 	}
 }
 
@@ -925,6 +930,7 @@ func runSingleAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
 	profileName, workerName, baseOverride, perRunPrompt, task, outputMode string,
+	timeout time.Duration,
 	cfg settings.ReviewConfig,
 	installed []types.AgentName,
 	deps Deps,
@@ -1001,6 +1007,7 @@ func runSingleAgentPath(
 		ScopeBaseRef:      scopeBaseRef,
 		CheckpointContext: checkpointContext,
 		StartingSHA:       headSHA,
+		InspectorTimeout:  timeout,
 	}
 	applyReviewConfig(&runCfg, cfg)
 
@@ -1088,6 +1095,7 @@ func runMultiAgentPath(
 	launchableEligible []AgentChoice,
 	judge judgeSpec,
 	outputMode string,
+	timeout time.Duration,
 	baseOverride string,
 	perRunPrompt string,
 	deps Deps,
@@ -1193,7 +1201,8 @@ func runMultiAgentPath(
 	}
 
 	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{
-		EnrichAgentRun: reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
+		EnrichAgentRun:   reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
+		InspectorTimeout: timeout,
 	}, sinks)
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
 	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, aggregateOutput)

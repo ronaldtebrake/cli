@@ -38,10 +38,10 @@ import (
 //
 // Write paths (no mutex; the close-after-wait protocol below provides
 // happens-before for both):
-//   - waitErr and finishedAt are written by the per-agent forwarding
-//     goroutine after its proc.Events range loop exits. That goroutine may
-//     still send final derived events (synthetic RunError, enriched Tokens)
-//     before wg.Done.
+//   - waitErr, finishedAt, and timedOut are written by the per-agent
+//     forwarding goroutine after its proc.Events range loop exits. That
+//     goroutine may still send final derived events (synthetic RunError,
+//     enriched Tokens) before wg.Done.
 //   - All other mutable fields (events buffer, tokens, finishedSeen,
 //     finishedOk, sawRunError) are written from the single dispatch loop
 //     reading the fan-in channel.
@@ -66,6 +66,7 @@ type perAgentState struct {
 	finishedSeen bool
 	finishedOk   bool
 	sawRunError  bool
+	timedOut     bool
 	waitErr      error
 }
 
@@ -130,18 +131,24 @@ func RunMulti(
 	// scheduling jitter without holding an unbounded queue.
 	fanIn := make(chan taggedEvent, len(reviewers)*16)
 
+	// Each inspector gets its own deadline so a stuck agent is cancelled (its
+	// process killed) without hanging the run; siblings and the judge proceed.
+	timeout := inspectorTimeout(cfg)
 	var wg sync.WaitGroup
 	for i, r := range reviewers {
-		proc, err := r.Start(ctx, cfg)
+		agentCtx, cancelAgent := context.WithTimeout(ctx, timeout)
+		proc, err := r.Start(agentCtx, cfg)
 		if err != nil {
+			cancelAgent()
 			states[i].startErr = err
 			states[i].finishedAt = time.Now()
 			continue
 		}
 		states[i].proc = proc
 		wg.Add(1)
-		go func(idx int, p reviewtypes.Process) {
+		go func(idx int, p reviewtypes.Process, ac context.Context, cancel context.CancelFunc) {
 			defer wg.Done()
+			defer cancel()
 			for ev := range p.Events() {
 				fanIn <- taggedEvent{agentIdx: idx, ev: ev}
 			}
@@ -149,6 +156,10 @@ func RunMulti(
 			finishedAt := time.Now()
 			states[idx].waitErr = waitErr
 			states[idx].finishedAt = finishedAt
+			// A per-inspector timeout fired iff this agent's deadline elapsed
+			// while the parent run context is still live (a parent cancellation
+			// is a user Ctrl+C, classified as Cancelled).
+			states[idx].timedOut = ac.Err() == context.DeadlineExceeded && ctx.Err() == nil
 			if shouldEmitSyntheticRunError(ctx, waitErr) {
 				fanIn <- taggedEvent{agentIdx: idx, ev: reviewtypes.RunError{Err: waitErr}}
 			}
@@ -160,7 +171,7 @@ func RunMulti(
 				Duration:  finishedAt.Sub(states[idx].startedAt),
 				Err:       waitErr,
 			})
-		}(i, proc)
+		}(i, proc, agentCtx, cancelAgent)
 	}
 
 	// Close fanIn after all forwarding goroutines finish. This goroutine
@@ -214,6 +225,10 @@ func RunMulti(
 		agentErr := st.startErr
 		if agentErr == nil {
 			agentErr = st.waitErr
+		}
+		if st.timedOut {
+			status = reviewtypes.AgentStatusFailed
+			agentErr = timedOutError(st.name, timeout)
 		}
 		agentRuns[i] = reviewtypes.AgentRun{
 			Name:      st.name,

@@ -18,7 +18,10 @@
 // without depending on each other.
 package types
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // AgentReviewer drives a single agent's review run.
 type AgentReviewer interface {
@@ -117,6 +120,14 @@ type RunConfig struct {
 	// hook via ENTIRE_REVIEW_STARTING_SHA so checkpoint metadata records
 	// the commit that was reviewed.
 	StartingSHA string
+
+	// InspectorTimeout bounds how long a single inspector may run before the
+	// orchestrator cancels it (its process is killed and the run is marked
+	// failed-by-timeout) so a stuck agent can't hang the review forever. Zero
+	// or negative means use the orchestrator default (defaultInspectorTimeout).
+	// Sibling inspectors and the judge are unaffected by one inspector's
+	// timeout.
+	InspectorTimeout time.Duration
 
 	// EnrichSummary optionally updates the completed run summary before sinks
 	// receive RunFinished. It is used for post-process data such as token

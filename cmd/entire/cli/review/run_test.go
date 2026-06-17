@@ -3,10 +3,38 @@ package review
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
+
+// ctxReviewer's process hangs until its run context is done, then reports the
+// context error — modeling an agent that would run forever until the
+// orchestrator's per-inspector deadline cancels (kills) it.
+type ctxReviewer struct{ name string }
+
+func (r *ctxReviewer) Name() string { return r.name }
+func (r *ctxReviewer) Start(ctx context.Context, _ reviewtypes.RunConfig) (reviewtypes.Process, error) {
+	return &ctxProcess{ctx: ctx}, nil
+}
+
+type ctxProcess struct{ ctx context.Context }
+
+func (p *ctxProcess) Events() <-chan reviewtypes.Event {
+	out := make(chan reviewtypes.Event)
+	go func() {
+		<-p.ctx.Done()
+		close(out)
+	}()
+	return out
+}
+
+func (p *ctxProcess) Wait() error {
+	<-p.ctx.Done()
+	return p.ctx.Err()
+}
 
 // stubReviewer is a test double for reviewtypes.AgentReviewer.
 type stubReviewer struct {
@@ -499,5 +527,67 @@ func TestRun_SinkFanOut(t *testing.T) {
 			t.Errorf("sinks disagree at event %d: %v vs %v",
 				i, rec1.agentEvents[i], rec2.agentEvents[i])
 		}
+	}
+}
+
+func TestRun_InspectorTimeout(t *testing.T) {
+	t.Parallel()
+	rec := &stubSinkRecorder{}
+	summary, err := Run(
+		context.Background(),
+		&ctxReviewer{name: "claude-code"},
+		reviewtypes.RunConfig{InspectorTimeout: 30 * time.Millisecond},
+		[]reviewtypes.Sink{rec},
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a 'timed out' error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false for a per-inspector timeout (parent ctx not cancelled)")
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Errorf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || !strings.Contains(run.Err.Error(), "timed out") {
+		t.Errorf("run.Err = %v, want 'timed out'", run.Err)
+	}
+}
+
+func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
+	t.Parallel()
+	// One inspector hangs (times out); a sibling finishes cleanly. The run is
+	// not cancelled, the hung one is failed-by-timeout, the sibling succeeds.
+	hang := &ctxReviewer{name: "slow"}
+	fast := &stubReviewer{name: "fast", events: []reviewtypes.Event{
+		reviewtypes.Started{},
+		reviewtypes.Finished{Success: true},
+	}}
+	rec := &stubSinkRecorder{}
+	summary, err := RunMulti(
+		context.Background(),
+		[]reviewtypes.AgentReviewer{hang, fast},
+		reviewtypes.RunConfig{InspectorTimeout: 40 * time.Millisecond},
+		[]reviewtypes.Sink{rec},
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want the timed-out agent's error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false")
+	}
+	byName := map[string]reviewtypes.AgentRun{}
+	for _, r := range summary.AgentRuns {
+		byName[r.Name] = r
+	}
+	if got := byName["slow"]; got.Status != reviewtypes.AgentStatusFailed ||
+		got.Err == nil || !strings.Contains(got.Err.Error(), "timed out") {
+		t.Errorf("slow = %+v, want Failed with 'timed out'", got)
+	}
+	if byName["fast"].Status != reviewtypes.AgentStatusSucceeded {
+		t.Errorf("fast status = %v, want Succeeded", byName["fast"].Status)
 	}
 }

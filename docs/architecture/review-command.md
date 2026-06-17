@@ -27,6 +27,7 @@ entire inspect --agents                 # List the profile's inspectors (valid -
 entire inspect --models                 # List models each agent advertises
 entire inspect --models --agent codex   # ...filtered to one agent
 entire inspect --prompt "focus on auth" # Add one-off instructions
+entire inspect --timeout 15m            # Per-inspector timeout (default 10m)
 entire inspect --findings               # Browse local review findings
 ```
 
@@ -185,6 +186,13 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
   goroutine; events fan into a single dispatch loop so the serial-dispatch
   contract holds. Per-inspector skills/prompts are injected via
   `perAgentConfiguredReviewer`.
+- **Per-inspector timeout** (`run.go`): each inspector is started under its own
+  `context.WithTimeout` (`RunConfig.InspectorTimeout`, default
+  `defaultInspectorTimeout` = 10m, overridable with `--timeout`). When an
+  inspector's deadline elapses while the run is still live, its process is
+  cancelled (killed) and it is marked failed-by-timeout; siblings and the judge
+  proceed. A parent-context cancellation (Ctrl+C) is classified as cancelled
+  instead. The judge has its own separate `defaultSynthesisProviderTimeout` (2m).
 - **Judge resolution** (`profile.go`): `profileJudge` returns the explicitly
   configured judge (`judge`); `resolveJudge` falls back to `defaultJudge`, which
   auto-selects a text-gen-capable inspector (preferring claude-code, then codex,

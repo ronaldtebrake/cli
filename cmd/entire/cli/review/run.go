@@ -33,6 +33,23 @@ func reviewerModelName(r reviewtypes.AgentReviewer) string {
 	return ""
 }
 
+// defaultInspectorTimeout bounds a single inspector's run when the caller
+// doesn't set RunConfig.InspectorTimeout. A stuck agent is cancelled (its
+// process killed) and marked failed rather than hanging the review forever.
+const defaultInspectorTimeout = 10 * time.Minute
+
+func inspectorTimeout(cfg reviewtypes.RunConfig) time.Duration {
+	if cfg.InspectorTimeout > 0 {
+		return cfg.InspectorTimeout
+	}
+	return defaultInspectorTimeout
+}
+
+// timedOutError reports the per-inspector timeout as a user-facing error.
+func timedOutError(agent string, timeout time.Duration) error {
+	return fmt.Errorf("review agent %s timed out after %s", agent, timeout)
+}
+
 // Run executes a single-agent review. Events from the agent are forwarded
 // to all sinks via AgentEvent as they arrive; on completion, RunFinished
 // is called on each sink with the populated RunSummary.
@@ -55,7 +72,13 @@ func Run(
 		modelName = cfg.Model
 	}
 
-	proc, err := reviewer.Start(ctx, cfg)
+	// Bound the inspector so a stuck agent can't hang the review forever. The
+	// deadline applies only to this agent; cancellation kills its process.
+	timeout := inspectorTimeout(cfg)
+	agentCtx, cancelAgent := context.WithTimeout(ctx, timeout)
+	defer cancelAgent()
+
+	proc, err := reviewer.Start(agentCtx, cfg)
 	if err != nil {
 		// Construction failed — classify (cancellation vs failure), fan out, return.
 		// No event-stream signals available since Start failed before producing any.
@@ -110,6 +133,10 @@ func Run(
 
 	waitErr := proc.Wait()
 	finished := time.Now()
+	// A per-inspector timeout fired iff this agent's deadline elapsed while the
+	// parent run context is still live (a parent cancellation is a user Ctrl+C,
+	// classified as Cancelled instead).
+	timedOut := agentCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil
 	if shouldEmitSyntheticRunError(ctx, waitErr) {
 		synthEvent := reviewtypes.RunError{Err: waitErr}
 		buffer = append(buffer, synthEvent)
@@ -123,7 +150,11 @@ func Run(
 	}
 	status := classifyStatus(ctx, waitErr, eventOutcome{finishedSeen: finishedSeen, finishedOk: finishedOk, sawRunError: sawRunError})
 	runErr := waitErr
-	if runErr == nil && status == reviewtypes.AgentStatusFailed {
+	switch {
+	case timedOut:
+		status = reviewtypes.AgentStatusFailed
+		runErr = timedOutError(displayName, timeout)
+	case runErr == nil && status == reviewtypes.AgentStatusFailed:
 		runErr = agentRunFailureError(displayName, firstRunErr)
 	}
 
