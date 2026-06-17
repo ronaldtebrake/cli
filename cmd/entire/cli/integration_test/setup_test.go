@@ -43,10 +43,7 @@ func TestMain(m *testing.M) {
 	}
 
 	moduleRoot := findModuleRoot()
-	// -tags=authfilestore enables the file-backed auth store backend so the
-	// subprocess can opt into ENTIRE_TEST_AUTH_STORE_FILE instead of touching
-	// the real OS keychain. Production builds omit this tag.
-	buildCmd := exec.Command("go", "build", "-tags=authfilestore", "-o", testBinaryPath, ".")
+	buildCmd := exec.Command("go", "build", "-o", testBinaryPath, ".")
 	buildCmd.Dir = filepath.Join(moduleRoot, "cmd", "entire")
 
 	buildOutput, err := buildCmd.CombinedOutput()

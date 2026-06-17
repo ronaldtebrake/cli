@@ -365,6 +365,79 @@ func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 
 // handleLifecycleTurnStart handles turn start: captures pre-prompt state,
 // ensures strategy setup, initializes session.
+// entireTrailContextInjection is the one-time, model-facing documentation Entire
+// injects to teach the agent the `entire trail` command. Kept terse: it costs
+// context-window tokens on the first turn of every session, and states no
+// transient fact (whether a trail exists can change at any time).
+func entireTrailContextInjection() string {
+	return "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it."
+}
+
+// emitContextInjection writes ag's native context-injection payload to stdout
+// when ag injects at event.Type, trails are enabled for the repo on the API,
+// and this session has not been injected yet. Best-effort: an injection failure
+// never fails the hook.
+func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Event) {
+	injector, ok := agent.AsContextInjector(ag)
+	if !ok || injector.InjectionEvent() != event.Type || event.SessionID == "" {
+		return
+	}
+	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
+
+	// Decide once per session, recorded on the session state itself (not a
+	// separate marker file). Winning the check-and-set means this turn owns the
+	// decision. trailsEnabledForRepo only reads clone-local cached enablement;
+	// the API refresh happens earlier on `entire enable`, outside the prompt path.
+	// Marking "decided" before checking the cache means a missing/stale false
+	// cache fails closed (no hint for this session) rather than retrying/spamming.
+	mutated := false
+	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
+		if state.ContextInjectionDecided {
+			return strategy.ErrMutationSkip
+		}
+		// Review/investigate sessions are task-specific and don't need the branch
+		// trail pointer; skip without marking decided so normal sessions keep the
+		// usual first-turn behavior.
+		if state.Kind != "" {
+			return strategy.ErrMutationSkip
+		}
+		state.ContextInjectionDecided = true
+		mutated = true
+		return nil
+	})
+	if mutErr != nil && !errors.Is(mutErr, strategy.ErrStateNotFound) {
+		logging.Warn(logCtx, "failed to record context injection decision",
+			slog.String("error", mutErr.Error()))
+		return
+	}
+	// Only proceed after the state mutation was persisted. If saving the updated
+	// state failed, mutErr was non-nil above and we returned without injecting,
+	// leaving a later turn free to retry safely.
+	won := mutErr == nil && mutated
+	if !won {
+		return // already decided for this session, skipped kind, or no session state yet
+	}
+
+	// Only advertise trails when they're literally enabled for this repo on the API.
+	if !trailsEnabledForRepo(ctx) {
+		return
+	}
+
+	payload, err := injector.RenderContextInjection(agent.ContextInjection{Text: entireTrailContextInjection()})
+	if err != nil {
+		logging.Warn(logCtx, "failed to render context injection",
+			slog.String("error", err.Error()))
+		return
+	}
+	if len(payload) == 0 {
+		return
+	}
+	if _, err := os.Stdout.Write(payload); err != nil {
+		logging.Warn(logCtx, "failed to write context injection",
+			slog.String("error", err.Error()))
+	}
+}
+
 func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.Event) error {
 	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
 	logging.Info(logCtx, "turn-start",
@@ -482,6 +555,10 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 			slog.String("error", mutErr.Error()))
 	}
 	initSpan.End()
+
+	// Inject Entire's model-facing context (once per session) for agents whose
+	// transport supports it at TurnStart (e.g. Pi). Extension reads stdout.
+	emitContextInjection(ctx, ag, event)
 
 	return nil
 }

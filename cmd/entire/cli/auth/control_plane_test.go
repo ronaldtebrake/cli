@@ -2,19 +2,20 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
 
-// These tests drive process-global state (ENTIRE_AUTH_BASE_URL,
-// ENTIRE_CONFIG_DIR, the token-store backend) so they cannot run in parallel.
+// These tests drive process-global state (ENTIRE_CONFIG_DIR, the
+// token-store backend) so they cannot run in parallel.
 
 // writeActiveContext writes a single-context contexts.json under configDir and
 // marks it current.
@@ -26,32 +27,11 @@ func writeActiveContext(t *testing.T, configDir, name, coreURL, handle, svc stri
 	}
 }
 
-// The active context wins even when ENTIRE_AUTH_BASE_URL is set to a different
-// origin: the env var is a fallback host, not an override (a token from the
-// context's core can't authenticate against the env host anyway).
-func TestResolveControlPlaneTarget_ActiveContextBeatsEnv(t *testing.T) {
-	configDir := t.TempDir()
-	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-	t.Setenv(api.AuthBaseURLEnvVar, "https://override.example")
-
-	const coreURL = "https://other-core.example"
-	writeActiveContext(t, configDir, "ctx", coreURL, "alice", "svc")
-
-	target, err := ResolveControlPlaneTarget()
-	if err != nil {
-		t.Fatalf("ResolveControlPlaneTarget: %v", err)
-	}
-	if target.CoreURL != coreURL {
-		t.Fatalf("CoreURL = %q, want the active context's core %q (env is only a fallback)", target.CoreURL, coreURL)
-	}
-}
-
 // With no override and an active context, the target is that context's core and
 // the bearer comes from the context's keyring slot (the refreshing provider).
 func TestResolveControlPlaneTarget_ActiveContextWins(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-	t.Setenv(api.AuthBaseURLEnvVar, "") // ensure no override leaks in from the env
 
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
@@ -87,7 +67,6 @@ func TestResolveControlPlaneTarget_ActiveContextWins(t *testing.T) {
 func TestResolveControlPlaneTarget_CorruptContextsErrors(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-	t.Setenv(api.AuthBaseURLEnvVar, "")
 	if err := os.WriteFile(filepath.Join(configDir, "contexts.json"), []byte("{ not valid json"), 0o600); err != nil {
 		t.Fatalf("write corrupt contexts.json: %v", err)
 	}
@@ -96,35 +75,20 @@ func TestResolveControlPlaneTarget_CorruptContextsErrors(t *testing.T) {
 	}
 }
 
-// With no active context, the target falls back to the configured auth origin
-// — the default when ENTIRE_AUTH_BASE_URL is unset, or the env value when set
-// (the env var is the fallback host).
-func TestResolveControlPlaneTarget_NoContextFallsBackToAuthBaseURL(t *testing.T) {
-	t.Run("default when env unset", func(t *testing.T) {
-		configDir := t.TempDir() // empty: no contexts.json
-		t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-		t.Setenv(api.AuthBaseURLEnvVar, "")
+// With no active context there is no identity to act as: the resolver errors
+// with the ErrNotLoggedIn sentinel so callers render the `entire login` hint.
+func TestResolveControlPlaneTarget_NoContextErrsNotLoggedIn(t *testing.T) {
+	configDir := t.TempDir() // empty: no contexts.json
+	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
 
-		target, err := ResolveControlPlaneTarget()
-		if err != nil {
-			t.Fatalf("ResolveControlPlaneTarget: %v", err)
-		}
-		if want := api.AuthBaseURL(); target.CoreURL != want {
-			t.Fatalf("CoreURL = %q, want the default auth origin %q", target.CoreURL, want)
-		}
-	})
-
-	t.Run("env value when set", func(t *testing.T) {
-		configDir := t.TempDir()
-		t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-		t.Setenv(api.AuthBaseURLEnvVar, "https://fallback.example")
-
-		target, err := ResolveControlPlaneTarget()
-		if err != nil {
-			t.Fatalf("ResolveControlPlaneTarget: %v", err)
-		}
-		if want := api.AuthBaseURL(); target.CoreURL != want {
-			t.Fatalf("CoreURL = %q, want the env fallback origin %q", target.CoreURL, want)
-		}
-	})
+	_, err := ResolveControlPlaneTarget()
+	if err == nil {
+		t.Fatal("want not-logged-in error, got nil")
+	}
+	if !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("err = %v, want it to wrap ErrNotLoggedIn", err)
+	}
+	if !strings.Contains(err.Error(), "entire login") {
+		t.Fatalf("err = %q, want the `entire login` hint", err)
+	}
 }

@@ -53,6 +53,31 @@ func (a *PiAgent) GetSupportedHooks() []agent.HookType {
 	}
 }
 
+// Compile-time assertion that Pi can inject context into the model.
+var _ agent.ContextInjector = (*PiAgent)(nil)
+
+// InjectionEvent reports that Pi injects model context at TurnStart
+// (before_agent_start) — the only Pi event where the embedded extension can
+// return a message that Pi stores in the session and sends to the LLM.
+func (a *PiAgent) InjectionEvent() agent.EventType { return agent.TurnStart }
+
+// RenderContextInjection emits a {"inject_context":"..."} envelope on stdout.
+// The embedded extension (entire_extension.ts) reads it from the
+// before_agent_start hook's stdout and returns it to Pi as a hidden persistent
+// message. An empty Text renders nothing.
+func (a *PiAgent) RenderContextInjection(inj agent.ContextInjection) ([]byte, error) {
+	if strings.TrimSpace(inj.Text) == "" {
+		return nil, nil
+	}
+	b, err := json.Marshal(struct {
+		InjectContext string `json:"inject_context"`
+	}{InjectContext: inj.Text})
+	if err != nil {
+		return nil, fmt.Errorf("marshal pi context injection: %w", err)
+	}
+	return append(b, '\n'), nil
+}
+
 // piHookPayload is the JSON the embedded TypeScript extension pipes to
 // `entire hooks pi <event>` on stdin.
 type piHookPayload struct {

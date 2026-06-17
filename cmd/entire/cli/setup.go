@@ -952,6 +952,22 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 		return
 	}
 
+	info, err := gitremote.ParseURL(rawURL)
+	if err != nil {
+		logging.Debug(ctx, "skipping enable report: unparseable origin remote", "error", err)
+		return
+	}
+	if info.Forge == "" {
+		// Trails are only available for remotes that map to a supported forge.
+		// Persist the negative locally even if auth is unavailable so a stale true
+		// cache from a previous origin does not inject on the prompt path. No API
+		// report is useful for non-forge remotes.
+		if err := saveTrailsEnabledForRepo(ctx, false); err != nil {
+			logging.Debug(ctx, "failed to cache trails enablement", "error", err)
+		}
+		return
+	}
+
 	cleanURL, err := cleanRemoteURLForReport(rawURL)
 	if err != nil {
 		logging.Debug(ctx, "skipping enable report: unparseable origin remote", "error", err)
@@ -966,7 +982,19 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 	}
 
 	if _, err := client.ReportEnable(ctx, cleanURL); err != nil {
+		// The enable report is best-effort and independent from the trails cache:
+		// still try the trails probe so a reporting failure doesn't leave the
+		// prompt-path cache stale or unknown.
 		logging.Debug(ctx, "enable report failed", "error", err)
+	}
+
+	enabled, err := client.TrailsEnabled(ctx, info.Forge, info.Owner, info.Repo)
+	if err != nil {
+		logging.Debug(ctx, "trails enablement probe failed", "error", err)
+		return
+	}
+	if err := saveTrailsEnabledForRepo(ctx, enabled); err != nil {
+		logging.Debug(ctx, "failed to cache trails enablement", "error", err)
 	}
 }
 
