@@ -320,18 +320,18 @@ func isGitSequenceOperation(ctx context.Context) bool {
 	}
 
 	// Check for rebase state directories
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-merge")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-apply")); err == nil {
 		return true
 	}
 
 	// Check for cherry-pick and revert state files
-	if _, err := os.Stat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
 		return true
 	}
 
@@ -829,7 +829,7 @@ func warnStaleEndedSessionsTo(ctx context.Context, count int, w io.Writer) {
 	}
 	warnDir := filepath.Join(commonDir, session.SessionStateDirName)
 	warnFile := filepath.Join(warnDir, staleEndedSessionWarnFile)
-	if info, statErr := os.Stat(warnFile); statErr == nil {
+	if info, statErr := os.Lstat(warnFile); statErr == nil {
 		if time.Since(info.ModTime()) < staleEndedSessionWarnInterval {
 			return // rate-limited
 		}

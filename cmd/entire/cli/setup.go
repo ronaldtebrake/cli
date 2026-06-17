@@ -327,13 +327,13 @@ func settingsTargetFile(ctx context.Context, useLocal, useProject bool) (string,
 	// Check project file first, then local.
 	projectAbs, err := paths.AbsPath(ctx, settings.EntireSettingsFile)
 	if err == nil {
-		if _, statErr := os.Stat(projectAbs); statErr == nil {
+		if _, statErr := os.Lstat(projectAbs); statErr == nil {
 			return settings.EntireSettingsFile, configDisplayProject
 		}
 	}
 	localAbs, err := paths.AbsPath(ctx, settings.EntireSettingsLocalFile)
 	if err == nil {
-		if _, statErr := os.Stat(localAbs); statErr == nil {
+		if _, statErr := os.Lstat(localAbs); statErr == nil {
 			return settings.EntireSettingsLocalFile, configDisplayLocal
 		}
 	}
@@ -1258,7 +1258,7 @@ func localExists(ctx context.Context) bool {
 	if abs, err := paths.AbsPath(ctx, localFile); err == nil {
 		localFile = abs
 	}
-	_, err := os.Stat(localFile)
+	_, err := os.Lstat(localFile)
 	return err == nil
 }
 
@@ -1694,7 +1694,7 @@ func determineSettingsTarget(entireDir string, useLocal, useProject bool) (bool,
 
 	// No flags specified - check if settings file exists
 	settingsPath := filepath.Join(entireDir, paths.SettingsFileName)
-	if _, err := os.Stat(settingsPath); err == nil {
+	if _, err := os.Lstat(settingsPath); err == nil {
 		// Settings file exists - auto-redirect to local with notification
 		return true, true
 	}
@@ -1714,7 +1714,7 @@ func setupEntireDirectory(ctx context.Context) (bool, error) { //nolint:unparam 
 
 	// Check if directory already exists
 	created := false
-	if _, err := os.Stat(entireDirAbs); os.IsNotExist(err) {
+	if _, err := os.Lstat(entireDirAbs); os.IsNotExist(err) {
 		created = true
 	}
 
@@ -2151,7 +2151,7 @@ func checkEntireDirExists(ctx context.Context) bool {
 	if err != nil {
 		entireDirAbs = paths.EntireDir
 	}
-	_, err = os.Stat(entireDirAbs)
+	_, err = os.Lstat(entireDirAbs)
 	return err == nil
 }
 
