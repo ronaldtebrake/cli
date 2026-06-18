@@ -635,12 +635,28 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 
 	localBranchCreated := false
 	var remoteBranchPushed bool
+
+	// Don't delete a remote branch we didn't create during cleanup.
+	existedOnOrigin, existErr := branchExistsOnOrigin(branch)
+	if existErr != nil {
+		fmt.Fprintf(errW, "Warning: could not check whether branch %s already exists on origin: %v\n", branch, existErr)
+		existedOnOrigin = true
+	}
+
 	if needsCreation {
-		if err := createBranch(repo, branch); err != nil {
-			return fmt.Errorf("failed to create branch %q: %w", branch, err)
+		if existedOnOrigin {
+			if err := fetchBranchFromOrigin(branch); err != nil {
+				return fmt.Errorf("failed to fetch branch %q from origin: %w", branch, err)
+			}
+			localBranchCreated = true
+			fmt.Fprintf(w, "Fetched branch %s from origin\n", branch)
+		} else {
+			if err := createBranch(repo, branch); err != nil {
+				return fmt.Errorf("failed to create branch %q: %w", branch, err)
+			}
+			localBranchCreated = true
+			fmt.Fprintf(w, "Created branch %s\n", branch)
 		}
-		localBranchCreated = true
-		fmt.Fprintf(w, "Created branch %s\n", branch)
 	} else if currentBranch != branch {
 		fmt.Fprintf(w, "Note: trail will be created for branch %q (not the current branch)\n", branch)
 	}
@@ -649,15 +665,9 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 	// deliver it before creating the trail rather than letting the server
 	// backfill it at the base tip.
 	{
-		// Don't delete a remote branch we didn't create during cleanup.
-		existedOnOrigin, existErr := branchExistsOnOrigin(branch)
-		if existErr != nil {
-			fmt.Fprintf(errW, "Warning: could not check whether branch %s already exists on origin: %v\n", branch, existErr)
-			existedOnOrigin = true
-		}
 		if err := pushBranchToOrigin(branch); err != nil {
 			cleanupCreatedTrailBranch(repo, branch, localBranchCreated, false, errW)
-			return fmt.Errorf("failed to push branch %q to origin: %w\nhint: the trail was not created because its branch could not be delivered to the remote.\n  - if this is an auth error, link your GitHub account and retry\n  - if this is a non-fast-forward, update your base (git fetch && git rebase) and retry", branch, err)
+			return fmt.Errorf("failed to push branch %q to origin: %w\nhint: the trail was not created because its branch could not be delivered to the remote.\n  - if this is an auth error, link your GitHub account and retry\n  - if this is a non-fast-forward, update branch %q from origin and retry", branch, err, branch)
 		}
 		remoteBranchPushed = !existedOnOrigin
 		fmt.Fprintf(w, "Pushed branch %s to origin\n", branch)
@@ -1394,6 +1404,20 @@ func cleanupCreatedTrailBranch(repo *git.Repository, branchName string, localCre
 			fmt.Fprintf(errW, "Warning: failed to delete remote branch %s after trail creation failed: %v\n", branchName, err)
 		}
 	}
+}
+
+func fetchBranchFromOrigin(branchName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := ValidateBranchName(ctx, branchName); err != nil {
+		return err
+	}
+	refspec := fmt.Sprintf("refs/heads/%s:refs/heads/%s", branchName, branchName)
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--no-tags", "origin", refspec)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
 }
 
 // pushBranchToOrigin pushes a branch to the origin remote.
