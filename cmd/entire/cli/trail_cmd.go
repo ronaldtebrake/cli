@@ -612,6 +612,9 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 	if branch == "" {
 		return errors.New("branch name is required")
 	}
+	if err := ValidateBranchName(ctx, branch); err != nil {
+		return err
+	}
 	if statusStr == "" {
 		statusStr = string(trail.StatusOpen)
 	}
