@@ -345,6 +345,71 @@ func TestShellOut_RedactBatchSanitizesSeparatorCollisions(t *testing.T) {
 	}
 }
 
+func TestShellOut_RedactBatchRejectsOversizedInputBeforeCommand(t *testing.T) {
+	t.Parallel()
+	called := false
+	rt := &shellOut{
+		command:        "opf",
+		timeoutSeconds: 5,
+		commandRunner: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			called = true
+			return shCmd(ctx, `cat >/dev/null; printf '{"detected_spans":[]}'`)
+		},
+	}
+
+	_, err := rt.RedactBatch(context.Background(),
+		[]string{strings.Repeat("x", 16*1024*1024+1)},
+		[]string{"private_person"},
+	)
+	if err == nil {
+		t.Fatal("RedactBatch: want oversized input error, got nil")
+	}
+	if !strings.Contains(err.Error(), "opf input too large") {
+		t.Fatalf("RedactBatch error = %v, want input size message", err)
+	}
+	if called {
+		t.Fatal("oversized input should be rejected before starting opf")
+	}
+}
+
+func TestShellOut_RedactBatchCapsStdout(t *testing.T) {
+	t.Parallel()
+	rt := &shellOut{
+		command:        "opf",
+		timeoutSeconds: 5,
+		commandRunner: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "sh", "-c", `head -c 1048577 /dev/zero | tr '\0' x`)
+		},
+	}
+
+	_, err := rt.RedactBatch(context.Background(), []string{"hello world"}, []string{"private_person"})
+	if err == nil {
+		t.Fatal("RedactBatch: want stdout cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "opf stdout exceeded") {
+		t.Fatalf("RedactBatch error = %v, want stdout cap message", err)
+	}
+}
+
+func TestShellOut_RedactBatchCapsStderr(t *testing.T) {
+	t.Parallel()
+	rt := &shellOut{
+		command:        "opf",
+		timeoutSeconds: 5,
+		commandRunner: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "sh", "-c", `head -c 1048577 /dev/zero | tr '\0' x >&2; exit 7`)
+		},
+	}
+
+	_, err := rt.RedactBatch(context.Background(), []string{"hello world"}, []string{"private_person"})
+	if err == nil {
+		t.Fatal("RedactBatch: want stderr cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "opf stderr exceeded") {
+		t.Fatalf("RedactBatch error = %v, want stderr cap message", err)
+	}
+}
+
 func TestShellOut_ExitError_DoesNotLeakStderr(t *testing.T) {
 	t.Parallel()
 	const secret = "Alice met Bob at 555-867-5309"

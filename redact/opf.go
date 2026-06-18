@@ -303,17 +303,24 @@ func newShellOut(command string, timeoutSeconds int) *shellOut {
 	}
 }
 
-// opfBatchSeparator joins inputs into a single opf invocation. opf treats
-// '\n' as a per-input delimiter and runs a fresh inference pass per line,
-// which is no faster than per-call shell-out. Joining with a non-newline
-// separator instead causes opf to treat the concatenation as ONE input and
-// do ONE inference pass, amortizing the model load across all inputs.
-//
-// ASCII RECORD SEPARATOR (U+001E) satisfies both requirements:
-//  1. Doesn't appear in real text (so no collision with content)
-//  2. Looks like whitespace to opf's tokenizer (so it doesn't confuse
-//     span boundaries)
-const opfBatchSeparator = "\x1e"
+const (
+	// opfBatchSeparator joins inputs into a single opf invocation. opf treats
+	// '\n' as a per-input delimiter and runs a fresh inference pass per line,
+	// which is no faster than per-call shell-out. Joining with a non-newline
+	// separator instead causes opf to treat the concatenation as ONE input and
+	// do ONE inference pass, amortizing the model load across all inputs.
+	//
+	// ASCII RECORD SEPARATOR (U+001E) satisfies both requirements:
+	//  1. Doesn't appear in real text (so no collision with content)
+	//  2. Looks like whitespace to opf's tokenizer (so it doesn't confuse
+	//     span boundaries)
+	opfBatchSeparator = "\x1e"
+
+	// Keep a pathological transcript or process from making the CLI allocate
+	// unbounded buffers while preparing or reading an OPF shell-out.
+	opfMaxBatchInputBytes    = 16 * 1024 * 1024
+	opfMaxProcessOutputBytes = 1 * 1024 * 1024
+)
 
 // Redact runs OPF on a single text input.
 func (s *shellOut) Redact(ctx context.Context, text string, categories []string) ([]Span, error) {
@@ -344,11 +351,16 @@ func (s *shellOut) RedactBatch(ctx context.Context, inputs []string, categories 
 	if len(inputs) == 0 || len(categories) == 0 {
 		return nil, nil
 	}
+	batchedLen, tooLarge := opfBatchedInputLen(inputs)
+	if tooLarge {
+		return nil, fmt.Errorf("opf input too large (%d bytes, limit %d)", batchedLen, opfMaxBatchInputBytes)
+	}
 	timeout := time.Duration(s.timeoutSeconds) * time.Second
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var buf strings.Builder
+	buf.Grow(batchedLen)
 	starts := make([]int, len(inputs))
 	for i, in := range inputs {
 		if i > 0 {
@@ -366,9 +378,10 @@ func (s *shellOut) RedactBatch(ctx context.Context, inputs []string, categories 
 		"--no-print-color-coded-text",
 	)
 	cmd.Stdin = strings.NewReader(batched)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := newLimitedOutputBuffer(opfMaxProcessOutputBytes)
+	stderr := newLimitedOutputBuffer(opfMaxProcessOutputBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	// WaitDelay forces cmd.Wait() to return promptly after context
 	// cancellation/timeout even when the killed process leaves descendants
 	// holding the stdout/stderr pipes (e.g. `sh -c "sleep 5"` — killing sh
@@ -377,6 +390,12 @@ func (s *shellOut) RedactBatch(ctx context.Context, inputs []string, categories 
 	cmd.WaitDelay = 500 * time.Millisecond
 
 	if err := cmd.Run(); err != nil {
+		if stdout.Exceeded() {
+			return nil, fmt.Errorf("opf stdout exceeded %d byte limit", stdout.Limit())
+		}
+		if stderr.Exceeded() {
+			return nil, fmt.Errorf("opf stderr exceeded %d byte limit", stderr.Limit())
+		}
 		switch {
 		case errors.Is(callCtx.Err(), context.DeadlineExceeded):
 			return nil, fmt.Errorf("opf timeout after %s: %w", timeout, callCtx.Err())
@@ -387,6 +406,12 @@ func (s *shellOut) RedactBatch(ctx context.Context, inputs []string, categories 
 			return nil, fmt.Errorf("opf exited with error: %w", err)
 		}
 		return nil, fmt.Errorf("opf exited with error (%d bytes on stderr): %w", stderr.Len(), err)
+	}
+	if stdout.Exceeded() {
+		return nil, fmt.Errorf("opf stdout exceeded %d byte limit", stdout.Limit())
+	}
+	if stderr.Exceeded() {
+		return nil, fmt.Errorf("opf stderr exceeded %d byte limit", stderr.Limit())
 	}
 
 	var parsed struct {
@@ -419,6 +444,66 @@ func (s *shellOut) RedactBatch(ctx context.Context, inputs []string, categories 
 		})
 	}
 	return out, nil
+}
+
+func opfBatchedInputLen(inputs []string) (int, bool) {
+	total := 0
+	for i, in := range inputs {
+		if i > 0 {
+			if total > opfMaxBatchInputBytes-len(opfBatchSeparator) {
+				return total + len(opfBatchSeparator), true
+			}
+			total += len(opfBatchSeparator)
+		}
+		if total > opfMaxBatchInputBytes-len(in) {
+			return total + len(in), true
+		}
+		total += len(in)
+	}
+	return total, false
+}
+
+type limitedOutputBuffer struct {
+	buf      bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func newLimitedOutputBuffer(limit int) *limitedOutputBuffer {
+	return &limitedOutputBuffer{limit: limit}
+}
+
+func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		b.exceeded = true
+		return len(p), nil
+	}
+	remaining := b.limit - b.buf.Len()
+	if remaining > 0 {
+		if len(p) <= remaining {
+			_, _ = b.buf.Write(p)
+			return len(p), nil
+		}
+		_, _ = b.buf.Write(p[:remaining])
+	}
+	b.exceeded = true
+	return len(p), nil
+}
+
+func (b *limitedOutputBuffer) Bytes() []byte {
+	return b.buf.Bytes()
+}
+
+func (b *limitedOutputBuffer) Len() int {
+	return b.buf.Len()
+}
+
+func (b *limitedOutputBuffer) Limit() int {
+	return b.limit
+}
+
+func (b *limitedOutputBuffer) Exceeded() bool {
+	return b.exceeded
 }
 
 func sanitizeOPFBatchInput(in string) string {

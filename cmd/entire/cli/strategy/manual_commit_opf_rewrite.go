@@ -196,24 +196,27 @@ const opfRewriteFetchTmpRef = FetchTmpRefPrefix + "opf-rewrite-v1"
 // resolveRemoteV1Tip returns the hash of the remote's
 // entire/checkpoints/v1 tip.
 //
-// When target is a remote name (e.g., "origin"), looks up the local
-// tracking ref `refs/remotes/<target>/entire/checkpoints/v1`. When
-// target is a URL (checkpoint_remote configured), fetches the v1 ref
-// from the URL into a temporary local ref so the rewrite can see what's
-// already on the remote — otherwise every push would re-redact the
-// entire history as a "bootstrap" since URL-based remotes have no
-// tracking refs locally.
+// Fetches the v1 ref from target into a temporary local ref so the
+// rewrite compares against the current remote tip rather than a stale
+// remote-tracking ref. target may be either a remote name (e.g. "origin")
+// or a URL (checkpoint_remote configured). Fetching is especially important
+// for URL-based remotes, which have no tracking refs locally; otherwise every
+// push would re-redact the entire history as a "bootstrap."
 //
 // Returns ZeroHash with no error when the remote has no v1 yet (genuine
 // bootstrap case). Fetch failures fall back to ZeroHash + a warning
 // log; the rewrite then treats the push as bootstrap rather than
 // blocking the user on a transient network issue.
 func resolveRemoteV1Tip(ctx context.Context, repo *git.Repository, target string) (plumbing.Hash, error) {
-	if !remote.IsURL(target) {
-		return readV1Tip(repo, plumbing.NewRemoteReferenceName(target, paths.MetadataBranchName))
-	}
 	srcRef := "refs/heads/" + paths.MetadataBranchName
 	if err := fetchURLIntoTmpRef(ctx, target, srcRef, opfRewriteFetchTmpRef, "v1 for OPF rewrite", true); err != nil {
+		if !remote.IsURL(target) {
+			logging.Warn(ctx, "OPF rewrite: failed to fetch remote v1; using local remote-tracking ref",
+				slog.String("remote", target),
+				slog.String("error", err.Error()),
+			)
+			return readV1Tip(repo, plumbing.NewRemoteReferenceName(target, paths.MetadataBranchName))
+		}
 		logging.Warn(ctx, "OPF rewrite: failed to fetch remote v1 from URL; treating push as bootstrap",
 			slog.String("error", err.Error()),
 		)

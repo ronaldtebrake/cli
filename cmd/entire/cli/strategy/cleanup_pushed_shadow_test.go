@@ -170,3 +170,18 @@ func TestDeleteShadowBranchesIfUnchanged_PreservesMovedBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, newHash, ref.Hash())
 }
+
+func TestDeleteShadowBranchesIfUnchanged_PreservesBranchProtectedAfterSnapshot(t *testing.T) {
+	env := newShadowCleanupEnv(t)
+	shadow := env.addShadowBranch(env.baseHash.String(), "")
+	snapshot := map[string]plumbing.Hash{
+		shadow: env.baseHash,
+	}
+
+	env.addSessionState("s-race", env.baseHash.String(), "", nil, nil, false)
+
+	deleted, failed := DeleteShadowBranchesIfUnchanged(context.Background(), snapshot)
+	require.Empty(t, deleted)
+	require.Equal(t, []string{shadow}, failed)
+	require.True(t, env.branchExists(shadow))
+}

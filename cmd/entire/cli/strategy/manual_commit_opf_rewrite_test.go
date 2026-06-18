@@ -17,6 +17,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/redact"
 	"github.com/go-git/go-git/v6"
+	gitconfig "github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
@@ -311,6 +312,36 @@ func TestRewriteUnpushedV1WithOPF_DivergedRemote_ReturnsV1DivergedError(t *testi
 	require.ErrorAs(t, err, &diverged)
 	require.Equal(t, localTip, diverged.Local)
 	require.Equal(t, remoteTip, diverged.Remote)
+}
+
+func TestResolveRemoteV1Tip_NamedRemoteFetchesLatestTip(t *testing.T) {
+	localDir := t.TempDir()
+	remoteDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.InitRepo(t, remoteDir)
+	t.Chdir(localDir)
+
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	remoteRepo, err := git.PlainOpen(remoteDir)
+	require.NoError(t, err)
+
+	remoteTree := emptyTreeHash(t, remoteRepo)
+	staleRemoteTip := makeOrphanCommit(t, remoteRepo, remoteTree, nil, "stale remote checkpoint tip")
+	latestRemoteTip := makeOrphanCommit(t, remoteRepo, remoteTree, []plumbing.Hash{staleRemoteTip}, "latest remote checkpoint tip")
+	require.NoError(t, remoteRepo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), latestRemoteTip)))
+
+	cfg, err := localRepo.Config()
+	require.NoError(t, err)
+	cfg.Remotes["origin"] = &gitconfig.RemoteConfig{Name: "origin", URLs: []string{remoteDir}}
+	require.NoError(t, localRepo.SetConfig(cfg))
+	require.NoError(t, localRepo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), staleRemoteTip)))
+
+	got, err := resolveRemoteV1Tip(context.Background(), localRepo, "origin")
+	require.NoError(t, err)
+	require.Equal(t, latestRemoteTip, got)
 }
 
 // Bootstrap cap: a single table-driven test covers both the over-limit

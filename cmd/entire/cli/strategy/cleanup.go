@@ -169,11 +169,10 @@ func CleanupPushedShadowBranches(ctx context.Context) (int, error) {
 	// because at least one session still depends on them.
 	protected := map[string]bool{}
 	for _, s := range states {
-		if s.Phase == session.PhaseEnded && s.FullyCondensed && len(s.TurnCheckpointIDs) == 0 {
-			continue // safe — session ended cleanly and finalized
+		shadow, ok := protectedShadowBranchForSession(s)
+		if ok {
+			protected[shadow] = true
 		}
-		shadow := getShadowBranchNameForCommit(s.BaseCommit, s.WorktreeID)
-		protected[shadow] = true
 	}
 
 	toDelete := map[string]plumbing.Hash{}
@@ -208,6 +207,22 @@ func DeleteShadowBranchesIfUnchanged(ctx context.Context, branches map[string]pl
 			failed = append(failed, branch)
 			continue
 		}
+		protected, err := shadowBranchProtectedByCurrentState(ctx, branch)
+		if err != nil {
+			logging.Debug(ctx, "shadow branch unchanged-delete skipped after protection recheck failed",
+				slog.String("branch", branch),
+				slog.String("error", err.Error()),
+			)
+			failed = append(failed, branch)
+			continue
+		}
+		if protected {
+			logging.Debug(ctx, "shadow branch unchanged-delete skipped because current session state protects it",
+				slog.String("branch", branch),
+			)
+			failed = append(failed, branch)
+			continue
+		}
 		ref := "refs/heads/" + branch
 		cmd := exec.CommandContext(ctx, "git", "update-ref", "-d", ref, expected.String())
 		if output, runErr := cmd.CombinedOutput(); runErr != nil {
@@ -223,6 +238,27 @@ func DeleteShadowBranchesIfUnchanged(ctx context.Context, branches map[string]pl
 		deleted = append(deleted, branch)
 	}
 	return deleted, failed
+}
+
+func protectedShadowBranchForSession(s *SessionState) (string, bool) {
+	if s.Phase == session.PhaseEnded && s.FullyCondensed && len(s.TurnCheckpointIDs) == 0 {
+		return "", false // safe — session ended cleanly and finalized
+	}
+	return getShadowBranchNameForCommit(s.BaseCommit, s.WorktreeID), true
+}
+
+func shadowBranchProtectedByCurrentState(ctx context.Context, branch string) (bool, error) {
+	states, err := ListSessionStates(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, s := range states {
+		shadow, ok := protectedShadowBranchForSession(s)
+		if ok && shadow == branch {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // DeleteShadowBranches deletes the specified branches from the repository.
