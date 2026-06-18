@@ -416,6 +416,9 @@ func TestValidateExchangeURL(t *testing.T) {
 	if err := validateExchangeURL("http://localhost:1234/oauth/token", mustParse("http://localhost:1234/api")); err != nil {
 		t.Errorf("loopback http must pass: %v", err)
 	}
+	if err := validateExchangeURL("https://example.test/auth/x", mustParse("https://example.test/api")); err == nil {
+		t.Error("non-/oauth/token path must be refused")
+	}
 }
 
 // TestRoundTripper_TokenCacheReusesExchanged confirms the per-origin

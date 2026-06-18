@@ -339,6 +339,10 @@ func (t *crossJurisRoundTripper) followMisdirected(orig *http.Request, resp *htt
 //     core's /oauth/token always lives on the same origin as its
 //     middleware; off-origin hints have no legitimate use and would
 //     let a misconfigured / hostile core exfiltrate the user's JWT.
+//   - Path must be exactly oauthTokenPath. exchangeSubjectToken strips
+//     that suffix and PostOAuthToken re-appends it; validating it here
+//     keeps that round-trip honest instead of silently POSTing to a
+//     server-chosen path.
 func validateExchangeURL(raw string, requestURL *url.URL) error {
 	if raw == "" {
 		return errors.New("token_exchange_url missing")
@@ -355,6 +359,9 @@ func validateExchangeURL(raw string, requestURL *url.URL) error {
 	}
 	if exchange.Host != requestURL.Host {
 		return fmt.Errorf("token_exchange_url host %q must match response host %q", exchange.Host, requestURL.Host)
+	}
+	if exchange.Path != oauthTokenPath {
+		return fmt.Errorf("token_exchange_url path %q must be %q", exchange.Path, oauthTokenPath)
 	}
 	return nil
 }
