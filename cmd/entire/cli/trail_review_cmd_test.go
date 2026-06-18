@@ -103,6 +103,46 @@ func TestTrailReviewCommentsPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeTrailReviewListOptionsIncludeDismissedBroadensDefaultStatus(t *testing.T) {
+	t.Parallel()
+	opts := defaultTrailReviewListOptions()
+	opts.IncludeDismissed = true
+	got, err := normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		t.Fatalf("normalizeTrailReviewListOptions: %v", err)
+	}
+	if got.Status != trailReviewStatusAny {
+		t.Fatalf("Status = %q, want %q", got.Status, trailReviewStatusAny)
+	}
+
+	opts = defaultTrailReviewListOptions()
+	opts.IncludeDismissed = true
+	opts.StatusChanged = true
+	got, err = normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		t.Fatalf("normalizeTrailReviewListOptions explicit status: %v", err)
+	}
+	if got.Status != trailReviewStatusOpen {
+		t.Fatalf("explicit Status = %q, want open", got.Status)
+	}
+}
+
+func TestNormalizeTrailReviewListOptionsRejectsInvalidFilters(t *testing.T) {
+	t.Parallel()
+	cases := []trailReviewListOptions{
+		{Status: "open,nope", Stale: trailReviewStaleAny, Limit: 1},
+		{Status: trailReviewStatusAny, Severity: "urgent", Stale: trailReviewStaleAny, Limit: 1},
+		{Status: trailReviewStatusAny, Stale: "old", Limit: 1},
+		{Status: trailReviewStatusAny, Stale: trailReviewStaleAny, Limit: 0},
+		{Status: trailReviewStatusAny, Stale: trailReviewStaleAny, Limit: 1, Offset: -1},
+	}
+	for _, opts := range cases {
+		if _, err := normalizeTrailReviewListOptions(opts); err == nil {
+			t.Fatalf("normalizeTrailReviewListOptions(%+v) succeeded, want error", opts)
+		}
+	}
+}
+
 func TestParseTrailSelectorAndCommentID(t *testing.T) {
 	t.Parallel()
 	selector, commentID, err := parseTrailSelectorAndCommentID([]string{trailReviewTestCommentID}, "425")

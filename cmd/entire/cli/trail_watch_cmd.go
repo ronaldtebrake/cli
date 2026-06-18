@@ -375,7 +375,7 @@ func streamOnce(
 		}
 		return streamCloseTransport, lastSeenID, fmt.Errorf("read SSE stream: %w", err)
 	}
-	return streamCloseTransport, lastSeenID, io.ErrUnexpectedEOF
+	return streamCloseTransport, lastSeenID, nil
 }
 
 // printSSEEvent renders a single SSE event in either human-readable or

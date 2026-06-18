@@ -145,6 +145,12 @@ type ClonePreferences struct {
 	// Once true, `entire review` stops prompting on every invocation; the
 	// user can re-enable by editing this file or deleting the key.
 	ReviewMigrationDismissed bool `json:"review_migration_dismissed,omitempty"`
+
+	// TrailsEnabled caches whether trails are enabled for this repository on the
+	// API. Pointer shape distinguishes "unknown/not refreshed yet" (nil) from a
+	// definitive false. This is clone-local and not committed so hook-time agent
+	// context injection can avoid network/auth work on the prompt path.
+	TrailsEnabled *bool `json:"trails_enabled,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
@@ -957,7 +963,7 @@ func IsSetUp(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(settingsFileAbs)
+	_, err = os.Lstat(settingsFileAbs)
 	return err == nil
 }
 

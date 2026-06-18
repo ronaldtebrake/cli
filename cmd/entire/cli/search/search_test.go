@@ -56,9 +56,9 @@ func TestParseGitHubRemote_HTTPSNoGit(t *testing.T) {
 
 func TestParseGitHubRemote_Invalid(t *testing.T) {
 	t.Parallel()
-	_, _, err := ParseGitHubRemote("")
-	if err == nil {
-		t.Error("expected error for empty URL")
+	_, _, err := ParseGitHubRemote("   ")
+	if err == nil || err.Error() != "empty remote URL" {
+		t.Errorf("expected 'empty remote URL' for blank input, got %v", err)
 	}
 
 	_, _, err = ParseGitHubRemote("not-a-url")
@@ -102,6 +102,29 @@ func TestParseGitHubRemote_NonGitHubHTTPS(t *testing.T) {
 	_, _, err := ParseGitHubRemote("https://gitlab.com/entirehq/entire.io.git")
 	if err == nil {
 		t.Error("expected error for non-GitHub HTTPS remote")
+	}
+}
+
+func TestParseGitHubRemote_RejectsExtraPathSegments(t *testing.T) {
+	t.Parallel()
+	for _, remoteURL := range []string{
+		"https://github.com/entirehq/entire.io/extra.git",
+		"entire://aws-us-east-2.entire.io/gh/entirehq/entire.io/extra",
+	} {
+		if _, _, err := ParseGitHubRemote(remoteURL); err == nil {
+			t.Errorf("expected error for malformed remote %q, got none", remoteURL)
+		}
+	}
+}
+
+func TestParseGitHubRemote_EntireMirror(t *testing.T) {
+	t.Parallel()
+	owner, repo, err := ParseGitHubRemote("entire://aws-us-east-2.entire.io/gh/entirehq/entire.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != testOwner || repo != testRepo {
+		t.Errorf("got %s/%s, want %s/%s", owner, repo, testOwner, testRepo)
 	}
 }
 

@@ -158,6 +158,7 @@ type Metadata struct {
 	Title     string     `json:"title"`
 	Body      string     `json:"body"`
 	Status    Status     `json:"status"`
+	Phase     string     `json:"phase,omitempty"`
 	Author    *Author    `json:"author"`
 	Assignees []string   `json:"assignees"`
 	Labels    []string   `json:"labels"`

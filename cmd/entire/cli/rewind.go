@@ -320,7 +320,7 @@ func runRewindInteractive(ctx context.Context, w, errW io.Writer) error { //noli
 		if sessionID == "" {
 			sessionID = filepath.Base(selectedPoint.MetadataDir)
 		}
-		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+		transcriptFile = legacyFallbackTranscriptPath(selectedPoint.MetadataDir)
 	}
 
 	// Try to restore transcript using the appropriate method:
@@ -344,7 +344,7 @@ func runRewindInteractive(ctx context.Context, w, errW io.Writer) error { //noli
 		}
 	}
 
-	if !restored {
+	if !restored && transcriptFile != "" {
 		// Fall back to local file
 		if err := restoreSessionTranscript(ctx, w, transcriptFile, sessionID, agent); err != nil {
 			fmt.Fprintf(errW, "Warning: failed to restore session transcript: %v\n", err)
@@ -523,7 +523,7 @@ func runRewindToInternal(ctx context.Context, w, errW io.Writer, commitID string
 		if sessionID == "" {
 			sessionID = filepath.Base(selectedPoint.MetadataDir)
 		}
-		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+		transcriptFile = legacyFallbackTranscriptPath(selectedPoint.MetadataDir)
 	}
 
 	// Try to restore transcript using the appropriate method:
@@ -547,7 +547,7 @@ func runRewindToInternal(ctx context.Context, w, errW io.Writer, commitID string
 		}
 	}
 
-	if !restored {
+	if !restored && transcriptFile != "" {
 		// Fall back to local file
 		if err := restoreSessionTranscript(ctx, w, transcriptFile, sessionID, agent); err != nil {
 			fmt.Fprintf(errW, "Warning: failed to restore session transcript: %v\n", err)
@@ -663,6 +663,30 @@ func handleLogsOnlyResetNonInteractive(ctx context.Context, w, errW io.Writer, s
 	}
 
 	return nil
+}
+
+// legacyFallbackTranscriptPath builds the local-disk fallback transcript path
+// (<metadataDir>/full.log) used when checkpoint-storage and shadow-branch
+// restores are unavailable. metadataDir originates from the Entire-Metadata
+// commit trailer, which is attacker-influenceable, and the result is read via
+// copyFile -> os.ReadFile with no root containment on the source.
+//
+// Legitimate values are always Entire-owned metadata under .entire/metadata/, so
+// require the cleaned path to stay within that subtree. paths.IsSubpath also
+// rejects absolute, volume-relative, and traversing paths, so a crafted trailer
+// cannot redirect the read to arbitrary in-repo or CWD-relative locations (e.g.
+// "notes/full.log" or "."). Returns "" when the metadata dir is empty or unsafe,
+// which makes the local-file fallback fail closed. filepath.Join cleans the
+// result, avoiding surprising ".//a/../b" forms.
+func legacyFallbackTranscriptPath(metadataDir string) string {
+	if metadataDir == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(metadataDir)
+	if !paths.IsSubpath(paths.EntireMetadataDir, cleaned) {
+		return ""
+	}
+	return filepath.Join(cleaned, paths.TranscriptFileNameLegacy)
 }
 
 func restoreSessionTranscript(ctx context.Context, w io.Writer, transcriptFile, sessionID string, agent agentpkg.Agent) error {

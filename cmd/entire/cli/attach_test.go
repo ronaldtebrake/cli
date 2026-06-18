@@ -1501,6 +1501,11 @@ func setupAttachTestRepo(t *testing.T) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	testutil.InitRepo(t, tmpDir)
+	// attach runs `git commit --amend` via the git CLI, which inherits this
+	// process's env. Pin git config (gc.auto=0, gc.autoDetach=false) so git
+	// doesn't fork a detached `git gc` that keeps writing into the temp repo's
+	// .git/objects and races t.TempDir cleanup ("directory not empty", COR-394).
+	testutil.IsolateGitConfigEnv(t)
 	testutil.WriteFile(t, tmpDir, "init.txt", "init")
 	testutil.GitAdd(t, tmpDir, "init.txt")
 	testutil.GitCommit(t, tmpDir, "init")

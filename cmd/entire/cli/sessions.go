@@ -309,11 +309,11 @@ func sessionWorktreeLabel(s *strategy.SessionState) string {
 // sessionPhaseLabel returns the display status for a session.
 func sessionPhaseLabel(s *strategy.SessionState) string {
 	if s.EndedAt != nil {
-		return "ended"
+		return string(session.PhaseEnded)
 	}
 	status := string(s.Phase)
 	if status == "" {
-		return "idle"
+		return string(session.PhaseIdle)
 	}
 	return status
 }
@@ -567,6 +567,7 @@ type sessionInfoJSON struct {
 	Agent          string         `json:"agent"`
 	Model          string         `json:"model,omitempty"`
 	Status         string         `json:"status"`
+	Branch         string         `json:"branch,omitempty"`
 	WorktreeID     string         `json:"worktree_id,omitempty"`
 	WorktreePath   string         `json:"worktree_path,omitempty"`
 	StartedAt      time.Time      `json:"started_at"`
@@ -600,6 +601,7 @@ func buildSessionInfoJSON(state *strategy.SessionState, status string) sessionIn
 		Agent:          agentLabel,
 		Model:          state.ModelName,
 		Status:         status,
+		Branch:         state.Branch,
 		WorktreeID:     state.WorktreeID,
 		WorktreePath:   state.WorktreePath,
 		StartedAt:      state.StartedAt,

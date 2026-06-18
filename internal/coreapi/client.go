@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ogen-go/ogen/ogenerrors"
@@ -28,6 +29,44 @@ const apiBasePath = "/api/v1"
 // bearer is resolved lazily per request, re-minting silently from the stored
 // refresh token.
 func New() (*Client, error) {
+	// ENTIRE_TOKEN bypass: CI / workload-identity runners inject a short-
+	// lived login or sa-session JWT and want control-plane commands to use
+	// it verbatim, with no contexts.json (the runner never ran `entire
+	// login`) and no keyring (the runner has none). Presence of the var
+	// (LookupEnv, including blank) commits the CLI to this mode.
+	//
+	// Fail-closed: a blank or malformed value is fatal rather than a silent
+	// fallback to contexts.json, which would mask a misconfigured runner.
+	// The token's own aud claim becomes the control-plane origin we dial —
+	// CoreURLFromEnvToken validates aud is a https bare-origin URL, and
+	// makes that the resource the static bearer is sent to.
+	//
+	// NO TRUST GATE — and deliberately so, in contrast to the env-token path
+	// in cmd/git-remote-entire/main.go:resolveEnvTokenCreds. That path derives
+	// coreURL from the same unverified aud claim, then gates it through
+	// clusterdiscovery.ResolveClusterCores + coreTrusted, anchored to the host
+	// the user typed in the clone URL — exactly the verification
+	// CoreURLFromEnvToken's doc mandates of callers. We cannot reuse that gate:
+	// control-plane commands have no user-supplied resource host to anchor
+	// against, so coreURL would only ever be the token's own (unverified) aud,
+	// gating it against itself. We skip it because aud-redirection carries no
+	// escalation here: git-remote uses the env token as an STS subject_token
+	// (exchanged via repocreds for a repo-scoped credential), whereas coreapi
+	// sends the token verbatim as the control-plane bearer — the token IS the
+	// credential, so re-pointing aud at an attacker host requires already
+	// holding a valid token and yields nothing the holder didn't already have.
+	if raw, ok := os.LookupEnv(auth.EnvTokenVar); ok {
+		envToken := strings.TrimSpace(raw)
+		if envToken == "" {
+			return nil, fmt.Errorf("%s is set but blank", auth.EnvTokenVar)
+		}
+		coreURL, err := auth.CoreURLFromEnvToken(envToken)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CoreURLFromEnvToken already prefixes with EnvTokenVar
+		}
+		return NewWithBearer(coreURL, envToken)
+	}
+
 	target, err := auth.ResolveControlPlaneTarget()
 	if err != nil {
 		return nil, fmt.Errorf("resolve control-plane target: %w", err)

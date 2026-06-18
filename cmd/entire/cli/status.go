@@ -72,11 +72,11 @@ func runStatus(ctx context.Context, w io.Writer, detailed, jsonOutput bool) erro
 	}
 
 	// Check which settings files exist
-	_, projectErr := os.Stat(settingsPath)
+	_, projectErr := os.Lstat(settingsPath)
 	if projectErr != nil && !errors.Is(projectErr, fs.ErrNotExist) {
 		return fmt.Errorf("cannot access project settings file: %w", projectErr)
 	}
-	_, localErr := os.Stat(localSettingsPath)
+	_, localErr := os.Lstat(localSettingsPath)
 	if localErr != nil && !errors.Is(localErr, fs.ErrNotExist) {
 		return fmt.Errorf("cannot access local settings file: %w", localErr)
 	}
@@ -591,11 +591,11 @@ func runStatusJSON(ctx context.Context, w io.Writer) error {
 		localSettingsPath = EntireSettingsLocalFile
 	}
 
-	_, projectErr := os.Stat(settingsPath)
+	_, projectErr := os.Lstat(settingsPath)
 	if projectErr != nil && !errors.Is(projectErr, fs.ErrNotExist) {
 		return writeJSON(statusJSON{Error: fmt.Sprintf("cannot access project settings file: %v", projectErr)})
 	}
-	_, localErr := os.Stat(localSettingsPath)
+	_, localErr := os.Lstat(localSettingsPath)
 	if localErr != nil && !errors.Is(localErr, fs.ErrNotExist) {
 		return writeJSON(statusJSON{Error: fmt.Sprintf("cannot access local settings file: %v", localErr)})
 	}

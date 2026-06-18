@@ -106,6 +106,14 @@ type State struct {
 	// Derived from .git/worktrees/<name>/, stable across git worktree move
 	WorktreeID string `json:"worktree_id,omitempty"`
 
+	// Branch is the git branch HEAD pointed at the last time this session took a
+	// turn. Captured on each turn start so it tracks branches created or renamed
+	// after the session began. Empty when HEAD was detached or for sessions
+	// recorded before this field existed (callers derive it from commit trailers
+	// as a fallback). Lets `entire resume` map a stopped session back to its
+	// branch without the user remembering it.
+	Branch string `json:"branch,omitempty"`
+
 	// StartedAt is when the session was started
 	StartedAt time.Time `json:"started_at"`
 
@@ -224,6 +232,15 @@ type State struct {
 	// AttachedManually indicates this session was imported via `entire attach` rather
 	// than being captured by hooks during normal agent execution.
 	AttachedManually bool `json:"attached_manually,omitempty"`
+
+	// ContextInjectionDecided records that the once-per-session model-context
+	// injection (e.g. the `entire trail` pointer) has been handled for this
+	// session, so the dispatcher does not re-inject on later turns. Set on the
+	// first normal turn regardless of whether anything was injected: the prompt
+	// path reads only clone-local cached trail enablement, and a missing/stale
+	// false cache fails closed (miss the hint) rather than retrying/spamming.
+	// Review/investigate sessions leave this false because they skip injection.
+	ContextInjectionDecided bool `json:"context_injection_decided,omitempty"`
 
 	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor")
 	AgentType types.AgentType `json:"agent_type,omitempty"`
