@@ -108,7 +108,7 @@ func newRepoMirrorCollaboratorsAddCmd() *cobra.Command {
 				if jsonRequested(cmd) {
 					return printJSON(cmd.OutOrStdout(), granted)
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "Granted %s %s on github.com/%s/%s (%s)\n", handle, role, owner, repo, clusterHost)
+				cmd.Printf("Granted %s %s on github.com/%s/%s (%s)\n", handle, role, owner, repo, clusterHost)
 				return nil
 			})
 		},
