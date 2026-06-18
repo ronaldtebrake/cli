@@ -515,6 +515,22 @@ func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string,
 // promptCrewModel picks a model for a slot: Default, an advertised model, or a
 // Custom… free-text value. Returns "" for the agent's own default.
 func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, error) {
+	options, picked := reviewModelSelectOptions(ctx, agentName, seedModel)
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Model for " + labelForSimpleAgent(agentName)).
+			Description("Pick a model, Default, or Custom… to type any value.").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("review inspector model: %w", err)
+	}
+	return resolvePickedReviewModel(ctx, agentName, picked)
+}
+
+func reviewModelSelectOptions(ctx context.Context, agentName, seedModel string) ([]huh.Option[string], string) {
 	models := listAgentModelOptions(ctx, agentName)
 	options := make([]huh.Option[string], 0, len(models)+2)
 	options = append(options, huh.NewOption("Default (agent's own default model)", reviewModelDefaultSentinel))
@@ -540,17 +556,10 @@ func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, 
 	if seedModel != "" {
 		picked = seedModel
 	}
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Model for " + labelForSimpleAgent(agentName)).
-			Description("Pick a model, Default, or Custom… to type any value.").
-			Options(options...).
-			Height(reviewPickerHeight(len(options))).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review inspector model: %w", err)
-	}
+	return options, picked
+}
+
+func resolvePickedReviewModel(ctx context.Context, agentName, picked string) (string, error) {
 	switch picked {
 	case reviewModelDefaultSentinel:
 		return "", nil
@@ -843,26 +852,33 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 			existing[string(c.name)].Skills, curated, discovered,
 		)
 		prompt := existing[string(c.name)].Prompt
-		// Inspectors run on the agent's default model (guided setup no longer asks
-		// for one), so the advanced picker doesn't prompt for a model either. Any
-		// model set via scripted config is preserved untouched.
-		model := existing[string(c.name)].Model
+		modelOptions, pickedModel := reviewModelSelectOptions(ctx, string(c.name), existing[string(c.name)].Model)
 
 		fields := BuildReviewPickerFields(
 			string(c.name), curated, discovered, activeHints, prompt,
 			&builtinPicks, &discoveredPicks, &prompt,
 		)
+		fields = append(fields, huh.NewSelect[string]().
+			Title("Model for "+string(c.ag.Type())).
+			Description("Pick a model, Default, or Custom… to type any value.").
+			Options(modelOptions...).
+			Height(reviewPickerHeight(len(modelOptions))).
+			Value(&pickedModel))
 
 		// Prepend a non-blocking header Note so the agent being configured
 		// is always clearly visible.
 		header := huh.NewNote().
 			Title(string(c.ag.Type())).
-			Description(fmt.Sprintf("Agent %d of %d · pick review skills and optional instructions", i+1, len(configurable)))
+			Description(fmt.Sprintf("Agent %d of %d · pick review skills, model, and optional instructions", i+1, len(configurable)))
 		fields = append([]huh.Field{header}, fields...)
 
 		form := newAccessibleForm(huh.NewGroup(fields...))
 		if err := form.RunWithContext(ctx); err != nil {
 			return nil, fmt.Errorf("picker for %s: %w", c.name, err)
+		}
+		model, err := resolvePickedReviewModel(ctx, string(c.name), pickedModel)
+		if err != nil {
+			return nil, err
 		}
 
 		cfg := settings.ReviewConfig{
