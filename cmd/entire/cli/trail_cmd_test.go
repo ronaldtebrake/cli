@@ -223,6 +223,64 @@ func TestConfirmTrailDeletion(t *testing.T) {
 	}
 }
 
+func TestDeleteTrailByNumber(t *testing.T) {
+	t.Parallel()
+
+	t.Run("deletes via the integer number path and accepts ok:true", func(t *testing.T) {
+		t.Parallel()
+		var gotMethod, gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotMethod, gotPath = r.Method, r.URL.Path
+			if err := json.NewEncoder(w).Encode(api.TrailDeleteResponse{OK: true}); err != nil {
+				t.Errorf("encode response: %v", err)
+			}
+		}))
+		defer srv.Close()
+
+		client := api.NewClientWithBaseURL("tok", srv.URL)
+		if err := deleteTrailByNumber(t.Context(), client, "gh", "acme", "repo", 575); err != nil {
+			t.Fatalf("deleteTrailByNumber: %v", err)
+		}
+		if gotMethod != http.MethodDelete {
+			t.Fatalf("method = %q, want DELETE", gotMethod)
+		}
+		if want := "/api/v1/trails/gh/acme/repo/575"; gotPath != want {
+			t.Fatalf("path = %q, want %q (integer number, not UUID)", gotPath, want)
+		}
+	})
+
+	t.Run("treats a 2xx without ok:true as failure", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if err := json.NewEncoder(w).Encode(api.TrailDeleteResponse{OK: false}); err != nil {
+				t.Errorf("encode response: %v", err)
+			}
+		}))
+		defer srv.Close()
+
+		client := api.NewClientWithBaseURL("tok", srv.URL)
+		if err := deleteTrailByNumber(t.Context(), client, "gh", "acme", "repo", 575); err == nil {
+			t.Fatal("expected error for 2xx without ok:true, got nil")
+		}
+	})
+
+	t.Run("surfaces a non-2xx status", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			if err := json.NewEncoder(w).Encode(map[string]string{"error": "Trail not found"}); err != nil {
+				t.Errorf("encode response: %v", err)
+			}
+		}))
+		defer srv.Close()
+
+		client := api.NewClientWithBaseURL("tok", srv.URL)
+		if err := deleteTrailByNumber(t.Context(), client, "gh", "acme", "repo", 999); err == nil {
+			t.Fatal("expected error for 404, got nil")
+		}
+	})
+}
+
 // Not parallel: uses t.Chdir() to point ResolveRemoteRepo at a fake repo.
 func TestResolveTrailRemote_RejectsUnsupportedForge(t *testing.T) {
 	repoDir := t.TempDir()

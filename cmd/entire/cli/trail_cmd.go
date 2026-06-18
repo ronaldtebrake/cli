@@ -947,7 +947,7 @@ func parseTrailNumberArg(args []string) (int, error) {
 	}
 	n, err := strconv.Atoi(args[0])
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("invalid trail number %q", args[0])
+		return 0, fmt.Errorf("invalid trail number %q: expected a positive integer (see 'entire trail list')", args[0])
 	}
 	return n, nil
 }
@@ -1027,30 +1027,36 @@ func runTrailDelete(cmd *cobra.Command, number int, branch string, force bool) e
 			return nil
 		}
 
-		resp, err := client.Delete(ctx, trailNumberPath(forge, owner, repo, number))
-		if err != nil {
-			return fmt.Errorf("failed to delete trail: %w", err)
-		}
-		defer resp.Body.Close()
-		if err := checkTrailResponse(resp); err != nil {
+		if err := deleteTrailByNumber(ctx, client, forge, owner, repo, number); err != nil {
 			return err
-		}
-
-		// Verify the server's success signal. CheckResponse accepts any 2xx and
-		// the body is otherwise never read, so a destructive delete could report
-		// success on an unexpected/incomplete 2xx; decoding guards that (and
-		// drains the body for connection reuse).
-		var delResp api.TrailDeleteResponse
-		if err := api.DecodeJSON(resp, &delResp); err != nil {
-			return fmt.Errorf("failed to decode delete response: %w", err)
-		}
-		if !delResp.OK {
-			return fmt.Errorf("trail API did not confirm deletion of trail #%d", number)
 		}
 
 		fmt.Fprintf(w, "Deleted trail #%d\n", number)
 		return nil
 	})
+}
+
+// deleteTrailByNumber deletes the trail with the given integer number and
+// verifies the server's {ok:true} signal. CheckResponse accepts any 2xx and the
+// body is otherwise unread, so a destructive delete must confirm ok before
+// reporting success (decoding also drains the body for connection reuse).
+func deleteTrailByNumber(ctx context.Context, client *api.Client, forge, owner, repo string, number int) error {
+	resp, err := client.Delete(ctx, trailNumberPath(forge, owner, repo, number))
+	if err != nil {
+		return fmt.Errorf("failed to delete trail: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := checkTrailResponse(resp); err != nil {
+		return err
+	}
+	var delResp api.TrailDeleteResponse
+	if err := api.DecodeJSON(resp, &delResp); err != nil {
+		return fmt.Errorf("failed to decode delete response: %w", err)
+	}
+	if !delResp.OK {
+		return fmt.Errorf("trail API did not confirm deletion of trail #%d", number)
+	}
+	return nil
 }
 
 // confirmTrailDeletion decides whether a trail delete should proceed. With
