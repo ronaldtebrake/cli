@@ -769,38 +769,75 @@ func buildTrailReviewCommentLocation(opts trailReviewCommentAddOptions) (api.Tra
 // start a review session, then submit a one-item comment batch under it. It
 // returns the created (or already-existing) finding.
 func createTrailReviewFinding(ctx context.Context, client *api.Client, trailID string, input api.TrailReviewCommentInput) (api.TrailReviewComment, error) {
-	review, err := startTrailReview(ctx, client, trailID)
+	findings, err := createTrailReviewFindings(ctx, client, trailID, []api.TrailReviewCommentInput{input})
 	if err != nil {
 		return api.TrailReviewComment{}, err
 	}
-	resp, err := client.Post(ctx, trailReviewBatchCommentsPath(trailID, review.ReviewID), api.TrailReviewCommentBatchRequest{
-		Comments: []api.TrailReviewCommentInput{input},
-	})
+	if len(findings) == 0 {
+		return api.TrailReviewComment{}, errors.New("create finding: server returned no results")
+	}
+	return findings[0], nil
+}
+
+// createTrailReviewFindings posts findings through one trail review session,
+// chunking by the server-advertised batch limit when present.
+func createTrailReviewFindings(ctx context.Context, client *api.Client, trailID string, inputs []api.TrailReviewCommentInput) ([]api.TrailReviewComment, error) {
+	if len(inputs) == 0 {
+		return nil, errors.New("create finding: no findings to post")
+	}
+	review, err := startTrailReview(ctx, client, trailID)
 	if err != nil {
-		return api.TrailReviewComment{}, fmt.Errorf("create finding: %w", err)
+		return nil, err
+	}
+	limit := review.Limits.MaxCommentsPerBatch
+	if limit <= 0 || limit > len(inputs) {
+		limit = len(inputs)
+	}
+	findings := make([]api.TrailReviewComment, 0, len(inputs))
+	for start := 0; start < len(inputs); start += limit {
+		end := start + limit
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		batchFindings, err := postTrailReviewFindingBatch(ctx, client, trailID, review.ReviewID, inputs[start:end])
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, batchFindings...)
+	}
+	return findings, nil
+}
+
+func postTrailReviewFindingBatch(ctx context.Context, client *api.Client, trailID, reviewID string, inputs []api.TrailReviewCommentInput) ([]api.TrailReviewComment, error) {
+	resp, err := client.Post(ctx, trailReviewBatchCommentsPath(trailID, reviewID), api.TrailReviewCommentBatchRequest{Comments: inputs})
+	if err != nil {
+		return nil, fmt.Errorf("create finding: %w", err)
 	}
 	defer resp.Body.Close()
 	if err := checkTrailResponse(resp); err != nil {
-		return api.TrailReviewComment{}, err
+		return nil, err
 	}
 	var batch api.TrailReviewCommentBatchResponse
 	if err := api.DecodeJSON(resp, &batch); err != nil {
-		return api.TrailReviewComment{}, fmt.Errorf("decode finding batch response: %w", err)
+		return nil, fmt.Errorf("decode finding batch response: %w", err)
 	}
 	if len(batch.Results) == 0 {
-		return api.TrailReviewComment{}, errors.New("create finding: server returned no results")
+		return nil, errors.New("create finding: server returned no results")
 	}
-	result := batch.Results[0]
-	if result.Status == trailReviewBatchResultError {
-		if result.Error != nil {
-			return api.TrailReviewComment{}, fmt.Errorf("create finding: %s: %s", result.Error.Code, result.Error.Message)
+	findings := make([]api.TrailReviewComment, 0, len(batch.Results))
+	for _, result := range batch.Results {
+		if result.Status == trailReviewBatchResultError {
+			if result.Error != nil {
+				return nil, fmt.Errorf("create finding: %s: %s", result.Error.Code, result.Error.Message)
+			}
+			return nil, errors.New("create finding: server reported an error")
 		}
-		return api.TrailReviewComment{}, errors.New("create finding: server reported an error")
+		if result.Comment == nil {
+			return nil, errors.New("create finding: server did not return the finding")
+		}
+		findings = append(findings, *result.Comment)
 	}
-	if result.Comment == nil {
-		return api.TrailReviewComment{}, errors.New("create finding: server did not return the finding")
-	}
-	return *result.Comment, nil
+	return findings, nil
 }
 
 // startTrailReview opens a review session for a trail. The body is left empty

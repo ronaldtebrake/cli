@@ -7,12 +7,14 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/api"
 )
 
+const testWholeChangeGranularity = "whole_change"
+
 func TestReviewTrailFindingInput(t *testing.T) {
 	// Regression: a review verdict is not tied to a file/line, so the finding
 	// must use whole_change granularity. An empty granularity is rejected by
 	// the API with a 400.
 	in := reviewTrailFindingInput("general", "  the verdict  ")
-	if in.Location.Granularity != "whole_change" {
+	if in.Location.Granularity != testWholeChangeGranularity {
 		t.Errorf("granularity = %q, want whole_change", in.Location.Granularity)
 	}
 	if in.ClientID == "" {
@@ -27,8 +29,65 @@ func TestReviewTrailFindingInput(t *testing.T) {
 	if bare.Body == nil || *bare.Body != "bare verdict" {
 		t.Errorf("body = %v, want exactly %q", bare.Body, "bare verdict")
 	}
-	if bare.Location.Granularity != "whole_change" {
+	if bare.Location.Granularity != testWholeChangeGranularity {
 		t.Errorf("granularity = %q, want whole_change", bare.Location.Granularity)
+	}
+}
+
+func TestReviewTrailFindingInputsSplitsTopLevelBullets(t *testing.T) {
+	verdict := `REQUEST CHANGES - multiple issues.
+
+- **[P1] First issue:** fix the first thing
+  with continuation detail
+- **[P2] Second issue:** fix the second thing
+  - nested detail stays with second
+- **[Low] Third issue:** remove the note`
+
+	inputs := reviewTrailFindingInputs("general", verdict)
+	if len(inputs) != 3 {
+		t.Fatalf("inputs = %d, want 3", len(inputs))
+	}
+	bodies := make([]string, len(inputs))
+	for i, in := range inputs {
+		if in.Location.Granularity != testWholeChangeGranularity {
+			t.Fatalf("input %d granularity = %q, want whole_change", i, in.Location.Granularity)
+		}
+		if in.ClientID == "" {
+			t.Fatalf("input %d missing client id", i)
+		}
+		if in.Body == nil {
+			t.Fatalf("input %d body is nil", i)
+		}
+		bodies[i] = *in.Body
+		if !strings.Contains(bodies[i], "Review finding (profile: general)") {
+			t.Fatalf("body %d missing finding/profile header: %q", i, bodies[i])
+		}
+	}
+	if !strings.Contains(bodies[0], "First issue") || !strings.Contains(bodies[0], "with continuation detail") {
+		t.Fatalf("first body did not preserve first finding: %q", bodies[0])
+	}
+	if !strings.Contains(bodies[1], "Second issue") || !strings.Contains(bodies[1], "nested detail stays with second") {
+		t.Fatalf("second body did not preserve nested detail: %q", bodies[1])
+	}
+	if strings.Contains(bodies[0], "Second issue") || strings.Contains(bodies[1], "Third issue") {
+		t.Fatalf("bodies were not split cleanly: %#v", bodies)
+	}
+}
+
+func TestReviewTrailFindingInputsSingleVerdictUnchanged(t *testing.T) {
+	inputs := reviewTrailFindingInputs("general", "APPROVE - no actionable findings.")
+	if len(inputs) != 1 {
+		t.Fatalf("inputs = %d, want 1", len(inputs))
+	}
+	if inputs[0].Body == nil || !strings.Contains(*inputs[0].Body, "Review verdict (profile: general)") {
+		t.Fatalf("single body = %v, want verdict/profile header", inputs[0].Body)
+	}
+}
+
+func TestSplitReviewVerdictFindingsNumberedList(t *testing.T) {
+	items := splitReviewVerdictFindings("Verdict\n\n1. First\n2. Second")
+	if len(items) != 2 || items[0] != "First" || items[1] != "Second" {
+		t.Fatalf("items = %#v, want numbered findings", items)
 	}
 }
 

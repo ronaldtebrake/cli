@@ -81,7 +81,7 @@ Consolidate the inspector reports into one verdict — judge critically, don't j
 
 Output exactly this, nothing else:
   - One line: the verdict (approve / approve with nits / request changes) and a one-sentence reason.
-  - Then a short bullet list of actionable findings, most important first, one line each with a file/symbol pointer. Omit the list entirely when nothing is actionable.
+  - Then a short bullet list of actionable findings, most important first, one issue per bullet, one line each with a file/symbol pointer. Omit the list entirely when nothing is actionable.
 
 No preamble, no section headings, no restating the diff or task, no filler. Be proportional: a clean change is a single line.`)
 

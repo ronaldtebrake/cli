@@ -22,6 +22,8 @@ import (
 const (
 	trailReviewApplyOriginalContent = "hello\nold\n"
 	trailReviewTestCommentID        = "cmt_1"
+	trailReviewTestStartPath        = "/api/v1/trails/trl_1/reviews"
+	trailReviewTestCommentsPath     = "/api/v1/trails/trl_1/reviews/rvw_1/comments"
 )
 
 func TestTrailCommandSurfaceUsesFindings(t *testing.T) {
@@ -238,10 +240,10 @@ func TestCreateTrailReviewFindingStartsReviewThenPostsBatch(t *testing.T) {
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/trails/trl_1/reviews":
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestStartPath:
 			startCalled = true
 			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/trails/trl_1/reviews/rvw_1/comments":
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestCommentsPath:
 			batchCalled = true
 			if err := json.NewDecoder(r.Body).Decode(&gotBatch); err != nil {
 				t.Fatalf("decode batch body: %v", err)
@@ -284,12 +286,58 @@ func TestCreateTrailReviewFindingStartsReviewThenPostsBatch(t *testing.T) {
 	}
 }
 
+func TestCreateTrailReviewFindingsPostsOneBatch(t *testing.T) {
+	var (
+		gotBatch   api.TrailReviewCommentBatchRequest
+		startCalls int
+		batchCalls int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestStartPath:
+			startCalls++
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1", Limits: api.TrailReviewLimits{MaxCommentsPerBatch: 10}})
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestCommentsPath:
+			batchCalls++
+			if err := json.NewDecoder(r.Body).Decode(&gotBatch); err != nil {
+				t.Fatalf("decode batch body: %v", err)
+			}
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentBatchResponse{Results: []api.TrailReviewCommentBatchResult{
+				{ClientID: "c1", Status: "created", Comment: &api.TrailReviewComment{ID: "cm_1", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusOpen}},
+				{ClientID: "c2", Status: "created", Comment: &api.TrailReviewComment{ID: "cm_2", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusOpen}},
+			}})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+	t.Setenv(api.BaseURLEnvVar, srv.URL)
+	client := api.NewClient("tok")
+
+	created, err := createTrailReviewFindings(context.Background(), client, "trl_1", []api.TrailReviewCommentInput{
+		{ClientID: "c1", Body: trailReviewStrPtr("first"), Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"}},
+		{ClientID: "c2", Body: trailReviewStrPtr("second"), Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"}},
+	})
+	if err != nil {
+		t.Fatalf("createTrailReviewFindings: %v", err)
+	}
+	if startCalls != 1 || batchCalls != 1 {
+		t.Fatalf("startCalls=%d batchCalls=%d, want 1/1", startCalls, batchCalls)
+	}
+	if len(created) != 2 {
+		t.Fatalf("created = %d, want 2", len(created))
+	}
+	if len(gotBatch.Comments) != 2 {
+		t.Fatalf("batch comments = %#v, want 2", gotBatch.Comments)
+	}
+}
+
 func TestCreateTrailReviewFindingSurfacesBatchError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/trails/trl_1/reviews":
+		case trailReviewTestStartPath:
 			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1"})
-		case "/api/v1/trails/trl_1/reviews/rvw_1/comments":
+		case trailReviewTestCommentsPath:
 			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentBatchResponse{Results: []api.TrailReviewCommentBatchResult{{
 				ClientID: "c1",
 				Status:   "error",

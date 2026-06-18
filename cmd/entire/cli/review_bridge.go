@@ -45,19 +45,23 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 	if strings.TrimSpace(verdict) == "" {
 		return errors.New("no review output to post")
 	}
-	input := reviewTrailFindingInput(profileName, verdict)
+	inputs := reviewTrailFindingInputs(profileName, verdict)
 	return runAuthenticatedDataAPI(ctx, out, false, func(ctx context.Context, client *api.Client) error {
 		target, err := resolveTrailReviewTarget(ctx, client, "")
 		if err != nil {
 			return err
 		}
-		if _, err := createTrailReviewFinding(ctx, client, target.Trail.ID, input); err != nil {
+		if _, err := createTrailReviewFindings(ctx, client, target.Trail.ID, inputs); err != nil {
 			return err
 		}
+		findingWord := "findings"
+		if len(inputs) == 1 {
+			findingWord = "finding"
+		}
 		if target.Trail.Number > 0 {
-			fmt.Fprintf(out, "Posted the review verdict to trail #%d as a finding.\n", target.Trail.Number)
+			fmt.Fprintf(out, "Posted the review verdict to trail #%d as %d %s.\n", target.Trail.Number, len(inputs), findingWord)
 		} else {
-			fmt.Fprintln(out, "Posted the review verdict to the trail as a finding.")
+			fmt.Fprintf(out, "Posted the review verdict to the trail as %d %s.\n", len(inputs), findingWord)
 		}
 		if link := trailWebURL(target); link != "" {
 			fmt.Fprintf(out, "View the trail: %s\n", link)
@@ -66,19 +70,90 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 	})
 }
 
-// reviewTrailFindingInput builds the trail finding payload for a review verdict.
-// The verdict spans the whole change, so it uses "whole_change" granularity: the
-// API requires a valid granularity and rejects a zero/empty value with a 400.
+// reviewTrailFindingInput builds the trail finding payload for one review
+// verdict. The verdict spans the whole change, so it uses "whole_change"
+// granularity: the API requires a valid granularity and rejects a zero/empty
+// value with a 400.
 func reviewTrailFindingInput(profileName, verdict string) api.TrailReviewCommentInput {
-	body := strings.TrimSpace(verdict)
+	return reviewTrailFindingInputWithKind(profileName, verdict, "verdict")
+}
+
+// reviewTrailFindingInputs turns a final review verdict into trail findings. If
+// the verdict contains multiple top-level bullet findings, post them separately
+// so a custom or weak judge prompt cannot create one mega-finding on the trail.
+func reviewTrailFindingInputs(profileName, verdict string) []api.TrailReviewCommentInput {
+	items := splitReviewVerdictFindings(verdict)
+	if len(items) <= 1 {
+		return []api.TrailReviewCommentInput{reviewTrailFindingInput(profileName, verdict)}
+	}
+	inputs := make([]api.TrailReviewCommentInput, 0, len(items))
+	for _, item := range items {
+		inputs = append(inputs, reviewTrailFindingInputWithKind(profileName, item, "finding"))
+	}
+	return inputs
+}
+
+func reviewTrailFindingInputWithKind(profileName, text, kind string) api.TrailReviewCommentInput {
+	body := strings.TrimSpace(text)
 	if p := strings.TrimSpace(profileName); p != "" {
-		body = fmt.Sprintf("Review verdict (profile: %s)\n\n%s", p, body)
+		body = fmt.Sprintf("Review %s (profile: %s)\n\n%s", kind, p, body)
 	}
 	return api.TrailReviewCommentInput{
 		ClientID: generateTrailReviewClientID(),
 		Body:     stringPtr(body),
 		Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"},
 	}
+}
+
+func splitReviewVerdictFindings(verdict string) []string {
+	var findings []string
+	var current strings.Builder
+	flush := func() {
+		item := strings.TrimSpace(current.String())
+		current.Reset()
+		if item != "" {
+			findings = append(findings, item)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(verdict), "\n") {
+		if item, ok := topLevelBulletText(line); ok {
+			flush()
+			current.WriteString(item)
+			continue
+		}
+		if current.Len() == 0 {
+			continue
+		}
+		current.WriteByte('\n')
+		current.WriteString(line)
+	}
+	flush()
+	return findings
+}
+
+func topLevelBulletText(line string) (string, bool) {
+	trimmedRight := strings.TrimRight(line, " \t")
+	leading := len(trimmedRight) - len(strings.TrimLeft(trimmedRight, " \t"))
+	if leading != 0 {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(trimmedRight)
+	if len(trimmed) < 3 {
+		return "", false
+	}
+	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ ") {
+		return strings.TrimSpace(trimmed[2:]), true
+	}
+	for i, r := range trimmed {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '.' && i > 0 && i+1 < len(trimmed) && trimmed[i+1] == ' ' {
+			return strings.TrimSpace(trimmed[i+2:]), true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // trailWebURL builds the browser URL for a trail, matching the server's
