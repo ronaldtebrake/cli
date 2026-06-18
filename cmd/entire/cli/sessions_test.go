@@ -2384,6 +2384,35 @@ func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 	}
 }
 
+func TestCheckpointTokensCmd_RejectsSelfComparison(t *testing.T) {
+	repo, _ := runExplainAutoTestRepo(t)
+	ctx := context.Background()
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
+	cpID := id.MustCheckpointID("abc222abc222")
+
+	writeCommittedTokenCheckpoint(ctx, t, store, cpID, "checkpoint-token-self-compare", &agent.TokenUsage{
+		InputTokens:  100,
+		OutputTokens: 50,
+		APICallCount: 1,
+	})
+
+	cmd := newCheckpointGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"tokens", "abc222", "--compare", "abc222abc222"})
+
+	err := cmd.ExecuteContext(ctx)
+	if err == nil {
+		t.Fatal("expected self-comparison error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot compare checkpoint abc222abc222 to itself") {
+		t.Fatalf("expected self-comparison error, got: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no report output for self-comparison, got:\n%s", stdout.String())
+	}
+}
+
 func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()

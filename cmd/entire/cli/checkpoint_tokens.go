@@ -117,6 +117,10 @@ func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPr
 		if err != nil {
 			return tokenCommandError(err)
 		}
+		if baselineReport.CheckpointID == report.CheckpointID {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("cannot compare checkpoint %s to itself", report.CheckpointID)
+		}
 		report.Comparison = buildCheckpointTokensComparison(report, baselineReport)
 	}
 
