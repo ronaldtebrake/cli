@@ -61,6 +61,33 @@ func (p *stringWrappedCtxProcess) Wait() error {
 	return errors.New("agent failed: " + p.ctx.Err().Error())
 }
 
+type delayedWaitReviewer struct {
+	name    string
+	delay   time.Duration
+	waitErr error
+}
+
+func (r *delayedWaitReviewer) Name() string { return r.name }
+func (r *delayedWaitReviewer) Start(context.Context, reviewtypes.RunConfig) (reviewtypes.Process, error) {
+	return &delayedWaitProcess{delay: r.delay, waitErr: r.waitErr}, nil
+}
+
+type delayedWaitProcess struct {
+	delay   time.Duration
+	waitErr error
+}
+
+func (p *delayedWaitProcess) Events() <-chan reviewtypes.Event {
+	out := make(chan reviewtypes.Event)
+	close(out)
+	return out
+}
+
+func (p *delayedWaitProcess) Wait() error {
+	time.Sleep(p.delay)
+	return p.waitErr
+}
+
 // stubReviewer is a test double for reviewtypes.AgentReviewer.
 type stubReviewer struct {
 	name     string
@@ -604,6 +631,30 @@ func TestRun_InspectorTimeoutWithStringWrappedContextError(t *testing.T) {
 	}
 }
 
+func TestRun_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
+	t.Parallel()
+	ordinaryErr := errors.New("exit status 1")
+	summary, err := Run(
+		context.Background(),
+		&delayedWaitReviewer{name: "claude-code", delay: 30 * time.Millisecond, waitErr: ordinaryErr},
+		reviewtypes.RunConfig{InspectorTimeout: 5 * time.Millisecond},
+		nil,
+	)
+	if !errors.Is(err, ordinaryErr) {
+		t.Fatalf("err = %v, want ordinary wait error", err)
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Fatalf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || strings.Contains(run.Err.Error(), "timed out") {
+		t.Fatalf("run.Err = %v, want ordinary failure, not timeout", run.Err)
+	}
+}
+
 func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
 	t.Parallel()
 	// One inspector hangs (times out); a sibling finishes cleanly. The run is
@@ -662,6 +713,30 @@ func TestRunMulti_InspectorTimeoutWithStringWrappedContextError(t *testing.T) {
 	}
 	if run := summary.AgentRuns[0]; run.Status != reviewtypes.AgentStatusFailed || run.Err == nil || !strings.Contains(run.Err.Error(), "timed out") {
 		t.Fatalf("run = {Status:%v Err:%v}, want Failed with timed-out error", run.Status, run.Err)
+	}
+}
+
+func TestRunMulti_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
+	t.Parallel()
+	ordinaryErr := errors.New("exit status 1")
+	summary, err := RunMulti(
+		context.Background(),
+		[]reviewtypes.AgentReviewer{&delayedWaitReviewer{name: "slow-fail", delay: 30 * time.Millisecond, waitErr: ordinaryErr}},
+		reviewtypes.RunConfig{InspectorTimeout: 5 * time.Millisecond},
+		nil,
+	)
+	if !errors.Is(err, ordinaryErr) {
+		t.Fatalf("err = %v, want ordinary wait error", err)
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Fatalf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || strings.Contains(run.Err.Error(), "timed out") {
+		t.Fatalf("run.Err = %v, want ordinary failure, not timeout", run.Err)
 	}
 }
 

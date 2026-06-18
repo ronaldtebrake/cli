@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
@@ -60,6 +61,13 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 	}
 	if errors.Is(waitErr, context.DeadlineExceeded) {
 		return true
+	}
+	// Fallback only for adapters that formatted ctx.Err() without %w (for
+	// example "agent failed: context deadline exceeded"). Do not classify an
+	// unrelated non-nil Wait error as a timeout just because the inspector
+	// deadline fired while/after Wait was returning.
+	if !strings.Contains(waitErr.Error(), context.DeadlineExceeded.Error()) {
+		return false
 	}
 	if !errors.Is(agentCtx.Err(), context.DeadlineExceeded) {
 		return false
