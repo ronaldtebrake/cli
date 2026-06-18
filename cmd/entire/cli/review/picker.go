@@ -367,9 +367,6 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 			if convErr != nil || idx < 0 || idx >= len(slots) {
 				continue
 			}
-			// Inspectors are identified by their agent and run on the agent's
-			// default model, so editing only swaps the agent (when more than one is
-			// available) or removes the slot — there is no per-inspector model.
 			action, err := promptSlotAction(ctx, slots[idx], len(candidates) > 1)
 			if err != nil {
 				return nil, err
@@ -381,6 +378,12 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 					return nil, err
 				}
 				slots[idx] = slot
+			case "model":
+				slot, err := promptChangeModel(ctx, slots[idx])
+				if err != nil {
+					return nil, err
+				}
+				slots[idx] = slot
 			case "remove":
 				slots = append(slots[:idx], slots[idx+1:]...)
 			}
@@ -388,29 +391,49 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 	}
 }
 
-// promptCrewSlot prompts for one inspector slot: just the agent. Inspectors run
-// on the agent's default model, so no model is asked here. seed pre-selects the
-// current agent when editing (zero value when adding).
+// promptCrewSlot prompts for one inspector slot: agent plus model. seed
+// pre-selects the current agent/model when editing (zero value when adding).
 func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (crewSlot, error) {
 	agentName, err := promptCrewAgent(ctx, launchable, seed.agent, false)
 	if err != nil {
 		return crewSlot{}, err
 	}
-	return crewSlot{agent: agentName}, nil
+	seedModel := ""
+	if agentName == seed.agent {
+		seedModel = seed.model
+	}
+	model, err := promptCrewModel(ctx, agentName, seedModel)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	return crewSlot{agent: agentName, model: model}, nil
 }
 
-// promptChangeAgent swaps the agent on an existing inspector slot. Keeping the
-// same agent leaves the slot untouched (preserving any model set via scripted
-// config); choosing a different agent resets to that agent's default model.
+// promptChangeAgent swaps the agent on an existing inspector slot and then asks
+// for that agent's model. Keeping the same agent preserves the current model as
+// the preselected value.
 func promptChangeAgent(ctx context.Context, candidates []string, seed crewSlot) (crewSlot, error) {
 	agentName, err := promptCrewAgent(ctx, candidates, seed.agent, true)
 	if err != nil {
 		return crewSlot{}, err
 	}
+	seedModel := ""
 	if agentName == seed.agent {
-		return seed, nil
+		seedModel = seed.model
 	}
-	return crewSlot{agent: agentName}, nil
+	model, err := promptCrewModel(ctx, agentName, seedModel)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	return crewSlot{agent: agentName, model: model}, nil
+}
+
+func promptChangeModel(ctx context.Context, seed crewSlot) (crewSlot, error) {
+	model, err := promptCrewModel(ctx, seed.agent, seed.model)
+	if err != nil {
+		return crewSlot{}, err
+	}
+	return crewSlot{agent: seed.agent, model: model}, nil
 }
 
 // buildCrewProfile turns an ordered slot list into a profile. Each slot becomes
@@ -441,15 +464,13 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 }
 
 // promptSlotAction asks what to do with an existing inspector slot row.
-// Inspectors run on the agent's default model, so the only edits are swapping
-// the agent (offered when allowAgentChange is set — more than one candidate
-// exists) or removing the slot.
 func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool) (string, error) {
-	options := make([]huh.Option[string], 0, 3)
+	options := make([]huh.Option[string], 0, 4)
 	if allowAgentChange {
 		options = append(options, huh.NewOption("Change agent", "agent"))
 	}
 	options = append(options,
+		huh.NewOption("Change model", "model"),
 		huh.NewOption("Remove", "remove"),
 		huh.NewOption("Cancel", "cancel"),
 	)
@@ -467,8 +488,7 @@ func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool)
 }
 
 func slotLabel(s crewSlot) string {
-	// Inspectors normally run on the agent's default model; only surface a model
-	// when one was set explicitly (e.g. via scripted --set-slot).
+	// Surface the model when one was set explicitly.
 	if model := strings.TrimSpace(s.model); model != "" {
 		return labelForSimpleAgent(s.agent) + " · " + model
 	}
