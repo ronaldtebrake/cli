@@ -181,19 +181,15 @@ func enabledCategories(cfg *OPFConfig) []string {
 	return out
 }
 
-// opfStderr is where progress and failure UX is written. Defaults to
-// /dev/tty so messages survive the post-commit hook's stderr redirect
-// (the hook runs `entire hooks git post-commit 2>/dev/null` to suppress
-// unrelated logging). Tests override this directly.
-var opfStderr = openTTYOrDiscard()
-
-func openTTYOrDiscard() io.Writer {
-	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		return io.Discard
-	}
-	return f
-}
+// opfStderr is where progress and failure UX is written. OPF only runs
+// in the pre-push rewrite path (strategy/manual_commit_opf_rewrite.go),
+// whose hook is installed without a `2>/dev/null` redirect, so plain
+// stderr reaches the user's terminal during `git push`. Post-commit
+// condensation never invokes OPF (it calls the 7-layer functions
+// directly via RedactBlobBytes(..., usePrivacyFilter=false)), so the
+// historical `/dev/tty` routing that survived the post-commit hook's
+// stderr redirect is no longer needed. Tests override this directly.
+var opfStderr io.Writer = os.Stderr
 
 // detectOPF runs OPF on a single text and returns tagged regions for any
 // spans whose category is enabled in cfg. Returns nil when OPF is disabled,

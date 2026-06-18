@@ -3,7 +3,6 @@ package redact
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,10 +129,6 @@ func TestDetectOPF_MapsLabelsCorrectly(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
 
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
-
 	fake := &fakeRuntime{
 		spans: []Span{
 			{Start: 0, End: 5, Label: "private_person"},
@@ -163,9 +158,6 @@ func TestDetectOPF_MapsLabelsCorrectly(t *testing.T) {
 func TestDetectOPF_SkipsCategoriesNotEnabled(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	fake := &fakeRuntime{
 		spans: []Span{
@@ -218,9 +210,6 @@ func TestDetectOPF_SkipsNonProseStrings(t *testing.T) {
 func TestDetectOPF_CircuitBreaker(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	fake := &fakeRuntime{err: errors.New("simulated opf failure")}
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
@@ -272,9 +261,6 @@ func (r *emptyBatchRuntime) RedactBatch(_ context.Context, _ []string, _ []strin
 func TestDetectOPF_SingleInputShortReturnTripsBreaker(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
 		Enabled:    true,
@@ -544,9 +530,6 @@ func TestPlainEntryPointsNeverInvokeOPF(t *testing.T) {
 func TestStringWithPrivacyFilter_AugmentsRegexLayers(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	fake := &fakeRuntime{spans: []Span{{Start: 0, End: 5, Label: "private_person"}}}
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
@@ -563,9 +546,6 @@ func TestStringWithPrivacyFilter_AugmentsRegexLayers(t *testing.T) {
 func TestJSONLContentWithPrivacyFilter_BatchesSingleCall(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	fake := &fakeRuntime{spans: []Span{{Start: 0, End: 5, Label: "private_person"}}}
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
@@ -589,9 +569,6 @@ func TestJSONLContentWithPrivacyFilter_BatchesSingleCall(t *testing.T) {
 func TestJSONLContentWithPrivacyFilter_FallsBackOnBatchError(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	fake := &fakeRuntime{err: errors.New("simulated opf failure")}
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
@@ -638,9 +615,6 @@ func (r *shortReturnRuntime) RedactBatch(_ context.Context, inputs []string, _ [
 func TestJSONLContentWithPrivacyFilter_ShortReturnTripsBreaker(t *testing.T) {
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
 		Enabled:    true,

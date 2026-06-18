@@ -3,21 +3,18 @@ package redact
 import (
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 )
 
-// configureFakeOPF wires up the runtime, redirects opfStderr, and registers
-// cleanup so each test starts and ends with a clean config. Returns the fake
-// so individual tests can assert call counts.
+// configureFakeOPF wires up the runtime and registers cleanup so each
+// test starts and ends with a clean config. Returns the fake so
+// individual tests can assert call counts. (opfStderr is silenced
+// process-wide in TestMain; see global_test.go.)
 func configureFakeOPF(t *testing.T, fake *fakeRuntime, cats map[string]bool) {
 	t.Helper()
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
 		Enabled:    true,
 		Categories: cats,
@@ -158,9 +155,6 @@ func TestBatchBytesWithPrivacyFilter_DedupsLeavesAcrossBlobs(t *testing.T) {
 	rt := &recordingRuntime{spans: []Span{{Start: 0, End: 5, Label: "private_person"}}}
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
 		Enabled:    true,
 		Categories: map[string]bool{"private_person": true},
@@ -261,9 +255,6 @@ func TestBatchBytesWithPrivacyFilter_ShortReturnFailsClosed(t *testing.T) {
 	fake := &shortReturnBatchRuntime{}
 	resetOPFConfig()
 	t.Cleanup(resetOPFConfig)
-	origStderr := opfStderr
-	opfStderr = io.Discard
-	t.Cleanup(func() { opfStderr = origStderr })
 	ConfigurePrivacyFilterWithRuntime(OPFConfig{
 		Enabled:    true,
 		Categories: map[string]bool{"private_person": true},
