@@ -110,7 +110,14 @@ func IsOnDefaultBranch(ctx context.Context) (bool, string, error) {
 		return false, "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 	defer repo.Close()
+	return isOnDefaultBranchRepo(repo)
+}
 
+// isOnDefaultBranchRepo reports whether the repo's current branch is its default
+// branch, along with the current branch name (empty on a detached HEAD). It
+// operates on an already-open repository so callers that already hold one need
+// not reopen it.
+func isOnDefaultBranchRepo(repo *git.Repository) (bool, string, error) {
 	// Get current branch
 	head, err := repo.Head()
 	if err != nil {

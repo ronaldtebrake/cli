@@ -725,7 +725,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// Format and output. Stop spinner BEFORE any write to w to keep stderr
 	// frames and stdout content from interleaving.
 	stopLoad(false)
-	output := formatCheckpointOutput(summary, content, fullCheckpointID, associatedCommits, author, verbose, full, w)
+	output := formatCheckpointOutput(ctx, summary, content, fullCheckpointID, associatedCommits, author, verbose, full, w)
 	outputExplainContent(w, output, noPager)
 	return nil
 }
@@ -908,7 +908,7 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store *ch
 	if err != nil {
 		return fmt.Errorf("failed to resolve summary provider: %w", err)
 	}
-	scopedTranscript = maybeCompactExternalTranscriptForSummary(ctx, scopedTranscript, content.Metadata.Agent)
+	scopedTranscript = maybeCompactExternalTranscript(ctx, scopedTranscript, content.Metadata.Agent)
 
 	// Generate summary using shared helper
 	logging.Info(ctx, "generating checkpoint summary")
@@ -949,7 +949,7 @@ func formatSummaryDuration(d time.Duration) string {
 	return d.Round(100 * time.Millisecond).String()
 }
 
-func maybeCompactExternalTranscriptForSummary(ctx context.Context, scopedTranscript []byte, agentType types.AgentType) []byte {
+func maybeCompactExternalTranscript(ctx context.Context, scopedTranscript []byte, agentType types.AgentType) []byte {
 	if transcriptHasSummaryContent(scopedTranscript, agentType) {
 		return scopedTranscript
 	}
@@ -1311,6 +1311,13 @@ func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *gi
 		sb.WriteString("\n")
 		sb.WriteString(styles.sectionRule(label, styles.width))
 		sb.WriteString("\n")
+		// External-agent transcripts are stored in native format; compact
+		// the one being rendered so it displays.
+		if full && len(fullTranscript) > 0 {
+			fullTranscript = maybeCompactExternalTranscript(ctx, fullTranscript, agentType)
+		} else if verbose && len(scopedTranscript) > 0 {
+			scopedTranscript = maybeCompactExternalTranscript(ctx, scopedTranscript, agentType)
+		}
 	}
 	appendTranscriptSection(&sb, verbose, full, fullTranscript, scopedTranscript, sessionPrompt, agentType)
 
@@ -1601,7 +1608,7 @@ func renderExplainBody(w io.Writer, md string) string {
 //
 // Author is displayed when available (only for committed checkpoints).
 // Associated commits are git commits that reference this checkpoint via Entire-Checkpoint trailer.
-func formatCheckpointOutput(summary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, checkpointID id.CheckpointID, associatedCommits []associatedCommit, author checkpoint.Author, verbose, full bool, w io.Writer) string {
+func formatCheckpointOutput(ctx context.Context, summary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, checkpointID id.CheckpointID, associatedCommits []associatedCommit, author checkpoint.Author, verbose, full bool, w io.Writer) string {
 	var sb strings.Builder
 	meta := content.Metadata
 	styles := newStatusStyles(w)
@@ -1655,7 +1662,16 @@ func formatCheckpointOutput(summary *checkpoint.CheckpointSummary, content *chec
 		sb.WriteString("\n")
 		sb.WriteString(styles.sectionRule(label, styles.width))
 		sb.WriteString("\n")
-		appendTranscriptSection(&sb, verbose, full, content.Transcript, scopedTranscript, content.Prompts, meta.Agent)
+		// Compact after scoping: CheckpointTranscriptStart indexes the stored
+		// format, and compaction changes line counts.
+		displayFull := content.Transcript
+		displayScoped := scopedTranscript
+		if full && len(displayFull) > 0 {
+			displayFull = maybeCompactExternalTranscript(ctx, displayFull, meta.Agent)
+		} else if verbose && len(displayScoped) > 0 {
+			displayScoped = maybeCompactExternalTranscript(ctx, displayScoped, meta.Agent)
+		}
+		appendTranscriptSection(&sb, verbose, full, displayFull, displayScoped, content.Prompts, meta.Agent)
 	}
 
 	return sb.String()

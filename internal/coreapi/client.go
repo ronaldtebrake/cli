@@ -28,6 +28,10 @@ const apiBasePath = "/api/v1"
 // with the `entire login` hint. The Core API is served at <host>/api/v1. The
 // bearer is resolved lazily per request, re-minting silently from the stored
 // refresh token.
+//
+// For a resource whose home jurisdiction is another region, the client's
+// transport follows the home core's 421 redirect and exchanges the login
+// token for one that core accepts (see newCrossJurisHTTPClient).
 func New() (*Client, error) {
 	// ENTIRE_TOKEN bypass: CI / workload-identity runners inject a short-
 	// lived login or sa-session JWT and want control-plane commands to use
@@ -72,7 +76,7 @@ func New() (*Client, error) {
 		return nil, fmt.Errorf("resolve control-plane target: %w", err)
 	}
 	src := &providerSource{provide: target.TokenSource}
-	client, err := NewClient(strings.TrimRight(target.CoreURL, "/")+apiBasePath, src)
+	client, err := NewClient(strings.TrimRight(target.CoreURL, "/")+apiBasePath, src, WithClient(newCrossJurisHTTPClient()))
 	if err != nil {
 		return nil, fmt.Errorf("build Entire API client: %w", err)
 	}
@@ -80,13 +84,15 @@ func New() (*Client, error) {
 }
 
 // NewWithBearer returns a *Client targeting an explicit core origin with a
-// fixed bearer token — no per-request resolution or STS exchange. Used when a
-// command must hit a specific login server with a token already in hand:
-// e.g. `entire auth status` querying /me on the active context's core with
-// that context's session token.
+// fixed bearer token: the token is sent verbatim, not re-resolved or
+// re-minted per request. Used when a command must hit a specific login
+// server with a token already in hand: e.g. `entire auth status` querying
+// /me on the active context's core with that context's session token. A
+// cross-jurisdiction call still follows the home core's 421 and exchanges
+// this token for that core's audience (see newCrossJurisHTTPClient).
 func NewWithBearer(coreBaseURL, token string) (*Client, error) {
 	base := strings.TrimRight(coreBaseURL, "/")
-	client, err := NewClient(base+apiBasePath, staticBearer{token: token})
+	client, err := NewClient(base+apiBasePath, staticBearer{token: token}, WithClient(newCrossJurisHTTPClient()))
 	if err != nil {
 		return nil, fmt.Errorf("build Entire API client: %w", err)
 	}

@@ -44,8 +44,16 @@ const defaultClusterHost = "aws-us-east-2.entire.io"
 // clusterArg returns the cluster host from the optional second positional
 // (after <github-url>), or defaultClusterHost when it was omitted.
 func clusterArg(args []string) string {
-	if len(args) > 1 {
-		return args[1]
+	return clusterArgAt(args, 1)
+}
+
+// clusterArgAt returns the cluster host from the optional positional at idx,
+// or defaultClusterHost when it was omitted. Commands with an intervening
+// positional (e.g. collaborators add <github-url> <handle> [cluster-host])
+// pass the trailing index.
+func clusterArgAt(args []string, idx int) string {
+	if len(args) > idx {
+		return args[idx]
 	}
 	return defaultClusterHost
 }
@@ -105,6 +113,7 @@ func newRepoMirrorCmd() *cobra.Command {
 	cmd.AddCommand(newRepoMirrorListCmd())
 	cmd.AddCommand(newRepoMirrorGetCmd())
 	cmd.AddCommand(newRepoMirrorRemoveCmd())
+	cmd.AddCommand(newRepoMirrorCollaboratorsCmd())
 	return cmd
 }
 

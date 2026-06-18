@@ -585,7 +585,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		}
 	}
 
-	_, currentBranch, _ := IsOnDefaultBranch(ctx) //nolint:errcheck // best-effort detection
+	_, currentBranch, _ := isOnDefaultBranchRepo(repo) //nolint:errcheck // best-effort; reuse the open repo for the current branch name
 	interactive := !cmd.Flags().Changed("title") && !cmd.Flags().Changed("branch")
 
 	if interactive {
@@ -594,14 +594,10 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 			return handleFormCancellation(w, "Trail creation", err)
 		}
 	} else {
-		// Non-interactive: derive missing values from provided flags.
-		if branch == "" {
-			if cmd.Flags().Changed("title") {
-				branch = slugifyTitle(title)
-			} else {
-				branch = currentBranch
-			}
-		}
+		// Non-interactive: derive missing values from provided flags. With
+		// --branch omitted, use the checked-out branch (a feature branch); only
+		// slug a new branch from the title when the checked-out branch is the base.
+		branch = resolveCreateBranch(branch, currentBranch, base, title, cmd.Flags().Changed("title"))
 		if title == "" {
 			title = trail.HumanizeBranchName(branch)
 		}
@@ -1315,6 +1311,23 @@ func checkTrailResponse(resp *http.Response) error {
 		return fmt.Errorf("trail API: %w", err)
 	}
 	return nil
+}
+
+// resolveCreateBranch picks the branch a non-interactive `trail create` targets.
+// An explicit --branch always wins. Otherwise, on a feature branch it uses the
+// checked-out branch; when the checked-out branch IS the base (the trail's
+// target/default branch) — or HEAD is detached — it derives a new branch from
+// the title when one was given (starting fresh work), else falls back to current.
+// Comparing against the already-resolved base keeps this consistent with how
+// `base` itself was detected (avoids a second, divergent default-branch lookup).
+func resolveCreateBranch(branchFlag, currentBranch, base, title string, titleProvided bool) string {
+	if branchFlag != "" {
+		return branchFlag
+	}
+	if titleProvided && (currentBranch == base || currentBranch == "") {
+		return slugifyTitle(title)
+	}
+	return currentBranch
 }
 
 // slugifyTitle converts a title string into a branch-friendly slug.
