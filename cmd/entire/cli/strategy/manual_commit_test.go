@@ -4252,7 +4252,8 @@ func TestCondenseSession_RedactionFailure_DropsTranscriptButWritesMetadata(t *te
 	require.NoError(t, err, "redaction failure should not abort condensation")
 	require.NotNil(t, result)
 
-	store := s.getCheckpointStore(context.Background(), repo)
+	store, err := s.getCheckpointStore(context.Background(), repo)
+	require.NoError(t, err)
 
 	committed, err := store.ListCommitted(context.Background())
 	require.NoError(t, err)

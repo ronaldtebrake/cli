@@ -179,7 +179,11 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 	// the cwd may not be a repo at all, so scope settings resolution to this
 	// repo before consulting the topology.
 	repoCtx := settings.WithWorktreeRoot(ctx, repoRoot)
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(repoCtx))
+	stores, err := checkpoint.Open(repoCtx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
 	infos, err := store.ListCommitted(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list committed checkpoints: %w", err)

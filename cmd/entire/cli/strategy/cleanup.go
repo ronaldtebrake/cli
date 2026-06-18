@@ -169,10 +169,13 @@ func ListOrphanedSessionStates(ctx context.Context) ([]CleanupItem, error) {
 	}
 
 	// Get all committed checkpoints from the configured read ref to find which sessions have checkpoints
-	cpStore := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	cpStores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
+	}
 
 	sessionsWithCheckpoints := make(map[string]bool)
-	checkpoints, listErr := cpStore.ListCommitted(ctx)
+	checkpoints, listErr := cpStores.Primary.ListCommitted(ctx)
 	if listErr == nil {
 		for _, cp := range checkpoints {
 			// cp.SessionID is the most-recent session in a multi-session checkpoint;

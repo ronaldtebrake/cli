@@ -305,8 +305,11 @@ func ListCheckpoints(ctx context.Context) ([]CheckpointInfo, error) {
 	// Warn (once per process) if metadata branches are disconnected
 	WarnIfMetadataDisconnected()
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
-	committed, err := store.ListCommitted(ctx)
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
+	}
+	committed, err := stores.Primary.ListCommitted(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list committed checkpoints: %w", err)
 	}

@@ -1335,8 +1335,11 @@ func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string
 		return nil, "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 	defer repo.Close()
-	store := NewGitStore(repo, ResolveCommittedRefs(ctx))
-	return store.GetSessionLog(ctx, cpID)
+	stores, err := Open(ctx, repo, OpenOptions{})
+	if err != nil {
+		return nil, "", fmt.Errorf("open checkpoint store: %w", err)
+	}
+	return stores.Primary.GetSessionLog(ctx, cpID)
 }
 
 // UpdateSummary updates the summary field in the latest session's metadata.

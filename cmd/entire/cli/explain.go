@@ -638,7 +638,11 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		// layer, so rawTranscript is always false when generate is true; the
 		// direct-to-w write path inside explainTemporaryCheckpoint is not
 		// reachable here and won't leak partial output on error.
-		output, found, tempErr := explainTemporaryCheckpoint(ctx, w, errW, lookup.repo, checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx)), checkpointIDPrefix, verbose, full, rawTranscript)
+		tempStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
+		if openErr != nil {
+			return fmt.Errorf("open checkpoint store: %w", openErr)
+		}
+		output, found, tempErr := explainTemporaryCheckpoint(ctx, w, errW, lookup.repo, tempStores.Temporary(), checkpointIDPrefix, verbose, full, rawTranscript)
 		if tempErr != nil {
 			return tempErr
 		}
@@ -678,14 +682,21 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// Handle summary generation — uses raw transcript.
 	if generate {
 		stopLoad(false) // generation prints its own progress to w/errW
-		writeStore := checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx))
-		if err := generateCheckpointSummary(ctx, w, errW, writeStore, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
+		writeStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
+		if openErr != nil {
+			return fmt.Errorf("open checkpoint store: %w", openErr)
+		}
+		if err := generateCheckpointSummary(ctx, w, errW, writeStores, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
 			return err
 		}
 		// Reload to get the updated summary.
 		stopLoad = startSpinner(errW, fmt.Sprintf("Reloading checkpoint %s", fullCheckpointID))
-		lookup.store = checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx))
-		lookup.store.SetBlobFetcher(FetchBlobsByHash)
+		reopened, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
+		if openErr != nil {
+			stopLoad(false)
+			return fmt.Errorf("open checkpoint store: %w", openErr)
+		}
+		lookup.store = reopened.Primary
 		content, err = checkpoint.ReadLatestSessionContent(ctx, lookup.store, fullCheckpointID, summary)
 		if err != nil {
 			stopLoad(false)
@@ -857,8 +868,11 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	// `git fetch` fails against partial-clone repos with "did not send all
 	// necessary objects"). Falls back to a full metadata-branch fetch if
 	// fetch-pack also can't reach the blobs.
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
-	store.SetBlobFetcher(FetchBlobsByHash)
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
 
 	lookup := &explainCheckpointLookup{
 		repo:  repo,
@@ -881,7 +895,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 // summaryTimeoutSeconds is the per-invocation --summary-timeout-seconds flag
 // value (0 = unset). Effective precedence for the deadline: flag > settings >
 // package default. See resolveSummaryTimeout for the resolution.
-func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store *checkpoint.GitStore, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
+func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, stores *checkpoint.Stores, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
 	// Check if summary already exists
 	if content.Metadata.Summary != nil && !force {
 		return renderExplainFailure(errW, "Summary already exists", []explainRow{
@@ -928,12 +942,12 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store *ch
 	}
 	elapsed := time.Since(start)
 
-	if err := store.UpdateSummary(ctx, checkpointID, summary); err != nil {
+	if err := stores.Primary.UpdateSummary(ctx, checkpointID, summary); err != nil {
 		return fmt.Errorf("failed to save summary: %w", err)
 	}
 
 	refs := checkpoint.ResolveCommittedRefs(ctx)
-	if err := strategy.MirrorCommittedMetadataRef(ctx, store.Repository(), refs); err != nil {
+	if err := strategy.MirrorCommittedMetadataRef(ctx, stores.Repository(), refs); err != nil {
 		return fmt.Errorf("summary was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
 	}
 
@@ -2026,7 +2040,11 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	// Warn (once per process) if metadata branches are disconnected
 	strategy.WarnIfMetadataDisconnected()
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
 
 	// Get all committed checkpoints for lookup.
 	committedInfos, err := store.ListCommitted(ctx)
@@ -2130,7 +2148,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	}
 
 	// Get temporary checkpoints from ALL shadow branches whose base commit is reachable from HEAD.
-	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, store, head.Hash(), isOnDefault, limit)
+	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, stores.Temporary(), head.Hash(), isOnDefault, limit)
 	points = append(points, tempPoints...)
 
 	// Sort by date, most recent first
