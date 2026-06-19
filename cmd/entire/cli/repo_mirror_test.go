@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,46 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/coreapi"
+	"github.com/entireio/cli/internal/entireclient/contexts"
 )
+
+// unsetEnvToken removes ENTIRE_TOKEN for the duration of a test (and restores
+// it), so the contexts-based resolution path under test isn't shadowed by an
+// env token in the ambient environment.
+func unsetEnvToken(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(auth.EnvTokenVar); ok {
+		require.NoError(t, os.Unsetenv(auth.EnvTokenVar))
+		t.Cleanup(func() { _ = os.Setenv(auth.EnvTokenVar, v) })
+	}
+}
+
+// activeLoginServer names the active context's core, so `mirror list` can tell
+// the user which login server's view they're seeing.
+func TestActiveLoginServer_ReturnsCurrentContextCore(t *testing.T) {
+	unsetEnvToken(t)
+	configDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
+
+	const prodCore = "https://eu.auth.entire.io"
+	require.NoError(t, contexts.Save(configDir, &contexts.File{
+		CurrentContext: "alice@prod",
+		Contexts: []*contexts.Context{
+			{Name: "alice@partial", CoreURL: "https://eu.auth.partial.to", Handle: "alice"},
+			{Name: "alice@prod", CoreURL: prodCore, Handle: "alice"},
+		},
+	}))
+
+	require.Equal(t, prodCore, activeLoginServer())
+}
+
+// With no contexts the header is omitted rather than failing.
+func TestActiveLoginServer_NoContextReturnsEmpty(t *testing.T) {
+	unsetEnvToken(t)
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+
+	require.Equal(t, "", activeLoginServer())
+}
 
 func TestExplainSuspendedMirror(t *testing.T) {
 	t.Parallel()
