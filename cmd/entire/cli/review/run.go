@@ -59,6 +59,17 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 	if waitErr == nil {
 		return false
 	}
+	agentDeadline, ok := agentCtx.Deadline()
+	if !ok {
+		return false
+	}
+	// Only an agent deadline that is strictly earlier than the parent deadline
+	// (or no parent deadline at all) proves this was the per-inspector timeout.
+	// Equal deadlines mean the child may have inherited the parent's deadline, so
+	// parent cancellation/timeout must not be reported as an inspector timeout.
+	if parentDeadline, parentHasDeadline := parentCtx.Deadline(); parentHasDeadline && !agentDeadline.Before(parentDeadline) {
+		return false
+	}
 	if errors.Is(waitErr, context.DeadlineExceeded) {
 		return true
 	}
@@ -69,15 +80,7 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 	if !strings.Contains(waitErr.Error(), context.DeadlineExceeded.Error()) {
 		return false
 	}
-	if !errors.Is(agentCtx.Err(), context.DeadlineExceeded) {
-		return false
-	}
-	agentDeadline, ok := agentCtx.Deadline()
-	if !ok {
-		return false
-	}
-	parentDeadline, parentHasDeadline := parentCtx.Deadline()
-	return !parentHasDeadline || !agentDeadline.After(parentDeadline)
+	return errors.Is(agentCtx.Err(), context.DeadlineExceeded)
 }
 
 // timedOutError reports the per-inspector timeout as a user-facing error.

@@ -582,7 +582,7 @@ func TestRun_SinkFanOut(t *testing.T) {
 	}
 }
 
-func TestInspectorDeadlineFiredFallbackAllowsEqualParentDeadline(t *testing.T) {
+func TestInspectorDeadlineFired_EqualParentDeadlineIsNotInspectorTimeout(t *testing.T) {
 	t.Parallel()
 	deadline := time.Now().Add(20 * time.Millisecond)
 	parentCtx, cancelParent := context.WithDeadline(context.Background(), deadline)
@@ -596,8 +596,26 @@ func TestInspectorDeadlineFiredFallbackAllowsEqualParentDeadline(t *testing.T) {
 		t.Fatal("agent context deadline did not fire")
 	}
 	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
+	if inspectorDeadlineFired(parentCtx, agentCtx, waitErr) {
+		t.Fatal("equal parent/agent deadlines should be treated as parent deadline, not inspector timeout")
+	}
+}
+
+func TestInspectorDeadlineFired_EarlierAgentDeadlineIsInspectorTimeout(t *testing.T) {
+	t.Parallel()
+	parentCtx, cancelParent := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+	defer cancelParent()
+	agentCtx, cancelAgent := context.WithTimeout(parentCtx, 20*time.Millisecond)
+	defer cancelAgent()
+
+	select {
+	case <-agentCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("agent context deadline did not fire")
+	}
+	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
 	if !inspectorDeadlineFired(parentCtx, agentCtx, waitErr) {
-		t.Fatal("equal parent/agent deadlines should still classify as inspector deadline fallback")
+		t.Fatal("earlier agent deadline should classify as inspector timeout")
 	}
 }
 
