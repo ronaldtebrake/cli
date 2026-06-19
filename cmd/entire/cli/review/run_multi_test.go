@@ -182,6 +182,36 @@ func TestRunMulti_StartErrorsAndEventBurstStillDrain(t *testing.T) {
 	}
 }
 
+func TestRunMulti_AllStartErrorsOverSeventeenStillFinish(t *testing.T) {
+	t.Parallel()
+	const reviewerCount = 32
+	reviewers := make([]reviewtypes.AgentReviewer, 0, reviewerCount)
+	for i := range reviewerCount {
+		reviewers = append(reviewers, &stubReviewer{name: fmt.Sprintf("bad-%02d", i), startErr: fmt.Errorf("start failed %d", i)})
+	}
+	type result struct {
+		summary reviewtypes.RunSummary
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		summary, err := RunMulti(context.Background(), reviewers, reviewtypes.RunConfig{}, nil)
+		done <- result{summary: summary, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("RunMulti error = nil, want a start error")
+		}
+		if len(res.summary.AgentRuns) != reviewerCount {
+			t.Fatalf("AgentRuns = %d, want %d", len(res.summary.AgentRuns), reviewerCount)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunMulti deadlocked with more than 17 all-start-failure terminals")
+	}
+}
+
 func TestRunMulti_AllStartErrorsStillFinish(t *testing.T) {
 	t.Parallel()
 	firstErr := errors.New("first start failed")

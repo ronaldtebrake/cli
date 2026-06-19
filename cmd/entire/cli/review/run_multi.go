@@ -131,10 +131,14 @@ func RunMulti(
 	}
 
 	// fanIn carries tagged events from N agent goroutines into the single
-	// dispatch loop. Reserve len(reviewers)*16 slots for event-burst jitter plus
-	// one terminal-marker slot per reviewer, so queued Start-failure terminals
-	// cannot consume the event-burst slack before the dispatch loop starts.
-	fanIn := make(chan taggedEvent, len(reviewers)*17)
+	// dispatch loop. Reserve event-burst slack plus one terminal-marker slot per
+	// reviewer, so the worst case of every reviewer failing Start fits entirely in
+	// the terminal reservation without consuming event slack.
+	const eventBurstSlotsPerReviewer = 16
+	reviewerCount := len(reviewers)
+	terminalSlots := reviewerCount
+	fanInCapacity := reviewerCount*eventBurstSlotsPerReviewer + terminalSlots
+	fanIn := make(chan taggedEvent, fanInCapacity)
 
 	// Each reviewer runs under its own deadline (unless reviewerTimeout returns
 	// 0, meaning disabled) so a stuck agent is cancelled without hanging the run;
