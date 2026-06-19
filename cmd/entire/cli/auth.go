@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -130,7 +131,7 @@ func newAuthStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			target, err := resolveStatusTarget(cmd.Context(), auth.Contexts, auth.RefreshedLoginToken)
+			target, err := resolveAuthStatusTarget(cmd.Context(), auth.Contexts, auth.RefreshedLoginToken)
 			if err != nil {
 				return err
 			}
@@ -179,11 +180,43 @@ type loginTokenResolver func(ctx context.Context, c *contexts.Context) (string, 
 // CoreURL + its session token. Zero coreURL/token means not logged in.
 // Shared by `auth status` (profile + session list) and `logout`
 // (revocation) so both hit the same login server.
+//
+// envToken marks the target as resolved from ENTIRE_TOKEN rather than a stored
+// context: the bearer is the env token itself, sent verbatim to its own aud,
+// and there is no stored session to manage — so status renders it without the
+// context/keychain/session lines.
 type statusTarget struct {
 	coreURL       string
 	token         string
 	activeContext string
 	totalContexts int
+	envToken      bool
+}
+
+// resolveAuthStatusTarget picks the target for `entire auth status`, honouring
+// ENTIRE_TOKEN: when it is set the request dials the token's own aud (exactly
+// as coreapi.New does), so status must report that core, not a stored context
+// that the request never touches. `logout` deliberately does NOT use this —
+// logout manages a stored login session, which an ephemeral env token has none
+// of, so it stays on resolveStatusTarget (the active context).
+func resolveAuthStatusTarget(ctx context.Context, listContexts contextsProvider, resolveLogin loginTokenResolver) (statusTarget, error) {
+	if raw, ok := os.LookupEnv(auth.EnvTokenVar); ok {
+		return resolveEnvTokenStatusTarget(raw)
+	}
+	return resolveStatusTarget(ctx, listContexts, resolveLogin)
+}
+
+// resolveEnvTokenStatusTarget builds the status target from ENTIRE_TOKEN via the
+// shared auth.ParseEnvToken — the same trim/blank/aud validation coreapi.New
+// applies — so status reports exactly the core a request would dial. The token
+// is the bearer; fail-closed (a blank or malformed value errors, never falls
+// back to a stored context).
+func resolveEnvTokenStatusTarget(raw string) (statusTarget, error) {
+	coreURL, token, err := auth.ParseEnvToken(raw)
+	if err != nil {
+		return statusTarget{}, err //nolint:wrapcheck // auth.ParseEnvToken already prefixes with EnvTokenVar
+	}
+	return statusTarget{coreURL: coreURL, token: token, envToken: true}, nil
 }
 
 // resolveStatusTarget picks the core + token for `entire auth status` (and
@@ -282,6 +315,15 @@ func runAuthStatus(ctx context.Context, w io.Writer, fetchProfile profileFetcher
 
 	fmt.Fprintf(w, "Logged in to %s\n", t.coreURL)
 	writeProfileLines(w, profile)
+
+	// ENTIRE_TOKEN mode: no stored context, keychain slot, or revocable
+	// session — the bearer is the env var itself. Name that and stop, rather
+	// than printing context/keychain/session lines that don't apply.
+	if t.envToken {
+		fmt.Fprintf(w, "  %-9s %s\n", "Token:", auth.EnvTokenVar+" environment variable")
+		return nil
+	}
+
 	if t.activeContext != "" {
 		fmt.Fprintf(w, "  %-9s %s\n", "Context:", t.activeContext)
 	}
