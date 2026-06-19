@@ -77,7 +77,7 @@ func profileTask(name string, cfg settings.ReviewProfileConfig) string {
 // is intentionally no migration from the old review map).
 func selectReviewProfile(s *settings.EntireSettings, override string) (string, settings.ReviewProfileConfig, error) {
 	if s == nil || len(s.ReviewProfiles) == 0 {
-		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire inspect --configure` or add review_profiles to Entire preferences")
+		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire review --configure` or add review_profiles to Entire preferences")
 	}
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
@@ -187,7 +187,7 @@ type judgeSpec struct {
 }
 
 // profileJudge resolves the configured consolidating judge. ok is false when
-// the profile has no judge set (a single-inspector profile, or one left to the
+// the profile has no judge set (a single-reviewer profile, or one left to the
 // runtime default); callers fall back to resolveJudge for the default pick.
 func profileJudge(profile settings.ReviewProfileConfig) (judgeSpec, bool) {
 	if profile.Judge == nil {
@@ -213,7 +213,7 @@ func profileJudge(profile settings.ReviewProfileConfig) (judgeSpec, bool) {
 }
 
 // resolveJudge returns the judge to use for a fan-out run: the explicitly
-// configured judge, or an auto-selected text-gen inspector when none is set.
+// configured judge, or an auto-selected text-gen reviewer when none is set.
 func resolveJudge(ctx context.Context, profile settings.ReviewProfileConfig) (judgeSpec, bool) {
 	if j, ok := profileJudge(profile); ok {
 		return j, true
@@ -232,7 +232,7 @@ func judgeLabel(j judgeSpec) string {
 func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) (string, settings.ReviewConfig, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
-		return "", settings.ReviewConfig{}, errors.New("empty review inspector selector")
+		return "", settings.ReviewConfig{}, errors.New("empty review reviewer selector")
 	}
 	if cfg, ok := profile.Agents[selector]; ok && !cfg.IsZero() {
 		return selector, cfg, nil
@@ -253,11 +253,11 @@ func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) 
 	case 0:
 		configured := sortedProfileAgentNames(profile)
 		if len(configured) == 0 {
-			return "", settings.ReviewConfig{}, fmt.Errorf("review inspector or agent %q is not configured", selector)
+			return "", settings.ReviewConfig{}, fmt.Errorf("review reviewer or agent %q is not configured", selector)
 		}
-		return "", settings.ReviewConfig{}, fmt.Errorf("review inspector or agent %q is not configured; configured inspectors: %s", selector, strings.Join(configured, ", "))
+		return "", settings.ReviewConfig{}, fmt.Errorf("review reviewer or agent %q is not configured; configured reviewers: %s", selector, strings.Join(configured, ", "))
 	default:
-		return "", settings.ReviewConfig{}, fmt.Errorf("agent %q has multiple review inspectors (%s); choose one by inspector name", selector, strings.Join(matches, ", "))
+		return "", settings.ReviewConfig{}, fmt.Errorf("agent %q has multiple review reviewers (%s); choose one by reviewer name", selector, strings.Join(matches, ", "))
 	}
 }
 
@@ -374,9 +374,9 @@ func defaultProfileFocus(profileName string) string {
 }
 
 // defaultJudge auto-selects a consolidating judge from the configured
-// inspectors: it prefers claude-code, then codex, then gemini, and otherwise
-// takes the first inspector that can write a verdict (text generation). ok is
-// false when no inspector can.
+// reviewers: it prefers claude-code, then codex, then gemini, and otherwise
+// takes the first reviewer that can write a verdict (text generation). ok is
+// false when no reviewer can.
 func defaultJudge(ctx context.Context, configured map[string]settings.ReviewConfig) (judgeSpec, bool) {
 	for _, preferred := range []string{string(agent.AgentNameClaudeCode), string(agent.AgentNameCodex), string(agent.AgentNameGemini)} {
 		for _, workerName := range sortedReviewConfigKeys(configured) {

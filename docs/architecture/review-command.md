@@ -1,37 +1,37 @@
-# `entire inspect` Command
+# `entire review` Command
 
-`entire inspect` (aliased as `entire review`) runs a named review profile. A
+`entire review` runs a named review profile. A
 profile defines one canonical task (for example `general`, `security`, or
-`accessibility`), a set of **inspector** agents that all run that task, and a
-single **judge** that consolidates the inspectors' reports into the final
-verdict in a closing round. Inspector sessions are immutable facts attached to
+`accessibility`), a set of **reviewer** agents that all run that task, and a
+single **judge** that consolidates the reviewers' reports into the final
+verdict in a closing round. Reviewer sessions are immutable facts attached to
 checkpoints; the final verdict is stored locally in the review manifest for
 findings/fix workflows.
 
 ## Command Surface
 
 ```
-entire inspect                          # Interactive: pick a profile to run. Non-interactive: list profiles + error
-entire inspect security                 # Run a named profile
-entire inspect --profile accessibility  # Same, flag form
-entire inspect --list                   # List configured profiles (inspectors + judge), marking the default
-entire inspect --configure                    # Interactive: guided wizard. Non-interactive: list agents + profiles
-entire inspect --configure --profile general --set-agents claude-code,codex --set-judge claude-code --set-output trail
+entire review                          # Interactive: pick a profile to run. Non-interactive: list profiles + error
+entire review security                 # Run a named profile
+entire review --profile accessibility  # Same, flag form
+entire review --list                   # List configured profiles (reviewers + judge), marking the default
+entire review --configure                    # Interactive: guided wizard. Non-interactive: list agents + profiles
+entire review --configure --profile general --set-agents claude-code,codex --set-judge claude-code --set-output trail
                                                # Configure a profile non-interactively (no TUI)
-entire inspect --configure --profile sec --set-slot claude-code=opus --set-slot codex --set-judge claude-code=opus
-entire inspect --configure --profile general --set-model codex=gpt-5-codex --set-task "..."
-entire inspect --edit --profile general       # Advanced skill-level config (skill picker)
-entire inspect --agent <name>           # Run one inspector from the selected profile
-entire inspect --agent <name> --model <model>  # Override that inspector's model for this run
-entire inspect --agents                 # List the profile's inspectors (valid --agent values)
-entire inspect --models                 # List models each agent advertises
-entire inspect --models --agent codex   # ...filtered to one agent
-entire inspect --prompt "focus on auth" # Add one-off instructions
-entire inspect --timeout 15m            # Per-inspector timeout (default 10m)
-entire inspect --findings               # Browse local review findings
+entire review --configure --profile sec --set-slot claude-code=opus --set-slot codex --set-judge claude-code=opus
+entire review --configure --profile general --set-model codex=gpt-5-codex --set-task "..."
+entire review --edit --profile general       # Advanced skill-level config (skill picker)
+entire review --agent <name>           # Run one reviewer from the selected profile
+entire review --agent <name> --model <model>  # Override that reviewer's model for this run
+entire review --agents                 # List the profile's reviewers (valid --agent values)
+entire review --models                 # List models each agent advertises
+entire review --models --agent codex   # ...filtered to one agent
+entire review --prompt "focus on auth" # Add one-off instructions
+entire review --timeout 15m            # Per-reviewer timeout (default 10m)
+entire review --findings               # Browse local review findings
 ```
 
-A bare `entire inspect` never silently runs a default crew. In an interactive
+A bare `entire review` never silently runs a default crew. In an interactive
 terminal it opens a chooser listing the configured profiles (default
 pre-selected); in a non-interactive context it prints the profiles and exits
 with an error so automation must name a profile explicitly. To tag an
@@ -39,15 +39,15 @@ already-finished session as a review after the fact, use
 `entire attach --review <session-id>` (the old `entire review attach`
 subcommand was removed).
 
-When no profiles are configured, interactive `entire inspect` runs a guided
+When no profiles are configured, interactive `entire review` runs a guided
 setup: choose a review focus (or `Custom…` to write the task), build the
-inspector crew (a single-screen add/edit/remove slot list seeded with all
+reviewer crew (a single-screen add/edit/remove slot list seeded with all
 launchable agents — the same agent may appear more than once on different or
 identical models), then choose the judge that consolidates their reports, and
 finally where the verdict should go (local or the branch's trail). It saves the
 profile and asks before starting agents.
 
-`entire inspect --configure` is the configuration entry point:
+`entire review --configure` is the configuration entry point:
 - With `--set-agents` / `--set-slot` / `--set-judge` / `--set-output` /
   `--set-task` / `--set-model agent=model`, it writes the profile
   non-interactively (no TUI).
@@ -62,11 +62,11 @@ profile and asks before starting agents.
   Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude
   is preferred as the default judge when available.
 
-When two or more adapter-backed inspectors are configured and `--agent` is not
-set, `entire inspect` fans out to all configured inspectors. There is no per-run
-multi-picker: the profile is the fan-out contract. Multi-inspector profiles
-resolve one judge (explicit, or auto-selected from the inspectors); the judge
-runs after the inspectors finish and produces the final verdict.
+When two or more adapter-backed reviewers are configured and `--agent` is not
+set, `entire review` fans out to all configured reviewers. There is no per-run
+multi-picker: the profile is the fan-out contract. Multi-reviewer profiles
+resolve one judge (explicit, or auto-selected from the reviewers); the judge
+runs after the reviewers finish and produces the final verdict.
 
 ## Settings Schema
 
@@ -104,22 +104,22 @@ profiles locally without hiding the shared set. Schema:
 ```
 
 - The profile-level `task` is the shared work item.
-- Each `agents` map entry is an **inspector** id. For simple entries the id is
+- Each `agents` map entry is an **reviewer** id. For simple entries the id is
   the agent name; to run the same agent more than once, use aliases and set
-  `agent` plus `model`. Per-inspector `skills`, `prompt`, and `model` adapt the
+  `agent` plus `model`. Per-reviewer `skills`, `prompt`, and `model` adapt the
   task to agent-specific mechanics.
 - `judge` is the single agent (+ optional model) that consolidates the
-  inspectors' reports into the final verdict. It need not be one of the
-  inspectors. It is optional: a one-inspector profile needs none, and a
-  multi-inspector profile with no judge set auto-selects a text-gen-capable
-  inspector (preferring claude-code, then codex, then gemini).
+  reviewers' reports into the final verdict. It need not be one of the
+  reviewers. It is optional: a one-reviewer profile needs none, and a
+  multi-reviewer profile with no judge set auto-selects a text-gen-capable
+  reviewer (preferring claude-code, then codex, then gemini).
 - `output` selects where the verdict is delivered: `local` (printed and saved
   to the local review manifest — the default; omitted from settings) or `trail`
   (additionally posted to the branch's trail as a finding via the data API).
   Resolved by `profileOutput`; the trail post is wired through the injected
   `Deps.PostReviewToTrail` hook (`review_bridge.go` → `createTrailReviewFinding`).
 
-`entire inspect --models` lists the models each agent advertises via the
+`entire review --models` lists the models each agent advertises via the
 optional `agent.ModelLister` capability (`cmd/entire/cli/agent/model_lister.go`).
 Only claude-code advertises a list (its curated, real aliases opus/sonnet/haiku).
 Agents whose CLI has no enumeration command (codex, gemini) do not implement
@@ -132,9 +132,9 @@ Settings fields: `EntireSettings.ReviewProfiles` and
 
 ## How It Works (env-var handshake)
 
-1. `entire inspect` resolves a profile (positional/`--profile`, else the
+1. `entire review` resolves a profile (positional/`--profile`, else the
    interactive chooser, else — non-interactively — an error). It composes
-   inspector prompts via `review.ComposeReviewPrompt` and computes scope
+   reviewer prompts via `review.ComposeReviewPrompt` and computes scope
    (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
 2. **For agents with review-runner adapters** (claude-code, codex, gemini-cli):
    the spawned process is given env vars
@@ -146,11 +146,11 @@ Settings fields: `EntireSettings.ReviewProfiles` and
 3. **For agents without review-runner adapters yet**: `RunMarkerFallback` writes
    a `PendingReviewMarker` file and prints guidance — the user opens the agent
    themselves and runs the skills, then tags it with `entire attach --review`.
-4. Inspectors run the selected profile's task; each session ends naturally.
-5. In multi-inspector profiles, the judge runs after inspectors finish (see
-   Multi-Agent UI). It receives all inspector reports and consolidates them into
+4. Reviewers run the selected profile's task; each session ends naturally.
+5. In multi-reviewer profiles, the judge runs after reviewers finish (see
+   Multi-Agent UI). It receives all reviewer reports and consolidates them into
    the final verdict.
-6. On the next `git commit`, the PostCommit hook condenses inspector sessions
+6. On the next `git commit`, the PostCommit hook condenses reviewer sessions
    into the checkpoint on `entire/checkpoints/v1`, with `Kind`, `ReviewSkills`,
    and `ReviewPrompt` recorded in `CommittedMetadata`.
 7. The `CheckpointSummary` sets `HasReview = true` for O(1) lookup. `HasReview`
@@ -171,7 +171,7 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
 
 - **`AgentReviewer` interface** (`cmd/entire/cli/review/types/reviewer.go`):
   per-agent contract with `Name() string` and `Start(ctx, RunConfig)
-  (Process, error)`. Each adapter-backed inspector implements this in its own
+  (Process, error)`. Each adapter-backed reviewer implements this in its own
   package.
 - **`ReviewerTemplate`** (`cmd/entire/cli/review/types/template.go`): shared
   scaffolding (spawn → pipe stdout → run parser → forward events → close +
@@ -182,24 +182,24 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
   dashboard), `SynthesisSink` (final verdict). Composed by
   `composeMultiAgentSinks` based on TTY detection.
 - **`Run` / `RunMulti`** (`run.go`, `run_multi.go`): single- and N-agent
-  orchestrators. In `RunMulti` each inspector runs concurrently in its own
+  orchestrators. In `RunMulti` each reviewer runs concurrently in its own
   goroutine; events fan into a single dispatch loop so the serial-dispatch
-  contract holds. Per-inspector skills/prompts are injected via
+  contract holds. Per-reviewer skills/prompts are injected via
   `perAgentConfiguredReviewer`.
-- **Per-inspector timeout** (`run.go`): each inspector is started under its own
-  `context.WithTimeout` (`RunConfig.InspectorTimeout`, default
-  `defaultInspectorTimeout` = 10m, overridable with `--timeout`). When an
-  inspector's deadline elapses while the run is still live, its process is
+- **Per-reviewer timeout** (`run.go`): each reviewer is started under its own
+  `context.WithTimeout` (`RunConfig.ReviewerTimeout`, default
+  `defaultReviewerTimeout` = 10m, overridable with `--timeout`). When an
+  reviewer's deadline elapses while the run is still live, its process is
   cancelled (killed) and it is marked failed-by-timeout; siblings and the judge
   proceed. A parent-context cancellation (Ctrl+C) is classified as cancelled
   instead. The judge has its own separate `defaultSynthesisProviderTimeout` (2m).
 - **Judge resolution** (`profile.go`): `profileJudge` returns the explicitly
   configured judge (`judge`); `resolveJudge` falls back to `defaultJudge`, which
-  auto-selects a text-gen-capable inspector (preferring claude-code, then codex,
+  auto-selects a text-gen-capable reviewer (preferring claude-code, then codex,
   then gemini) when none is set.
 - **Synthesis** (`synthesis_sink.go`): the single judge is an
   `AgentSynthesisProvider` consumed by `SynthesisSink`. It receives all
-  inspector narratives and writes one verdict; provider failure surfaces as
+  reviewer narratives and writes one verdict; provider failure surfaces as
   "final report unavailable".
 - **Env-var contract** (`env.go`): single source of truth for `ENTIRE_REVIEW_*`.
 - **Scope detection** (`scope.go`): first existing of
@@ -211,14 +211,14 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
 When `RunMulti` is dispatched in a TTY, the sink slice is
 `[TUISink, DumpSink, SynthesisSink]`:
 
-- **`TUISink` / `reviewTUIModel`**: live dashboard with one row per inspector;
+- **`TUISink` / `reviewTUIModel`**: live dashboard with one row per reviewer;
   `Ctrl+O` drills into an agent's full event buffer; `Ctrl+C` cancels via the
   shared `CancelFunc`. `RunFinished` blocks on dismissal so `DumpSink` renders
   below rather than overlapping.
 - **`SynthesisSink`** (`synthesis_sink.go`): after the dump it composes an
-  adjudication prompt from all inspector narratives + per-run prompt + profile
+  adjudication prompt from all reviewer narratives + per-run prompt + profile
   task and calls its `SynthesisProvider` — an `AgentSynthesisProvider` for the
-  resolved judge. Skipped when cancelled or fewer than 2 inspectors produced
+  resolved judge. Skipped when cancelled or fewer than 2 reviewers produced
   usable output. Provider failures degrade gracefully.
 - **Sink composition** (`composeMultiAgentSinks` in `cmd.go`): pure helper
   taking explicit `isTTY`/`canPrompt` so tests don't depend on real TTY
@@ -233,7 +233,7 @@ commands/agents. `pickLatestVersion` picks ONE version directory per plugin
 
 ## Anti-Features (do NOT recreate)
 
-- `PendingReviewMarker` for adapter-backed inspectors (env-var handshake makes
+- `PendingReviewMarker` for adapter-backed reviewers (env-var handshake makes
   it unnecessary; the marker only backs the manual-attach fallback)
 - `WorktreePath`-style marker scoping / `AgentEntries` map (env per process)
 - Marker overwrite tripwire / refuse-attach guard
@@ -245,14 +245,14 @@ commands/agents. `pickLatestVersion` picks ONE version directory per plugin
   (codex/gemini advertise nothing; Default + Custom only)
 - A "master" worker slot that both reviews and adjudicates in one pass (the
   judge is a separate consolidation round, even when auto-selected from the
-  inspectors)
+  reviewers)
 
 ## Key Files
 
 - `cmd/entire/cli/review/cmd.go` — `NewCommand()`, `runReview` dispatch fork,
   `runReviewListProfiles` (`--list`), judge wiring, `composeMultiAgentSinks`
 - `cmd/entire/cli/review/picker.go` — guided setup, focus picker (presets +
-  custom task), `pickSlotList` (inspectors), `promptForJudge`, profile chooser
+  custom task), `pickSlotList` (reviewers), `promptForJudge`, profile chooser
 - `cmd/entire/cli/review/profile.go` — profile resolution, `profileJudge` /
   `resolveJudge` / `defaultJudge`, default tasks
 - `cmd/entire/cli/review/synthesis_sink.go` / `synthesis_prompt.go` — final

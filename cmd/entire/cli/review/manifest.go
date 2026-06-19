@@ -35,7 +35,7 @@ const reviewTokenMaxDepth = 16
 type agentTypeLookup func(agenttypes.AgentType) (agent.Agent, error)
 
 // LocalReviewManifest records one local `entire review` invocation. It groups
-// the sibling inspector outputs from a single review run so `entire review
+// the sibling reviewer outputs from a single review run so `entire review
 // --findings` can render them together.
 type LocalReviewManifest struct {
 	Version         int              `json:"version"`
@@ -314,12 +314,12 @@ func hydrateReviewSummaryTokensFromStates(
 
 // matchSessionsToRuns links each agent run in summary to a distinct session
 // state, returning a slice index-aligned with summary.AgentRuns (nil where no
-// session matched). It matches in two passes so inspectors with an explicit
-// model claim their specific session before default-model inspectors take the
-// leftovers: a default inspector has an empty model, which reviewRunModelMatches
+// session matched). It matches in two passes so reviewers with an explicit
+// model claim their specific session before default-model reviewers take the
+// leftovers: a default reviewer has an empty model, which reviewRunModelMatches
 // treats as matching any recorded model (necessary — the session records the
-// resolved default the inspector never named), so without this ordering a
-// default inspector could grab an explicit-model inspector's session. Used by
+// resolved default the reviewer never named), so without this ordering a
+// default reviewer could grab an explicit-model reviewer's session. Used by
 // both the local manifest and token hydration so attribution stays consistent.
 func matchSessionsToRuns(worktreeRoot, headSHA string, summary reviewtypes.RunSummary, states []*session.State) []*session.State {
 	usedSessions := map[string]bool{}
@@ -340,8 +340,8 @@ func matchSessionsToRuns(worktreeRoot, headSHA string, summary reviewtypes.RunSu
 			matched[i] = st
 		}
 	}
-	pass(true)  // explicit-model inspectors first
-	pass(false) // then default-model inspectors
+	pass(true)  // explicit-model reviewers first
+	pass(false) // then default-model reviewers
 	return matched
 }
 

@@ -160,7 +160,7 @@ func TestWriteReviewCompletionFooter_PointsToFindings(t *testing.T) {
 	writeReviewCompletionFooter(&b, manifest)
 
 	got := b.String()
-	for _, want := range []string{"Review complete.", "entire inspect --findings"} {
+	for _, want := range []string{"Review complete.", "entire review --findings"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("footer missing %q:\n%s", want, got)
 		}
@@ -295,7 +295,7 @@ func TestWarnManifestNotWritten_PrintsReasonAndDiagnosticHints(t *testing.T) {
 	for _, want := range []string{
 		"Note: review skills ran but findings were not persisted.",
 		"Reason: test reason text",
-		"`entire inspect --findings` will not see this run.",
+		"`entire review --findings` will not see this run.",
 		"`ENTIRE_LOG_LEVEL=debug`",
 	} {
 		if !strings.Contains(got, want) {
@@ -803,7 +803,7 @@ func TestReviewRunModelMatches(t *testing.T) {
 }
 
 // TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThinking
-// pins the used-session tracking: two inspectors on the same agent whose models
+// pins the used-session tracking: two reviewers on the same agent whose models
 // normalize identically (claude-sonnet:high / :low -> claude-sonnet), with
 // sessions that start in the same second, must still link to distinct sessions
 // rather than both grabbing the most recent match.
@@ -871,11 +871,11 @@ func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThin
 	manifest := buildLocalReviewManifestFromSummary("/repo", "abc123", summary, states, "")
 
 	if len(manifest.Sources) != 2 {
-		t.Fatalf("sources = %d, want 2 (each inspector linked to a session)", len(manifest.Sources))
+		t.Fatalf("sources = %d, want 2 (each reviewer linked to a session)", len(manifest.Sources))
 	}
 	a, b := manifest.Sources[0].SessionID, manifest.Sources[1].SessionID
 	if a == b {
-		t.Fatalf("both inspectors linked to the same session %q; used-session tracking must keep them distinct", a)
+		t.Fatalf("both reviewers linked to the same session %q; used-session tracking must keep them distinct", a)
 	}
 	valid := map[string]bool{"sess-1": true, "sess-2": true}
 	if !valid[a] || !valid[b] {
@@ -884,22 +884,22 @@ func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThin
 }
 
 // TestBuildLocalReviewManifestFromSummary_ExplicitModelClaimedBeforeDefault
-// pins the two-pass matching: a default-model inspector (empty model, which
-// matches any recorded model) must not grab an explicit-model inspector's
+// pins the two-pass matching: a default-model reviewer (empty model, which
+// matches any recorded model) must not grab an explicit-model reviewer's
 // session, even when it appears first and the explicit session is more recent.
 func TestBuildLocalReviewManifestFromSummary_ExplicitModelClaimedBeforeDefault(t *testing.T) {
 	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
 	summary := reviewtypes.RunSummary{
 		StartedAt: started,
 		AgentRuns: []reviewtypes.AgentRun{
-			{ // default-model inspector, listed first
+			{ // default-model reviewer, listed first
 				Name:      "claude-code",
 				AgentName: "claude-code",
 				Model:     "",
 				Status:    reviewtypes.AgentStatusSucceeded,
 				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "default finding"}},
 			},
-			{ // explicit opus inspector
+			{ // explicit opus reviewer
 				Name:      "claude-code",
 				AgentName: "claude-code",
 				Model:     "opus",
@@ -936,30 +936,30 @@ func TestBuildLocalReviewManifestFromSummary_ExplicitModelClaimedBeforeDefault(t
 	}
 	// Sources keep original run order: [default, opus].
 	if manifest.Sources[0].SessionID != "sess-default" {
-		t.Errorf("default inspector linked to %q, want sess-default", manifest.Sources[0].SessionID)
+		t.Errorf("default reviewer linked to %q, want sess-default", manifest.Sources[0].SessionID)
 	}
 	if manifest.Sources[1].SessionID != "sess-opus" {
-		t.Errorf("opus inspector linked to %q, want sess-opus", manifest.Sources[1].SessionID)
+		t.Errorf("opus reviewer linked to %q, want sess-opus", manifest.Sources[1].SessionID)
 	}
 }
 
 // TestBuildLocalReviewManifestFromSummary_ExplicitModelWithoutMatchingSession
-// verifies that an explicit-model inspector with no matching session is left
+// verifies that an explicit-model reviewer with no matching session is left
 // unlinked (not force-attributed to the default-model session), and that the
-// matched slice stays index-aligned so the default inspector still links.
+// matched slice stays index-aligned so the default reviewer still links.
 func TestBuildLocalReviewManifestFromSummary_ExplicitModelWithoutMatchingSession(t *testing.T) {
 	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
 	summary := reviewtypes.RunSummary{
 		StartedAt: started,
 		AgentRuns: []reviewtypes.AgentRun{
-			{ // explicit opus inspector, but only a sonnet session exists
+			{ // explicit opus reviewer, but only a sonnet session exists
 				Name:      "claude-code",
 				AgentName: "claude-code",
 				Model:     "opus",
 				Status:    reviewtypes.AgentStatusSucceeded,
 				Buffer:    []reviewtypes.Event{reviewtypes.AssistantText{Text: "opus finding"}},
 			},
-			{ // default inspector
+			{ // default reviewer
 				Name:      "claude-code",
 				AgentName: "claude-code",
 				Model:     "",
@@ -983,7 +983,7 @@ func TestBuildLocalReviewManifestFromSummary_ExplicitModelWithoutMatchingSession
 	manifest := buildLocalReviewManifestFromSummary("/repo", "abc123", summary, states, "")
 
 	if len(manifest.Sources) != 1 {
-		t.Fatalf("sources = %d, want 1 (opus inspector unmatched, not misattributed)", len(manifest.Sources))
+		t.Fatalf("sources = %d, want 1 (opus reviewer unmatched, not misattributed)", len(manifest.Sources))
 	}
 	if manifest.Sources[0].SessionID != "sess-default" || manifest.Sources[0].Output != "default finding" {
 		t.Errorf("source = %#v, want sess-default / 'default finding'", manifest.Sources[0])
@@ -993,7 +993,7 @@ func TestBuildLocalReviewManifestFromSummary_ExplicitModelWithoutMatchingSession
 // TestBuildLocalReviewManifestFromSummary_ExplicitEmptyModelIsDefault proves
 // that a JSON value of "model": "" is indistinguishable from an omitted model
 // once decoded into AgentRun.Model, and is therefore treated as a default-model
-// inspector (not as an explicit-model inspector) by matchSessionsToRuns.
+// reviewer (not as an explicit-model reviewer) by matchSessionsToRuns.
 func TestBuildLocalReviewManifestFromSummary_ExplicitEmptyModelIsDefault(t *testing.T) {
 	const (
 		sessDefault = "sess-default"
@@ -1053,9 +1053,9 @@ func TestBuildLocalReviewManifestFromSummary_ExplicitEmptyModelIsDefault(t *test
 		t.Fatalf("sources = %d, want 2", len(manifest.Sources))
 	}
 	if manifest.Sources[0].SessionID != sessDefault {
-		t.Errorf("explicit-empty/default inspector linked to %q, want %s", manifest.Sources[0].SessionID, sessDefault)
+		t.Errorf("explicit-empty/default reviewer linked to %q, want %s", manifest.Sources[0].SessionID, sessDefault)
 	}
 	if manifest.Sources[1].SessionID != sessOpus {
-		t.Errorf("opus inspector linked to %q, want %s", manifest.Sources[1].SessionID, sessOpus)
+		t.Errorf("opus reviewer linked to %q, want %s", manifest.Sources[1].SessionID, sessOpus)
 	}
 }

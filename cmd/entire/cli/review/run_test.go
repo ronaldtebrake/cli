@@ -12,7 +12,7 @@ import (
 
 // ctxReviewer's process hangs until its run context is done, then reports the
 // context error — modeling an agent that would run forever until the
-// orchestrator's per-inspector deadline cancels (kills) it.
+// orchestrator's per-reviewer deadline cancels (kills) it.
 type ctxReviewer struct{ name string }
 
 func (r *ctxReviewer) Name() string { return r.name }
@@ -582,7 +582,7 @@ func TestRun_SinkFanOut(t *testing.T) {
 	}
 }
 
-func TestInspectorDeadlineFired_EqualParentDeadlineIsNotInspectorTimeout(t *testing.T) {
+func TestReviewerDeadlineFired_EqualParentDeadlineIsNotReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	deadline := time.Now().Add(20 * time.Millisecond)
 	parentCtx, cancelParent := context.WithDeadline(context.Background(), deadline)
@@ -596,12 +596,12 @@ func TestInspectorDeadlineFired_EqualParentDeadlineIsNotInspectorTimeout(t *test
 		t.Fatal("agent context deadline did not fire")
 	}
 	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
-	if inspectorDeadlineFired(parentCtx, agentCtx, waitErr) {
-		t.Fatal("equal parent/agent deadlines should be treated as parent deadline, not inspector timeout")
+	if reviewerDeadlineFired(parentCtx, agentCtx, waitErr) {
+		t.Fatal("equal parent/agent deadlines should be treated as parent deadline, not reviewer timeout")
 	}
 }
 
-func TestInspectorDeadlineFired_EarlierAgentDeadlineIsInspectorTimeout(t *testing.T) {
+func TestReviewerDeadlineFired_EarlierAgentDeadlineIsReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	parentCtx, cancelParent := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 	defer cancelParent()
@@ -614,25 +614,25 @@ func TestInspectorDeadlineFired_EarlierAgentDeadlineIsInspectorTimeout(t *testin
 		t.Fatal("agent context deadline did not fire")
 	}
 	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
-	if !inspectorDeadlineFired(parentCtx, agentCtx, waitErr) {
-		t.Fatal("earlier agent deadline should classify as inspector timeout")
+	if !reviewerDeadlineFired(parentCtx, agentCtx, waitErr) {
+		t.Fatal("earlier agent deadline should classify as reviewer timeout")
 	}
 }
 
-func TestRun_InspectorTimeout(t *testing.T) {
+func TestRun_ReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	rec := &stubSinkRecorder{}
 	summary, err := Run(
 		context.Background(),
 		&ctxReviewer{name: "claude-code"},
-		reviewtypes.RunConfig{InspectorTimeout: 30 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 30 * time.Millisecond},
 		[]reviewtypes.Sink{rec},
 	)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want a 'timed out' error", err)
 	}
 	if summary.Cancelled {
-		t.Error("Cancelled should be false for a per-inspector timeout (parent ctx not cancelled)")
+		t.Error("Cancelled should be false for a per-reviewer timeout (parent ctx not cancelled)")
 	}
 	if len(summary.AgentRuns) != 1 {
 		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
@@ -646,19 +646,19 @@ func TestRun_InspectorTimeout(t *testing.T) {
 	}
 }
 
-func TestRun_InspectorTimeoutWithStringWrappedContextError(t *testing.T) {
+func TestRun_ReviewerTimeoutWithStringWrappedContextError(t *testing.T) {
 	t.Parallel()
 	summary, err := Run(
 		context.Background(),
 		&stringWrappedCtxReviewer{name: "claude-code"},
-		reviewtypes.RunConfig{InspectorTimeout: 30 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 30 * time.Millisecond},
 		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want a 'timed out' error", err)
 	}
 	if summary.Cancelled {
-		t.Error("Cancelled should be false for a per-inspector timeout")
+		t.Error("Cancelled should be false for a per-reviewer timeout")
 	}
 	if len(summary.AgentRuns) != 1 {
 		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
@@ -674,7 +674,7 @@ func TestRun_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
 	summary, err := Run(
 		context.Background(),
 		&delayedWaitReviewer{name: "claude-code", delay: 30 * time.Millisecond, waitErr: ordinaryErr},
-		reviewtypes.RunConfig{InspectorTimeout: 5 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 5 * time.Millisecond},
 		nil,
 	)
 	if !errors.Is(err, ordinaryErr) {
@@ -692,9 +692,9 @@ func TestRun_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
 	}
 }
 
-func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
+func TestRunMulti_ReviewerTimeoutIsolated(t *testing.T) {
 	t.Parallel()
-	// One inspector hangs (times out); a sibling finishes cleanly. The run is
+	// One reviewer hangs (times out); a sibling finishes cleanly. The run is
 	// not cancelled, the hung one is failed-by-timeout, the sibling succeeds.
 	hang := &ctxReviewer{name: "slow"}
 	fast := &stubReviewer{name: "fast", events: []reviewtypes.Event{
@@ -705,7 +705,7 @@ func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
 	summary, err := RunMulti(
 		context.Background(),
 		[]reviewtypes.AgentReviewer{hang, fast},
-		reviewtypes.RunConfig{InspectorTimeout: 40 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 40 * time.Millisecond},
 		[]reviewtypes.Sink{rec},
 	)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
@@ -728,22 +728,22 @@ func TestRunMulti_InspectorTimeoutIsolated(t *testing.T) {
 }
 
 // TestRun_ParentCancelIsNotTimeout pins the timeout-vs-cancel distinction: when
-// the parent context is cancelled (user Ctrl+C) before an inspector's deadline
-// can fire, the inspector is classified Cancelled, not failed-by-timeout. The
+// the parent context is cancelled (user Ctrl+C) before a reviewer's deadline
+// can fire, the reviewer is classified Cancelled, not failed-by-timeout. The
 // detection reads only the agent context, whose Err() is immutable once set.
-func TestRunMulti_InspectorTimeoutWithStringWrappedContextError(t *testing.T) {
+func TestRunMulti_ReviewerTimeoutWithStringWrappedContextError(t *testing.T) {
 	t.Parallel()
 	summary, err := RunMulti(
 		context.Background(),
 		[]reviewtypes.AgentReviewer{&stringWrappedCtxReviewer{name: "slow"}},
-		reviewtypes.RunConfig{InspectorTimeout: 30 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 30 * time.Millisecond},
 		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want a 'timed out' error", err)
 	}
 	if summary.Cancelled {
-		t.Error("Cancelled should be false for a per-inspector timeout")
+		t.Error("Cancelled should be false for a per-reviewer timeout")
 	}
 	if len(summary.AgentRuns) != 1 {
 		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
@@ -759,7 +759,7 @@ func TestRunMulti_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
 	summary, err := RunMulti(
 		context.Background(),
 		[]reviewtypes.AgentReviewer{&delayedWaitReviewer{name: "slow-fail", delay: 30 * time.Millisecond, waitErr: ordinaryErr}},
-		reviewtypes.RunConfig{InspectorTimeout: 5 * time.Millisecond},
+		reviewtypes.RunConfig{ReviewerTimeout: 5 * time.Millisecond},
 		nil,
 	)
 	if !errors.Is(err, ordinaryErr) {
@@ -780,12 +780,12 @@ func TestRunMulti_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
 func TestRun_ParentCancelIsNotTimeout(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before the (1h) inspector deadline can elapse
+	cancel() // cancel before the (1h) reviewer deadline can elapse
 	rec := &stubSinkRecorder{}
 	summary, err := Run(
 		ctx,
 		&ctxReviewer{name: "claude-code"},
-		reviewtypes.RunConfig{InspectorTimeout: time.Hour},
+		reviewtypes.RunConfig{ReviewerTimeout: time.Hour},
 		[]reviewtypes.Sink{rec},
 	)
 	if err != nil && strings.Contains(err.Error(), "timed out") {
@@ -807,7 +807,7 @@ func TestRun_ParentCancelIsNotTimeout(t *testing.T) {
 }
 
 // lateNaturalReviewer's process ignores its context and completes naturally
-// (Wait returns nil) only after a delay — modeling an inspector that finishes
+// (Wait returns nil) only after a delay — modeling a reviewer that finishes
 // just as (or after) its deadline elapses. It exercises that timeout
 // classification keys off the wait error, not a late re-sample of the agent
 // context (which would already read DeadlineExceeded and falsely flag it).
@@ -839,7 +839,7 @@ func TestRun_NaturalCompletionPastDeadlineIsNotTimeout(t *testing.T) {
 	summary, err := Run(
 		context.Background(),
 		&lateNaturalReviewer{name: "claude-code", delay: 30 * time.Millisecond},
-		reviewtypes.RunConfig{InspectorTimeout: 5 * time.Millisecond}, // deadline elapses during Wait
+		reviewtypes.RunConfig{ReviewerTimeout: 5 * time.Millisecond}, // deadline elapses during Wait
 		[]reviewtypes.Sink{rec},
 	)
 	if err != nil && strings.Contains(err.Error(), "timed out") {
@@ -854,15 +854,15 @@ func TestRun_NaturalCompletionPastDeadlineIsNotTimeout(t *testing.T) {
 	}
 }
 
-func TestInspectorTimeout(t *testing.T) {
+func TestReviewerTimeout(t *testing.T) {
 	t.Parallel()
-	if got := inspectorTimeout(reviewtypes.RunConfig{}); got != defaultInspectorTimeout {
-		t.Errorf("unset = %v, want default %v", got, defaultInspectorTimeout)
+	if got := reviewerTimeout(reviewtypes.RunConfig{}); got != defaultReviewerTimeout {
+		t.Errorf("unset = %v, want default %v", got, defaultReviewerTimeout)
 	}
-	if got := inspectorTimeout(reviewtypes.RunConfig{InspectorTimeout: 5 * time.Minute}); got != 5*time.Minute {
+	if got := reviewerTimeout(reviewtypes.RunConfig{ReviewerTimeout: 5 * time.Minute}); got != 5*time.Minute {
 		t.Errorf("explicit = %v, want 5m", got)
 	}
-	if got := inspectorTimeout(reviewtypes.RunConfig{InspectorTimeout: -1}); got != 0 {
+	if got := reviewerTimeout(reviewtypes.RunConfig{ReviewerTimeout: -1}); got != 0 {
 		t.Errorf("disabled (negative) = %v, want 0 (no timeout)", got)
 	}
 }

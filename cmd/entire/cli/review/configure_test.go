@@ -185,9 +185,9 @@ func TestBuildConfiguredProfile_PreservesExistingTask(t *testing.T) {
 	if profile.Task != "Custom task text." {
 		t.Errorf("task = %q, want preserved custom task", profile.Task)
 	}
-	// Two inspectors with no explicit judge → one auto-selected.
+	// Two reviewers with no explicit judge → one auto-selected.
 	if _, ok := profileJudge(profile); !ok {
-		t.Error("expected an auto-selected judge for a multi-inspector profile")
+		t.Error("expected an auto-selected judge for a multi-reviewer profile")
 	}
 }
 

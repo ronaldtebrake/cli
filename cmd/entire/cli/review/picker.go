@@ -58,8 +58,8 @@ func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found. Let's set one up first.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "You'll choose a review focus and inspector agents. They're saved to")
-	fmt.Fprintln(out, "local review preferences; configure later with `entire inspect --configure`.")
+	fmt.Fprintln(out, "You'll choose a review focus and reviewer agents. They're saved to")
+	fmt.Fprintln(out, "local review preferences; configure later with `entire review --configure`.")
 	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
 
@@ -229,7 +229,7 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	taskForm := newAccessibleForm(huh.NewGroup(
 		huh.NewText().
 			Title("Describe the review task").
-			Description("What should the inspectors look for? This becomes the shared task for every inspector.").
+			Description("What should the reviewers look for? This becomes the shared task for every reviewer.").
 			Value(&task),
 	))
 	if err := taskForm.RunWithContext(ctx); err != nil {
@@ -242,9 +242,9 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	return customProfileName, task, nil
 }
 
-// promptForProfileToRun asks which configured profile to inspect. It pre-selects
-// the default but never runs without an explicit choice, so a bare
-// `entire inspect` doesn't silently spawn a crew.
+// promptForProfileToRun asks which configured profile to review with. It
+// pre-selects the default but never runs without an explicit choice, so a bare
+// `entire review` doesn't silently spawn a crew.
 func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (string, error) {
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	names := sortedProfileNames(profiles)
@@ -275,7 +275,7 @@ func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (str
 	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("Which profile should inspect the branch?").
+			Title("Which profile should review the branch?").
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),
@@ -299,7 +299,7 @@ type crewSlot struct {
 // user add, edit, or remove slots from a list until Done. Duplicate slots (same
 // agent and model) are allowed; each becomes its own worker.
 func promptForReviewCrew(ctx context.Context, profileName string, launchable []string, existing settings.ReviewProfileConfig) (settings.ReviewProfileConfig, error) {
-	// Seed from the existing profile's inspectors when editing one; otherwise the
+	// Seed from the existing profile's reviewers when editing one; otherwise the
 	// guided default is one slot per launchable agent.
 	seed := make([]crewSlot, 0, len(launchable))
 	if len(existing.Agents) > 0 {
@@ -312,7 +312,7 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 			seed = append(seed, crewSlot{agent: name})
 		}
 	}
-	slots, err := pickSlotList(ctx, "Review inspectors", "Select a slot to edit or remove it; + Add slot to add one.", launchable, seed)
+	slots, err := pickSlotList(ctx, "Review reviewers", "Select a slot to edit or remove it; + Add slot to add one.", launchable, seed)
 	if err != nil {
 		return settings.ReviewProfileConfig{}, err
 	}
@@ -320,7 +320,7 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 }
 
 // pickSlotList renders the single-screen add/edit/remove slot list used for both
-// inspectors and judges. candidates are the agents offered when adding a slot;
+// reviewers and judges. candidates are the agents offered when adding a slot;
 // seed pre-populates the list. Returns at least one slot (Done is unavailable
 // while empty).
 func pickSlotList(ctx context.Context, title, desc string, candidates []string, seed []crewSlot) ([]crewSlot, error) {
@@ -396,7 +396,7 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 	}
 }
 
-// promptCrewSlot prompts for one inspector slot: agent plus model. seed
+// promptCrewSlot prompts for one reviewer slot: agent plus model. seed
 // pre-selects the current agent/model when editing (zero value when adding).
 func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (crewSlot, error) {
 	agentName, err := promptCrewAgent(ctx, launchable, seed.agent, false)
@@ -414,7 +414,7 @@ func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (cr
 	return crewSlot{agent: agentName, model: model}, nil
 }
 
-// promptChangeAgent swaps the agent on an existing inspector slot and then asks
+// promptChangeAgent swaps the agent on an existing reviewer slot and then asks
 // for that agent's model. Keeping the same agent preserves the current model as
 // the preselected value.
 func promptChangeAgent(ctx context.Context, candidates []string, seed crewSlot) (crewSlot, error) {
@@ -458,7 +458,7 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 		cfg.Model = s.model
 		profile.Agents[workerIDForAgentModel(s.agent, s.model, profile.Agents)] = cfg
 	}
-	// A default judge is only meaningful with more than one inspector;
+	// A default judge is only meaningful with more than one reviewer;
 	// RunReviewGuidedSetup re-asks for the judge in that case anyway.
 	if len(profile.Agents) > 1 {
 		if j, ok := defaultJudge(ctx, profile.Agents); ok {
@@ -468,7 +468,7 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 	return profile
 }
 
-// promptSlotAction asks what to do with an existing inspector slot row.
+// promptSlotAction asks what to do with an existing reviewer slot row.
 func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool) (string, error) {
 	options := make([]huh.Option[string], 0, 4)
 	if allowAgentChange {
@@ -532,7 +532,7 @@ func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string,
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review inspector agent: %w", err)
+		return "", fmt.Errorf("review reviewer agent: %w", err)
 	}
 	return picked, nil
 }
@@ -550,7 +550,7 @@ func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, 
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review inspector model: %w", err)
+		return "", fmt.Errorf("review reviewer model: %w", err)
 	}
 	return resolvePickedReviewModel(ctx, agentName, picked)
 }
@@ -639,7 +639,7 @@ func listAgentModelOptions(ctx context.Context, agentName string) []agent.ModelI
 }
 
 // promptForJudge picks the single judge (agent + model) that consolidates the
-// inspectors' reports into the final verdict. Candidates are launchable agents
+// reviewers' reports into the final verdict. Candidates are launchable agents
 // that can write a verdict (text generation).
 func promptForJudge(ctx context.Context, launchable []string, existing settings.ReviewProfileConfig) (*settings.ReviewConfig, error) {
 	candidates := make([]string, 0, len(launchable))
@@ -675,7 +675,7 @@ func promptForJudge(ctx context.Context, launchable []string, existing settings.
 		form := newAccessibleForm(huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Judge (writes the final verdict)").
-				Description("Consolidates the inspectors' reports into one verdict.").
+				Description("Consolidates the reviewers' reports into one verdict.").
 				Options(options...).
 				Height(reviewPickerHeight(len(options))).
 				Value(&picked),
@@ -760,11 +760,11 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 		// Aborting the confirm (Ctrl+C / Esc) is a clean "not now", not a
 		// command error. Surface it as picker-cancelled so the caller maps it
 		// to a silent exit via handlePickerError.
-		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire review` when ready.")
 		return false, ErrPickerCancelled
 	}
 	if !runNow {
-		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
+		fmt.Fprintln(out, "Not started. Run `entire review` when ready.")
 	}
 	return runNow, nil
 }
@@ -805,13 +805,13 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 		if pathErr != nil {
 			return errors.New(
 				"no installed agents have curated review skills; " +
-					"install an eligible agent and run `entire inspect --edit`, " +
+					"install an eligible agent and run `entire review --edit`, " +
 					"or edit clone-local review preferences under review.<agent-name>",
 			)
 		}
 		return fmt.Errorf(
 			"no installed agents have curated review skills; "+
-				"install an eligible agent and run `entire inspect --edit`, "+
+				"install an eligible agent and run `entire review --edit`, "+
 				"or edit clone-local review preferences (%s) under review.<agent-name>",
 			prefsPath,
 		)
@@ -941,7 +941,7 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if err := saveReviewProfileConfig(ctx, profileName, merged, judgeAgent, scope); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Saved review profile %q to %s. Edit later with `entire inspect --edit --profile %s`.\n", profileName, scope.file(), profileName)
+	fmt.Fprintf(out, "Saved review profile %q to %s. Edit later with `entire review --edit --profile %s`.\n", profileName, scope.file(), profileName)
 	return nil
 }
 
@@ -1066,7 +1066,7 @@ func promptForReviewJudgeAgent(ctx context.Context, choices []AgentChoice, saved
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Choose judge").
-			Description("The judge critically evaluates the inspectors' reports and writes the final verdict.").
+			Description("The judge critically evaluates the reviewers' reports and writes the final verdict.").
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),
@@ -1180,7 +1180,7 @@ func VerifyConfiguredSkillsInstalled(ctx context.Context, ag agent.Agent, cfg se
 	}
 	return fmt.Errorf(
 		"configured review skill(s) not installed: %s\n"+
-			"run `entire inspect --edit` to reconfigure, or install the plugin and retry",
+			"run `entire review --edit` to reconfigure, or install the plugin and retry",
 		strings.Join(missing, ", "),
 	)
 }

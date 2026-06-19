@@ -145,7 +145,7 @@ func (s *TUISink) AgentEvent(agent string, ev reviewtypes.Event) {
 	s.program.Send(agentEventMsg{agent: agent, ev: ev})
 }
 
-// RunFinished (Sink interface): mark inspector execution complete and send the
+// RunFinished (Sink interface): mark reviewer execution complete and send the
 // final summary message. It does not block or exit the TUI: post-run sinks may
 // still run (for example the final judge), and they can update the dashboard via
 // FinalPhaseStarted/FinalPhaseFinished. A later PostRunComplete call exits the
@@ -163,7 +163,7 @@ func (s *TUISink) RunFinished(summary reviewtypes.RunSummary) {
 }
 
 // FinalPhaseStarted updates the TUI with a visible post-run phase such as the
-// profile judge consolidating inspector reports.
+// profile judge consolidating reviewer reports.
 func (s *TUISink) FinalPhaseStarted(name string) {
 	s.mu.Lock()
 	ok := s.started

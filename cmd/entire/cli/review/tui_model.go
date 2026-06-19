@@ -631,7 +631,7 @@ func (m reviewTUIModel) renderFinalPhaseRow() string {
 	case m.finalPhaseDone:
 		status = "✓ done"
 	}
-	preview := "consolidating inspector reports"
+	preview := "consolidating reviewer reports"
 	if m.finalPhaseErr != "" {
 		preview = m.finalPhaseErr
 	}

@@ -136,10 +136,10 @@ func RunMulti(
 	// cannot consume the event-burst slack before the dispatch loop starts.
 	fanIn := make(chan taggedEvent, len(reviewers)*17)
 
-	// Each inspector runs under its own deadline (unless inspectorTimeout returns
+	// Each reviewer runs under its own deadline (unless reviewerTimeout returns
 	// 0, meaning disabled) so a stuck agent is cancelled without hanging the run;
 	// siblings and the judge proceed.
-	timeout := inspectorTimeout(cfg)
+	timeout := reviewerTimeout(cfg)
 	var wg sync.WaitGroup
 	startTerminals := make([]taggedEvent, 0)
 	for i, r := range reviewers {
@@ -190,7 +190,7 @@ func RunMulti(
 			fanIn <- taggedEvent{agentIdx: idx, terminal: &agentTerminal{
 				waitErr:    waitErr,
 				finishedAt: finishedAt,
-				timedOut:   inspectorDeadlineFired(ctx, runCtx, waitErr),
+				timedOut:   reviewerDeadlineFired(ctx, runCtx, waitErr),
 			}}
 		}(i, proc, agentCtx, cancelAgent)
 	}

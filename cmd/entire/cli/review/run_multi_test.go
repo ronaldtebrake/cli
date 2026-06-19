@@ -748,7 +748,7 @@ func TestRunMulti_StartErrorCancelsAgentContextImmediately(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := RunMulti(context.Background(), []reviewtypes.AgentReviewer{bad, good}, reviewtypes.RunConfig{
-			InspectorTimeout: time.Hour,
+			ReviewerTimeout: time.Hour,
 		}, nil)
 		done <- err
 	}()

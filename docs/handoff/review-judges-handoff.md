@@ -1,11 +1,11 @@
-# Handoff — `entire inspect` + Judge Panel
+# Handoff — `entire review` + Judge Panel
 
 _Last updated: 2026-06-14 · branch `review-profiles` @ `ead8c12dc`_
 
 ## TL;DR
 
-`entire inspect` is the evolved multi-agent code-inspection command (formerly the
-hidden `review`). A profile runs a crew of **inspectors** (parallel review
+`entire review` is the evolved multi-agent code-review command. A profile runs
+a crew of **reviewers** (parallel review
 agents) and then a panel of **judges** that render the verdict; with ≥2 judges a
 **chair** merges them. The command, profiles, guided setup, scripted config,
 `--list`, and the judge panel are implemented, building, and green. The Pi-specific
@@ -18,36 +18,36 @@ work lives in a separate stacked PR (#1313) that now needs another rebase.
 
 ## Terminology (final)
 
-- **inspectors** — the worker agents that review the change in parallel
+- **reviewers** — the worker agents that review the change in parallel
   (`agents` in settings).
-- **judges** — the panel that evaluates inspector reports (`judges` in settings).
+- **judges** — the panel that evaluates reviewer reports (`judges` in settings).
 - **chair** — the judge that merges a ≥2-judge panel into the final verdict
   (`chair` in settings; defaults to the first judge).
-- Command is **`entire inspect`**; **`entire review`** is a kept alias (it shipped
+- Command is **`entire review`**; **`entire review`** is a kept alias (it shipped
   on `main`). **`entire scout`** was removed (never shipped).
 - Internal identifiers, settings keys, and env vars are still `review_*` /
-  `ENTIRE_REVIEW_*` — only user-facing surfaces use inspector/judge/chair.
+  `ENTIRE_REVIEW_*` — only user-facing surfaces use reviewer/judge/chair.
 
 ## Command surface
 
 ```
-entire inspect                # interactive: profile chooser. non-interactive: list + error (never silent default)
-entire inspect <profile>      # run a named profile
-entire inspect --list         # list profiles (inspectors + judges, default marked)
-entire inspect --configure    # interactive wizard; non-interactive discovery view
-entire inspect --configure --profile P \
-  --set-agents claude-code,codex \      # inspectors (simple)
-  --set-slot claude-code=opus --set-slot codex \   # inspector slots (dupes ok)
+entire review                # interactive: profile chooser. non-interactive: list + error (never silent default)
+entire review <profile>      # run a named profile
+entire review --list         # list profiles (reviewers + judges, default marked)
+entire review --configure    # interactive wizard; non-interactive discovery view
+entire review --configure --profile P \
+  --set-agents claude-code,codex \      # reviewers (simple)
+  --set-slot claude-code=opus --set-slot codex \   # reviewer slots (dupes ok)
   --set-judge claude-code=opus --set-judge codex=gpt-5 \  # judges (repeatable; >1 = panel)
   --set-chair claude-code=opus \        # chair for a panel
   --set-model codex=gpt-5-codex --set-task "..."
-entire inspect --edit         # advanced skill picker
-entire inspect --agent N      # run one inspector
-entire inspect --agent N --model M
-entire inspect --agents       # list inspectors (valid --agent values)
-entire inspect --models [--agent N]
-entire inspect --prompt "..." # one-off instructions
-entire inspect --findings     # browse local findings
+entire review --edit         # advanced skill picker
+entire review --agent N      # run one reviewer
+entire review --agent N --model M
+entire review --agents       # list reviewers (valid --agent values)
+entire review --models [--agent N]
+entire review --prompt "..." # one-off instructions
+entire review --findings     # browse local findings
 entire attach --review <id>   # post-hoc tag a session (the old `review attach` was removed)
 ```
 
@@ -72,7 +72,7 @@ entire attach --review <id>   # post-hoc tag a session (the old `review attach` 
 }
 ```
 
-Back-compat: legacy `master` (an inspector id) and `master_agent` / `master_model`
+Back-compat: legacy `master` (an reviewer id) and `master_agent` / `master_model`
 are still honored as a single judge when `judges` is empty. New configs write
 `judges`/`chair`.
 
@@ -96,15 +96,15 @@ are still honored as a single judge when `judges` is empty. New configs write
 
 ## Done
 
-- [x] Command renamed `review`/`scout` → `inspect`; `review` alias kept; `scout` removed.
-- [x] Bare `inspect` requires explicit selection (interactive chooser / non-interactive error+list).
-- [x] `--list` profiles (inspectors + judges, chair marked).
+- [x] Command is `review` (`inspect`/`scout` names removed).
+- [x] Bare `review` requires explicit selection (interactive chooser / non-interactive error+list).
+- [x] `--list` profiles (reviewers + judges, chair marked).
 - [x] Custom focus/task option in guided setup; guided setup edits the existing profile.
 - [x] Slot-based crew (`--set-slot`, duplicates allowed).
 - [x] Judge panel: schema, `profileJudges`, `PanelSynthesisProvider`, chair merge, tests.
 - [x] Scripted `--set-judge` / `--set-chair` (replaced `--set-master`).
-- [x] Guided picker: `pickSlotList` for inspectors + judges, chair pick for panels.
-- [x] Inspector/judge/chair terminology across help, `--list`, catalog, errors.
+- [x] Guided picker: `pickSlotList` for reviewers + judges, chair pick for panels.
+- [x] Reviewer/judge/chair terminology across help, `--list`, catalog, errors.
 - [x] Dropped legacy `[master]` marker in `--agents`; `judges=` in catalog.
 - [x] Removed fabricated codex/gemini model lists (only claude-code advertises models).
 - [x] Codex JSON error envelopes surfaced instead of bare `exit status 1`.
@@ -134,7 +134,7 @@ are still honored as a single judge when `judges` is empty. New configs write
 - `cmd/entire/cli/review/cmd.go` — `NewCommand`, dispatch, `--list`, catalog,
   `composeMultiAgentSinks`, judge-panel wiring (`runMultiAgentPath`).
 - `cmd/entire/cli/review/picker.go` — guided setup, focus picker, `pickSlotList`
-  (inspectors + judges), chair picker, profile chooser.
+  (reviewers + judges), chair picker, profile chooser.
 - `cmd/entire/cli/review/profile.go` — profile resolution, `profileJudges`,
   default tasks.
 - `cmd/entire/cli/review/synthesis_panel.go` (+ `_test.go`) — `PanelSynthesisProvider`,
@@ -155,8 +155,8 @@ are still honored as a single judge when `judges` is empty. New configs write
 go build ./...
 go test ./...                 # expect 72 ok, 0 fail
 golangci-lint run ./cmd/entire/cli/review/... ./cmd/entire/cli/ ./cmd/entire/cli/settings/...
-go run ./cmd/entire inspect --list
-go run ./cmd/entire inspect --help
+go run ./cmd/entire review --list
+go run ./cmd/entire review --help
 ```
 
 ## Gotchas

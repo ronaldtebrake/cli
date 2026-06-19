@@ -67,7 +67,7 @@ type Process interface {
 	// When Wait returns, the process has exited and any goroutines the Process
 	// spawned (stdout parsers, event forwarders) have finished — implementations
 	// MUST NOT leave goroutines running past Wait. The orchestrator relies on
-	// this: it releases the run context (cancelling any per-inspector deadline)
+	// this: it releases the run context (cancelling any per-reviewer deadline)
 	// right after Wait returns, so a goroutine still bound to that context could
 	// otherwise be cancelled out from under it.
 	Wait() error
@@ -129,13 +129,13 @@ type RunConfig struct {
 	// the commit that was reviewed.
 	StartingSHA string
 
-	// InspectorTimeout bounds how long a single inspector may run before the
+	// ReviewerTimeout bounds how long a single reviewer may run before the
 	// orchestrator cancels it (its process is killed and the run is marked
 	// failed-by-timeout) so a stuck agent can't hang the review forever. Zero
-	// or negative means use the orchestrator default (defaultInspectorTimeout).
-	// Sibling inspectors and the judge are unaffected by one inspector's
+	// or negative means use the orchestrator default (defaultReviewerTimeout).
+	// Sibling reviewers and the judge are unaffected by one reviewer's
 	// timeout.
-	InspectorTimeout time.Duration
+	ReviewerTimeout time.Duration
 
 	// EnrichSummary optionally updates the completed run summary before sinks
 	// receive RunFinished. It is used for post-process data such as token

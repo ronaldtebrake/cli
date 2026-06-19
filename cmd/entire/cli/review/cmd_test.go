@@ -361,7 +361,7 @@ func TestRunReview_PromptOnlyConfigSkipsVerification(t *testing.T) {
 	}
 }
 
-// TestRunReview_BareNonInteractiveRequiresProfile verifies that `entire inspect`
+// TestRunReview_BareNonInteractiveRequiresProfile verifies that `entire review`
 // with no profile, in a non-interactive context (the test has no TTY), never
 // auto-runs a default crew — it errors and lists the configured profiles.
 func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
@@ -382,7 +382,7 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 
 	err := rootCmd.Execute()
 	if err == nil {
-		t.Fatal("bare non-interactive inspect should require a profile, got nil error")
+		t.Fatal("bare non-interactive review should require a profile, got nil error")
 	}
 	if !strings.Contains(errBuf.String(), "Specify a profile") {
 		t.Errorf("stderr should ask for a profile, got:\n%s", errBuf.String())
@@ -393,7 +393,7 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 	// It must not have spawned a crew: no pending marker written.
 	_, exists, markerErr := review.ReadPendingReviewMarker(context.Background())
 	if markerErr == nil && exists {
-		t.Error("bare non-interactive inspect should not have started a review")
+		t.Error("bare non-interactive review should not have started a review")
 	}
 }
 

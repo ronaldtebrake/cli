@@ -34,28 +34,28 @@ func reviewerModelName(r reviewtypes.AgentReviewer) string {
 	return ""
 }
 
-// defaultInspectorTimeout bounds a single inspector's run when the caller
-// doesn't set RunConfig.InspectorTimeout. A stuck agent is cancelled (its
+// defaultReviewerTimeout bounds a single reviewer's run when the caller
+// doesn't set RunConfig.ReviewerTimeout. A stuck agent is cancelled (its
 // process killed) and marked failed rather than hanging the review forever.
-const defaultInspectorTimeout = 10 * time.Minute
+const defaultReviewerTimeout = 10 * time.Minute
 
-// inspectorTimeout resolves the effective per-inspector timeout, distinguishing
-// the three RunConfig.InspectorTimeout states the zero value alone can't:
+// reviewerTimeout resolves the effective per-reviewer timeout, distinguishing
+// the three RunConfig.ReviewerTimeout states the zero value alone can't:
 //   - positive: use it.
-//   - zero (unset): use defaultInspectorTimeout.
+//   - zero (unset): use defaultReviewerTimeout.
 //   - negative: disabled — return 0, and callers treat 0 as "no timeout".
-func inspectorTimeout(cfg reviewtypes.RunConfig) time.Duration {
+func reviewerTimeout(cfg reviewtypes.RunConfig) time.Duration {
 	switch {
-	case cfg.InspectorTimeout > 0:
-		return cfg.InspectorTimeout
-	case cfg.InspectorTimeout < 0:
+	case cfg.ReviewerTimeout > 0:
+		return cfg.ReviewerTimeout
+	case cfg.ReviewerTimeout < 0:
 		return 0
 	default:
-		return defaultInspectorTimeout
+		return defaultReviewerTimeout
 	}
 }
 
-func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) bool {
+func reviewerDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) bool {
 	if waitErr == nil {
 		return false
 	}
@@ -64,9 +64,9 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 		return false
 	}
 	// Only an agent deadline that is strictly earlier than the parent deadline
-	// (or no parent deadline at all) proves this was the per-inspector timeout.
+	// (or no parent deadline at all) proves this was the per-reviewer timeout.
 	// Equal deadlines mean the child may have inherited the parent's deadline, so
-	// parent cancellation/timeout must not be reported as an inspector timeout.
+	// parent cancellation/timeout must not be reported as a reviewer timeout.
 	if parentDeadline, parentHasDeadline := parentCtx.Deadline(); parentHasDeadline && !agentDeadline.Before(parentDeadline) {
 		return false
 	}
@@ -75,7 +75,7 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 	}
 	// Fallback only for adapters that formatted ctx.Err() without %w (for
 	// example "agent failed: context deadline exceeded"). Do not classify an
-	// unrelated non-nil Wait error as a timeout just because the inspector
+	// unrelated non-nil Wait error as a timeout just because the reviewer
 	// deadline fired while/after Wait was returning.
 	if !strings.Contains(waitErr.Error(), context.DeadlineExceeded.Error()) {
 		return false
@@ -83,7 +83,7 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 	return errors.Is(agentCtx.Err(), context.DeadlineExceeded)
 }
 
-// timedOutError reports the per-inspector timeout as a user-facing error.
+// timedOutError reports the per-reviewer timeout as a user-facing error.
 func timedOutError(agent string, timeout time.Duration) error {
 	return fmt.Errorf("review agent %s timed out after %s", agent, timeout)
 }
@@ -110,12 +110,12 @@ func Run(
 		modelName = cfg.Model
 	}
 
-	// Bound the inspector so a stuck agent can't hang the review forever (unless
+	// Bound the reviewer so a stuck agent can't hang the review forever (unless
 	// the timeout is disabled). The deadline applies only to this agent;
 	// cancellation kills its process. defer runs at function return (after
 	// proc.Wait below), so agentCtx stays live for the whole run; deferring here
 	// — not after Start — also releases the timer on the Start-error path.
-	timeout := inspectorTimeout(cfg)
+	timeout := reviewerTimeout(cfg)
 	agentCtx := ctx
 	var cancelAgent context.CancelFunc = func() {}
 	if timeout > 0 {
@@ -180,12 +180,12 @@ func Run(
 	finished := time.Now()
 	// Classify from waitErr, the termination cause captured when Wait returned:
 	// the Process contract returns DeadlineExceeded when the process was killed
-	// by this inspector's deadline and Canceled on a parent cancellation (user
+	// by this reviewer's deadline and Canceled on a parent cancellation (user
 	// Ctrl+C). If an implementation formats ctx.Err() without preserving the
 	// sentinel, fall back to the per-agent context only when Wait returned an
 	// error; this avoids a deadline firing after a natural completion (waitErr ==
 	// nil) and producing a false timeout.
-	timedOut := inspectorDeadlineFired(ctx, agentCtx, waitErr)
+	timedOut := reviewerDeadlineFired(ctx, agentCtx, waitErr)
 	if shouldEmitSyntheticRunError(ctx, waitErr) {
 		synthEvent := reviewtypes.RunError{Err: waitErr}
 		buffer = append(buffer, synthEvent)

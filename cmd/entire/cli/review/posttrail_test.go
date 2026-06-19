@@ -74,7 +74,7 @@ func TestMaybePostReviewToTrail(t *testing.T) {
 			called = true
 			return nil
 		}}
-		// Empty aggregate and an inspector that produced no narrative => nothing to report.
+		// Empty aggregate and a reviewer that produced no narrative => nothing to report.
 		maybePostReviewToTrail(context.Background(), &out, deps, ReviewOutputTrail, "general", postTrailSummary(""), "")
 		if called {
 			t.Error("must not post when there is nothing to report")

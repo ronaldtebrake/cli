@@ -295,10 +295,10 @@ func (s *EntireSettings) SummaryTimeoutValue() time.Duration {
 }
 
 // ReviewProfileConfig is a named review setup. The profile-level Task is the
-// canonical task every inspector agent is asked to run; per-agent ReviewConfig
+// canonical task every reviewer agent is asked to run; per-agent ReviewConfig
 // entries adapt that task to agent-specific mechanics such as slash commands
 // or additional instructions. Judge names the single agent that consolidates
-// the inspectors' reports into the final verdict in a closing round.
+// the reviewers' reports into the final verdict in a closing round.
 //
 // Example:
 //
@@ -319,10 +319,10 @@ type ReviewProfileConfig struct {
 	Task   string                  `json:"task,omitempty"`
 	Agents map[string]ReviewConfig `json:"agents,omitempty"`
 	// Judge is the single agent (plus optional model) that consolidates the
-	// inspectors' reports into the final verdict. It is optional: a
-	// one-inspector profile needs no judge (the lone report is the result),
-	// and a multi-inspector profile with no judge set falls back to an
-	// auto-selected inspector that can write a verdict.
+	// reviewers' reports into the final verdict. It is optional: a
+	// one-reviewer profile needs no judge (the lone report is the result),
+	// and a multi-reviewer profile with no judge set falls back to an
+	// auto-selected reviewer that can write a verdict.
 	Judge *ReviewConfig `json:"judge,omitempty"`
 	// Output selects where the final review verdict is delivered: "local"
 	// (printed and saved to the local review manifest — the default) or
