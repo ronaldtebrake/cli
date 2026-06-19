@@ -26,6 +26,11 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/uiform"
 )
 
+// ErrPickerCancelled is returned when the user aborts an interactive picker
+// or confirmation (Ctrl+C / Esc). Callers map it to a clean, silent exit
+// rather than a command error.
+var ErrPickerCancelled = errors.New("picker cancelled")
+
 // AgentChoice is one row in the spawn-time picker. Name is the agent
 // registry key (used for marker/override); Label is the picker-visible
 // string ("<name>   (N skills configured)" or "<name>   (prompt-only)").
@@ -764,14 +769,14 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 	return runNow, nil
 }
 
-func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName, profileName string) (map[string]settings.ReviewConfig, error) {
+func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName, profileName string) error {
 	profileName = strings.TrimSpace(profileName)
 	if profileName == "" {
 		profileName = DefaultProfileName
 	}
 	installed := getInstalled(ctx)
 	if len(installed) == 0 {
-		return nil, errors.New(
+		return errors.New(
 			"no agents with hooks installed; " +
 				"run 'entire configure --agent <name>' to install hooks for one, " +
 				"or 'entire enable' to set up the repo",
@@ -798,13 +803,13 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if len(configurable) == 0 {
 		prefsPath, pathErr := settings.ClonePreferencesPath(ctx)
 		if pathErr != nil {
-			return nil, errors.New(
+			return errors.New(
 				"no installed agents have curated review skills; " +
 					"install an eligible agent and run `entire inspect --edit`, " +
 					"or edit clone-local review preferences under review.<agent-name>",
 			)
 		}
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"no installed agents have curated review skills; "+
 				"install an eligible agent and run `entire inspect --edit`, "+
 				"or edit clone-local review preferences (%s) under review.<agent-name>",
@@ -894,11 +899,11 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 
 		form := newAccessibleForm(huh.NewGroup(fields...))
 		if err := form.RunWithContext(ctx); err != nil {
-			return nil, fmt.Errorf("picker for %s: %w", c.name, err)
+			return fmt.Errorf("picker for %s: %w", c.name, err)
 		}
 		model, err := resolvePickedReviewModel(ctx, string(c.name), pickedModel)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		cfg := settings.ReviewConfig{
@@ -922,22 +927,22 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 
 	// The emptiness check runs on `merged`, not `selected`.
 	if len(merged) == 0 {
-		return nil, errors.New("no review skills or prompt configured")
+		return errors.New("no review skills or prompt configured")
 	}
 
 	judgeAgent, err := pickReviewJudgeAgentPreference(ctx, merged, existingJudge)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	scope, err := promptForSettingsScope(ctx, false)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := saveReviewProfileConfig(ctx, profileName, merged, judgeAgent, scope); err != nil {
-		return nil, err
+		return err
 	}
 	fmt.Fprintf(out, "Saved review profile %q to %s. Edit later with `entire inspect --edit --profile %s`.\n", profileName, scope.file(), profileName)
-	return merged, nil
+	return nil
 }
 
 // MergePickerResults combines the picker's output with existing review
@@ -1136,33 +1141,6 @@ func filterLaunchableEligibleForProfile(profile settings.ReviewProfileConfig, el
 		}
 	}
 	return out
-}
-
-// PromptForAgent renders the single-select agent picker shown when more than
-// one eligible agent is configured. Returns the chosen agent name. Respects
-// accessibility mode via newAccessibleForm.
-func PromptForAgent(ctx context.Context, eligible []AgentChoice) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("agent picker: %w", err)
-	}
-	if len(eligible) == 0 {
-		return "", errors.New("no eligible agents to prompt for")
-	}
-	options := make([]huh.Option[string], 0, len(eligible))
-	for _, c := range eligible {
-		options = append(options, huh.NewOption(c.Label, c.Name))
-	}
-	picked := eligible[0].Name
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Which agent should run this review?").
-			Options(options...).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("agent picker: %w", err)
-	}
-	return picked, nil
 }
 
 // VerifyConfiguredSkillsInstalled is the spawn-time backstop for the

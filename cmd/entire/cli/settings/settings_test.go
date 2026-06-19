@@ -1125,19 +1125,6 @@ func TestLoad_AppliesClonePreferencesBeforeLocalSettings(t *testing.T) {
 	}
 }
 
-func TestEntireSettings_ReviewConfigFor(t *testing.T) {
-	t.Parallel()
-	s := &EntireSettings{Review: map[string]ReviewConfig{
-		"claude-code": {Skills: []string{"/pr-review-toolkit:review-pr"}},
-	}}
-	if cfg := s.ReviewConfigFor("claude-code"); len(cfg.Skills) != 1 {
-		t.Fatalf("expected 1 skill, got %v", cfg.Skills)
-	}
-	if cfg := s.ReviewConfigFor("codex"); !cfg.IsZero() {
-		t.Fatalf("expected zero config for unconfigured agent, got %+v", cfg)
-	}
-}
-
 func TestReviewConfig_IsZero(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

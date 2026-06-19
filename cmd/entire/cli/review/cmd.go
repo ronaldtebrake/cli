@@ -202,8 +202,7 @@ use 'entire attach --review <id>'.`,
 				}, deps)
 			}
 			if edit {
-				_, err := RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
-				return err
+				return RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
 			}
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
@@ -784,7 +783,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			fmt.Fprintln(out, "Configure later with `entire inspect --configure`.")
 			fmt.Fprintln(out)
 		}
-		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile, saveScope); saveErr != nil {
+		if saveErr := saveReviewProfile(ctx, profileForSetup, profile, false, saveScope); saveErr != nil {
 			return saveErr
 		}
 		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
@@ -1194,7 +1193,6 @@ func runMultiAgentPath(
 	sinks := composeMultiAgentSinks(multiAgentSinkInputs{
 		out:               out,
 		isTTY:             interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively(),
-		canPrompt:         interactive.CanPromptInteractively(),
 		agentNames:        agentNames,
 		cancelRun:         cancelRun,
 		runContext:        runCtx,
@@ -1203,7 +1201,6 @@ func runMultiAgentPath(
 		profileName:       profileName,
 		task:              profile.Task,
 		masterName:        masterLabel,
-		autoSynthesis:     true,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result
 		},
@@ -1225,10 +1222,9 @@ func runMultiAgentPath(
 	return nil
 }
 
-// handlePickerError maps multi-picker error sentinels to the appropriate
+// handlePickerError maps picker error sentinels to the appropriate
 // command-layer response.
 //   - ErrPickerCancelled → return nil (user cancelled; no error shown)
-//   - ErrNoAgentsSelected → surface error to user
 //   - other errors → surface to user
 func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr error) error {
 	if errors.Is(pickErr, ErrPickerCancelled) {
@@ -1240,8 +1236,8 @@ func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr 
 }
 
 // multiAgentSinkInputs collects the parameters composeMultiAgentSinks needs.
-// It exists so tests can drive the helper with explicit isTTY / canPrompt
-// values instead of monkey-patching interactive helpers at run time.
+// It exists so tests can drive the helper with an explicit isTTY value
+// instead of monkey-patching interactive helpers at run time.
 //
 // isTTY here means "the TUI sink is safe to compose" — production callers
 // AND IsTerminalWriter(out) with CanPromptInteractively() before passing
@@ -1252,17 +1248,14 @@ func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr 
 type multiAgentSinkInputs struct {
 	out               io.Writer
 	isTTY             bool
-	canPrompt         bool
 	agentNames        []string
 	cancelRun         context.CancelFunc
 	runContext        context.Context
 	synthesisProvider SynthesisProvider
-	promptYN          func(ctx context.Context, question string, def bool) (bool, error)
 	perRunPrompt      string
 	profileName       string
 	task              string
 	masterName        string
-	autoSynthesis     bool
 	onSynthesisResult func(result string)
 }
 
@@ -1274,39 +1267,31 @@ type singleAgentSinkInputs struct {
 	cancelRun context.CancelFunc
 }
 
-// composeMultiAgentSinks builds the sink slice for a multi-agent run.
+// composeMultiAgentSinks builds the sink slice for a multi-agent run. The
+// master adjudication phase (SynthesisSink) runs unconditionally when a
+// provider is configured — it needs no stdin, so it is available in TTY,
+// redirected, and CI output alike.
 //
-//   - Non-TTY: [DumpSink, SynthesisSink?] — narrative dump plus profile-native
-//     final report when autoSynthesis is enabled.
-//   - TTY + profile-native auto synthesis: [TUISink, buffered DumpSink,
-//     buffered SynthesisSink, TUI finalizer, buffer flusher]. The TUI stays up
-//     during the judge phase and post-run stdout is flushed after the alt-screen
-//     exits.
-//   - TTY without auto synthesis: [TUISink, TUI finalizer, DumpSink,
-//     SynthesisSink?]. Legacy prompted synthesis runs after the TUI exits so the
-//     prompt can safely use stdin/stdout.
-//
-// Prompted legacy synthesis is still only appended when canPrompt is true.
-// Profile-native auto synthesis does not need stdin, so it is available in
-// redirected and CI output too.
+//   - Non-TTY: [DumpSink, SynthesisSink?] — narrative dump plus the final report.
+//   - TTY: [TUISink, buffered DumpSink, buffered SynthesisSink, buffer flusher].
+//     The TUI stays up during the judge phase and post-run stdout is flushed
+//     after the alt-screen exits.
+//   - TTY without a provider: [TUISink, TUI finalizer, DumpSink].
 func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 	sinks := []reviewtypes.Sink{}
 	if in.isTTY {
 		tui := NewTUISink(in.agentNames, in.cancelRun, in.out, os.Stdin)
 		sinks = append(sinks, tui)
-		if in.autoSynthesis && in.synthesisProvider != nil {
+		if in.synthesisProvider != nil {
 			postRunOut := &bytes.Buffer{}
 			sinks = append(sinks, DumpSink{W: postRunOut})
 			sinks = append(sinks, SynthesisSink{
 				Provider:     in.synthesisProvider,
 				Writer:       postRunOut,
-				InputTTY:     in.canPrompt,
-				PromptYN:     in.promptYN,
 				PerRunPrompt: in.perRunPrompt,
 				ProfileName:  in.profileName,
 				Task:         in.task,
 				MasterName:   in.masterName,
-				Auto:         true,
 				RunContext:   in.runContext,
 				OnResult:     in.onSynthesisResult,
 				OnStart: func() {
@@ -1321,36 +1306,18 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 		}
 		sinks = append(sinks, tuiPostRunCompleteSink{tui: tui})
 		sinks = append(sinks, DumpSink{W: in.out})
-		if in.synthesisProvider != nil && in.canPrompt {
-			sinks = append(sinks, SynthesisSink{
-				Provider:     in.synthesisProvider,
-				Writer:       in.out,
-				InputTTY:     in.canPrompt,
-				PromptYN:     in.promptYN,
-				PerRunPrompt: in.perRunPrompt,
-				ProfileName:  in.profileName,
-				Task:         in.task,
-				MasterName:   in.masterName,
-				Auto:         false,
-				RunContext:   in.runContext,
-				OnResult:     in.onSynthesisResult,
-			})
-		}
 		return sinks
 	}
 
 	sinks = append(sinks, DumpSink{W: in.out})
-	if in.synthesisProvider != nil && (in.autoSynthesis || in.canPrompt) {
+	if in.synthesisProvider != nil {
 		sinks = append(sinks, SynthesisSink{
 			Provider:     in.synthesisProvider,
 			Writer:       in.out,
-			InputTTY:     in.canPrompt,
-			PromptYN:     in.promptYN,
 			PerRunPrompt: in.perRunPrompt,
 			ProfileName:  in.profileName,
 			Task:         in.task,
 			MasterName:   in.masterName,
-			Auto:         in.autoSynthesis,
 			RunContext:   in.runContext,
 			OnResult:     in.onSynthesisResult,
 		})

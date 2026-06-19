@@ -356,7 +356,7 @@ func runTrailReviewShow(cmd *cobra.Command, selector string, commentID string) e
 	if err != nil {
 		return err
 	}
-	if hydrated, hydrateErr := hydrateTrailReviewCommentSuggestions(cmd.Context(), client, target.Trail.ID, comment); hydrateErr == nil {
+	if hydrated, _, hydrateErr := hydrateTrailReviewCommentWithState(cmd.Context(), client, target.Trail.ID, comment); hydrateErr == nil {
 		comment = hydrated
 	}
 	printTrailReviewCommentDetail(cmd.OutOrStdout(), comment)
@@ -917,11 +917,6 @@ func resolveTrailReviewComment(ctx context.Context, client *api.Client, trailID,
 		sort.Strings(ids)
 		return api.TrailReviewComment{}, fmt.Errorf("ambiguous finding %q (matches: %s)", commentID, strings.Join(ids, ", "))
 	}
-}
-
-func hydrateTrailReviewCommentSuggestions(ctx context.Context, client *api.Client, trailID string, comment api.TrailReviewComment) (api.TrailReviewComment, error) {
-	hydrated, _, err := hydrateTrailReviewCommentWithState(ctx, client, trailID, comment)
-	return hydrated, err
 }
 
 func hydrateTrailReviewCommentWithState(ctx context.Context, client *api.Client, trailID string, comment api.TrailReviewComment) (api.TrailReviewComment, api.TrailReviewStateResponse, error) {

@@ -4,8 +4,6 @@ import (
 	"context"
 	"io"
 
-	"charm.land/huh/v2"
-
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
 
@@ -22,14 +20,11 @@ func ExposedComposeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt 
 type SinkComposeInputs struct {
 	Out               io.Writer
 	IsTTY             bool
-	CanPrompt         bool
 	AgentNames        []string
 	CancelRun         context.CancelFunc
 	SynthesisProvider SynthesisProvider
-	PromptYN          func(ctx context.Context, question string, def bool) (bool, error)
 	PerRunPrompt      string
 	MasterName        string
-	AutoSynthesis     bool
 }
 
 type SingleAgentSinkComposeInputs struct {
@@ -45,14 +40,11 @@ func ExposedComposeMultiAgentSinks(in SinkComposeInputs) []reviewtypes.Sink {
 	return composeMultiAgentSinks(multiAgentSinkInputs{
 		out:               in.Out,
 		isTTY:             in.IsTTY,
-		canPrompt:         in.CanPrompt,
 		agentNames:        in.AgentNames,
 		cancelRun:         in.CancelRun,
 		synthesisProvider: in.SynthesisProvider,
-		promptYN:          in.PromptYN,
 		perRunPrompt:      in.PerRunPrompt,
 		masterName:        in.MasterName,
-		autoSynthesis:     in.AutoSynthesis,
 	})
 }
 
@@ -65,10 +57,6 @@ func ExposedComposeSingleAgentSinks(in SingleAgentSinkComposeInputs) []reviewtyp
 		agentName: in.AgentName,
 		cancelRun: in.CancelRun,
 	})
-}
-
-func ExposedBuildAgentMultiSelect(options []huh.Option[string], picked *[]string) *huh.MultiSelect[string] {
-	return buildAgentMultiSelect(options, picked)
 }
 
 // ExposedFindTUISink exposes findTUISink for tests.

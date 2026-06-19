@@ -433,10 +433,6 @@ func (s reviewSettingsScope) file() string {
 	return settings.EntireSettingsFile
 }
 
-func saveDefaultReviewProfile(ctx context.Context, profileName string, profile settings.ReviewProfileConfig, scope reviewSettingsScope) error {
-	return saveReviewProfile(ctx, profileName, profile, false, scope)
-}
-
 // saveReviewProfile persists one profile into the chosen settings file via a
 // raw read-modify-write so unrelated keys (and other profiles) are preserved.
 func saveReviewProfile(ctx context.Context, profileName string, profile settings.ReviewProfileConfig, makeDefault bool, scope reviewSettingsScope) error {

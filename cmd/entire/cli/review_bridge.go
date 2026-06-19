@@ -84,14 +84,6 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 	})
 }
 
-// reviewTrailFindingInput builds the trail finding payload for one review
-// verdict. The verdict spans the whole change, so it uses "whole_change"
-// granularity: the API requires a valid granularity and rejects a zero/empty
-// value with a 400.
-func reviewTrailFindingInput(profileName, verdict string) api.TrailReviewCommentInput {
-	return reviewTrailFindingInputWithKind(profileName, verdict, "verdict")
-}
-
 // reviewTrailFindingInputs turns a final review verdict into trail findings.
 // It first accepts the runner-style last JSON line format
 // {"summary":"","comments":[...]}; when absent, it falls back to splitting
@@ -103,7 +95,9 @@ func reviewTrailFindingInputs(profileName, verdict string) []api.TrailReviewComm
 	}
 	items := splitReviewVerdictFindings(verdict)
 	if len(items) <= 1 {
-		return []api.TrailReviewCommentInput{reviewTrailFindingInput(profileName, verdict)}
+		// The verdict spans the whole change, so it uses "verdict" kind:
+		// the API requires a valid granularity and rejects an empty value.
+		return []api.TrailReviewCommentInput{reviewTrailFindingInputWithKind(profileName, verdict, "verdict")}
 	}
 	inputs := make([]api.TrailReviewCommentInput, 0, len(items))
 	for _, item := range items {

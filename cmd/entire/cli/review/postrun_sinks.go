@@ -26,7 +26,7 @@ func (s tuiPostRunCompleteSink) flushBuffer() {
 	if s.buf == nil || s.out == nil || s.buf.Len() == 0 {
 		return
 	}
-	if _, err := s.out.Write(s.buf.Bytes()); err != nil {
-		return
-	}
+	// Best-effort flush of buffered post-run output; a write error here means
+	// the terminal is gone and there is nothing actionable to do.
+	_, _ = s.out.Write(s.buf.Bytes()) //nolint:errcheck // best-effort terminal flush
 }

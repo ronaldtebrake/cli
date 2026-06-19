@@ -371,17 +371,6 @@ func (c ReviewConfig) IsZero() bool {
 	return c.Agent == "" && c.Model == "" && len(c.Skills) == 0 && c.Prompt == ""
 }
 
-// ReviewConfigFor returns the configured review config for the given agent.
-// Returns a zero-value config when the agent has no entry; callers should
-// check IsZero (or the individual fields) to decide whether configuration
-// is present.
-func (s *EntireSettings) ReviewConfigFor(agentName string) ReviewConfig {
-	if s == nil {
-		return ReviewConfig{}
-	}
-	return s.Review[agentName]
-}
-
 // InvestigateConfig holds the configuration for `entire investigate`.
 // Unlike ReviewConfig, investigate runs the same shared prompt across
 // all configured agents, so the schema is a flat agent list with global

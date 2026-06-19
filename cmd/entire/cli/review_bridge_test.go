@@ -13,7 +13,7 @@ func TestReviewTrailFindingInput(t *testing.T) {
 	// Regression: a review verdict is not tied to a file/line, so the finding
 	// must use whole_change granularity. An empty granularity is rejected by
 	// the API with a 400.
-	in := reviewTrailFindingInput("general", "  the verdict  ")
+	in := reviewTrailFindingInputWithKind("general", "  the verdict  ", "verdict")
 	if in.Location.Granularity != testWholeChangeGranularity {
 		t.Errorf("granularity = %q, want whole_change", in.Location.Granularity)
 	}
@@ -25,7 +25,7 @@ func TestReviewTrailFindingInput(t *testing.T) {
 	}
 
 	// No profile: the body is exactly the trimmed verdict.
-	bare := reviewTrailFindingInput("", "  bare verdict  ")
+	bare := reviewTrailFindingInputWithKind("", "  bare verdict  ", "verdict")
 	if bare.Body == nil || *bare.Body != "bare verdict" {
 		t.Errorf("body = %v, want exactly %q", bare.Body, "bare verdict")
 	}

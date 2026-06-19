@@ -21,27 +21,24 @@ type TrailListResponse struct {
 
 // TrailResource represents a single trail from the API.
 type TrailResource struct {
-	ID              string           `json:"id,omitempty"`
-	Number          int              `json:"number,omitempty"`
-	Branch          string           `json:"branch"`
-	Base            string           `json:"base"`
-	Title           string           `json:"title"`
-	Body            string           `json:"body"`
-	Status          string           `json:"status"`
-	Phase           string           `json:"phase,omitempty"`
-	Author          *trail.Author    `json:"author"`
-	Assignees       []string         `json:"assignees"`
-	Labels          []string         `json:"labels"`
-	Priority        string           `json:"priority,omitempty"`
-	Type            string           `json:"type,omitempty"`
-	Reviewers       []trail.Reviewer `json:"reviewers,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	MergedAt        *time.Time       `json:"merged_at,omitempty"`
-	CommentCount    int              `json:"comment_count,omitempty"`
-	UnresolvedCount int              `json:"unresolved_count,omitempty"`
-	CheckpointCount int              `json:"checkpoint_count,omitempty"`
-	CommitsAhead    int              `json:"commits_ahead,omitempty"`
+	ID              string        `json:"id,omitempty"`
+	Number          int           `json:"number,omitempty"`
+	Branch          string        `json:"branch"`
+	Base            string        `json:"base"`
+	Title           string        `json:"title"`
+	Body            string        `json:"body"`
+	Status          string        `json:"status"`
+	Phase           string        `json:"phase,omitempty"`
+	Author          *trail.Author `json:"author"`
+	Assignees       []string      `json:"assignees"`
+	Labels          []string      `json:"labels"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
+	MergedAt        *time.Time    `json:"merged_at,omitempty"`
+	CommentCount    int           `json:"comment_count,omitempty"`
+	UnresolvedCount int           `json:"unresolved_count,omitempty"`
+	CheckpointCount int           `json:"checkpoint_count,omitempty"`
+	CommitsAhead    int           `json:"commits_ahead,omitempty"`
 }
 
 // ToMetadata converts a TrailResource to a trail.Metadata for display.
@@ -58,9 +55,6 @@ func (r *TrailResource) ToMetadata() *trail.Metadata {
 		Author:    r.Author,
 		Assignees: r.Assignees,
 		Labels:    r.Labels,
-		Priority:  trail.Priority(r.Priority),
-		Type:      trail.Type(r.Type),
-		Reviewers: r.Reviewers,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
 		MergedAt:  r.MergedAt,
@@ -81,41 +75,24 @@ type TrailCreateRequest struct {
 	BranchName string `json:"branch_name"`
 	// BranchAction is "create" (default) or "link". The CLI sends "link" to
 	// attach the already-pushed branch instead of backfilling it at base.
-	BranchAction string   `json:"branch_action,omitempty"`
-	Base         string   `json:"base,omitempty"`
-	Status       string   `json:"status,omitempty"`
-	Assignees    []string `json:"assignees,omitempty"`
-	Labels       []string `json:"labels,omitempty"`
-	Priority     string   `json:"priority,omitempty"`
-	Type         string   `json:"type,omitempty"`
+	BranchAction string `json:"branch_action,omitempty"`
+	Base         string `json:"base,omitempty"`
+	Status       string `json:"status,omitempty"`
 }
 
 // TrailCreateResponse is the response from POST /api/v1/trails/:org/:repo.
 type TrailCreateResponse struct {
-	Trail         TrailResource `json:"trail"`
-	BranchCreated bool          `json:"branch_created"`
-}
-
-// TrailDetailResponse is the response from GET /api/v1/trails/:org/:repo/:trailId.
-type TrailDetailResponse struct {
-	Trail       TrailResource     `json:"trail"`
-	Discussion  trail.Discussion  `json:"discussion"`
-	Checkpoints trail.Checkpoints `json:"checkpoints"`
+	Trail TrailResource `json:"trail"`
 }
 
 // TrailUpdateRequest is the body for PATCH /api/v1/trails/:host/:owner/:repo/:trailId.
 // Pointer fields distinguish "not provided" (nil) from "set to value".
 // For slices, *[]string is used so nil means "no change" while &[]string{} means "clear".
 type TrailUpdateRequest struct {
-	Branch    *string   `json:"branch,omitempty"`
-	Base      *string   `json:"base,omitempty"`
-	Status    *string   `json:"status,omitempty"`
-	Title     *string   `json:"title,omitempty"`
-	Body      *string   `json:"body,omitempty"`
-	Assignees *[]string `json:"assignees,omitempty"`
-	Labels    *[]string `json:"labels,omitempty"`
-	Priority  *string   `json:"priority,omitempty"`
-	Type      *string   `json:"type,omitempty"`
+	Status *string   `json:"status,omitempty"`
+	Title  *string   `json:"title,omitempty"`
+	Body   *string   `json:"body,omitempty"`
+	Labels *[]string `json:"labels,omitempty"`
 }
 
 // TrailUpdateResponse is the response from PATCH /api/v1/trails/:org/:repo/:trailId.
