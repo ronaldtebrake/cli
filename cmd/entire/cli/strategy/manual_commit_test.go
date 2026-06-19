@@ -4194,8 +4194,7 @@ func TestCondenseSession_RedactionFailure_DropsTranscriptButWritesMetadata(t *te
 	require.NoError(t, err, "redaction failure should not abort condensation")
 	require.NotNil(t, result)
 
-	store, err := s.getCheckpointStore(context.Background(), repo)
-	require.NoError(t, err)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 
 	committed, err := store.ListCommitted(context.Background())
 	require.NoError(t, err)
@@ -4210,9 +4209,7 @@ func TestCondenseSession_RedactionFailure_DropsTranscriptButWritesMetadata(t *te
 	}
 	require.True(t, found, "checkpoint metadata should be written even when transcript redaction fails")
 
-	summary, err := checkpoint.ReadCommittedCheckpoint(context.Background(), store, checkpointID)
-	require.NoError(t, err)
-	_, err = checkpoint.ReadLatestSessionContent(context.Background(), store, checkpointID, summary)
+	_, err = store.ReadLatestSessionContent(context.Background(), checkpointID)
 	require.ErrorIs(t, err, checkpoint.ErrNoTranscript, "transcript should be dropped when redaction fails")
 }
 
