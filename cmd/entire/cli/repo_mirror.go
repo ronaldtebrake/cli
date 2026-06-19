@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -244,11 +243,13 @@ func newRepoMirrorListCmd() *cobra.Command {
 			// the active login's federation, so name that login server. It makes
 			// a surprising empty result legible — e.g. mirrors that live in a
 			// different deployment than the active context (--cluster is a filter,
-			// not a router). Skipped for --json to keep machine output clean; on
-			// stderr so it never lands in a piped table.
+			// not a router). Reuses the same target coreapi.New dials. Best-effort:
+			// no header rather than a hard failure if the active context can't be
+			// resolved. Skipped for --json to keep machine output clean; on stderr
+			// so it never lands in a piped table.
 			if !jsonRequested(cmd) {
-				if server := activeLoginServer(); server != "" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Listing mirrors on %s\n", server)
+				if t, err := auth.ResolveControlPlaneTarget(); err == nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Listing mirrors on %s\n", t.CoreURL)
 				}
 			}
 			return runCoreList(cmd, mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Mirror, error) {
@@ -274,32 +275,6 @@ func newRepoMirrorListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&provider, "provider", "", "filter by upstream provider (e.g. github)")
 	cmd.Flags().StringVar(&owner, "owner", "", "filter by upstream owner login")
 	return cmd
-}
-
-// activeLoginServer returns the control-plane login server that identity-scoped
-// commands (e.g. `mirror list`) query, for an informational header. Mirrors the
-// resolution coreapi.New uses: the ENTIRE_TOKEN audience when set, else the
-// active context's core. Best-effort — returns "" when it can't be determined,
-// so the header is simply omitted rather than failing; the command's own call
-// surfaces any real auth error.
-func activeLoginServer() string {
-	if raw, ok := os.LookupEnv(auth.EnvTokenVar); ok {
-		u, err := auth.CoreURLFromEnvToken(strings.TrimSpace(raw))
-		if err != nil {
-			return ""
-		}
-		return u
-	}
-	all, current, err := auth.Contexts()
-	if err != nil {
-		return ""
-	}
-	for _, c := range all {
-		if c.Name == current {
-			return c.CoreURL
-		}
-	}
-	return ""
 }
 
 func newRepoMirrorGetCmd() *cobra.Command {
