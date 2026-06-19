@@ -61,11 +61,8 @@ func ReadCommittedCheckpoint(ctx context.Context, reader CommittedReader, checkp
 // ReadLatestSessionContent reads the latest session from an already-resolved
 // committed reader and summary.
 func ReadLatestSessionContent(ctx context.Context, reader CommittedReader, checkpointID id.CheckpointID, summary *CheckpointSummary) (*SessionContent, error) {
-	if summary == nil {
+	if summary == nil || len(summary.Sessions) == 0 {
 		return nil, ErrCheckpointNotFound
-	}
-	if len(summary.Sessions) == 0 {
-		return nil, fmt.Errorf("checkpoint has no sessions: %s", checkpointID)
 	}
 	latestIndex := len(summary.Sessions) - 1
 	content, err := reader.ReadSessionContent(ctx, checkpointID, latestIndex)

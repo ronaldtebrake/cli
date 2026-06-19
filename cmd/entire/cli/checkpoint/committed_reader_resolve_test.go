@@ -32,7 +32,7 @@ func TestReadCommittedCheckpointWrapsReaderError(t *testing.T) {
 	require.ErrorContains(t, err, "read committed checkpoint")
 }
 
-func TestReadLatestSessionContentEmptySummaryReturnsDistinctError(t *testing.T) {
+func TestReadLatestSessionContentEmptySummaryReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
 	cpID := id.MustCheckpointID("111111111111")
@@ -41,8 +41,7 @@ func TestReadLatestSessionContentEmptySummaryReturnsDistinctError(t *testing.T) 
 
 	content, err := ReadLatestSessionContent(context.Background(), reader, cpID, summary)
 	require.Nil(t, content)
-	require.ErrorContains(t, err, "checkpoint has no sessions")
-	require.NotErrorIs(t, err, ErrCheckpointNotFound)
+	require.ErrorIs(t, err, ErrCheckpointNotFound)
 }
 
 func TestReadRawSessionLogForCheckpointReadsLatestV1Session(t *testing.T) {
