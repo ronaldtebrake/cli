@@ -257,6 +257,9 @@ type reviewConfigureOptions struct {
 }
 
 func (o reviewConfigureOptions) scripted() bool {
+	// Local selects the destination only; by itself it must not force the
+	// non-interactive/scripted path. `entire inspect --configure --local` should
+	// still run the guided picker and preselect the local settings file.
 	return len(o.Agents) > 0 || o.Judge != "" || o.Output != "" || o.Task != "" || len(o.Models) > 0 || len(o.Slots) > 0
 }
 

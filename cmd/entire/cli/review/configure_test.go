@@ -410,3 +410,13 @@ func TestDefaultReviewTasksRejectSlop(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewConfigureOptionsScripted_LocalOnlyDoesNotSkipInteractive(t *testing.T) {
+	t.Parallel()
+	if (reviewConfigureOptions{Local: true}).scripted() {
+		t.Fatal("--local alone must not force scripted configure; it preselects local in the interactive scope picker")
+	}
+	if !(reviewConfigureOptions{Local: true, Agents: []string{tAgentClaude}}).scripted() {
+		t.Fatal("--local with --set-* flags should still use scripted configure")
+	}
+}
