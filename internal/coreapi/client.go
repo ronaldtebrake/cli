@@ -104,13 +104,9 @@ func clientFromEnvToken() (*Client, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	envToken := strings.TrimSpace(raw)
-	if envToken == "" {
-		return nil, true, fmt.Errorf("%s is set but blank", auth.EnvTokenVar)
-	}
-	coreURL, err := auth.CoreURLFromEnvToken(envToken)
+	coreURL, envToken, err := auth.ParseEnvToken(raw)
 	if err != nil {
-		return nil, true, err //nolint:wrapcheck // CoreURLFromEnvToken already prefixes with EnvTokenVar
+		return nil, true, err //nolint:wrapcheck // auth.ParseEnvToken already prefixes with EnvTokenVar
 	}
 	client, err := NewWithBearer(coreURL, envToken)
 	return client, true, err
@@ -126,6 +122,18 @@ func clientForTarget(target auth.ControlPlaneTarget) (*Client, error) {
 		return nil, fmt.Errorf("build Entire API client: %w", err)
 	}
 	return client, nil
+}
+
+// CoreOrigin reports the control-plane core origin this client dials —
+// scheme://host, the apiBasePath stripped. It is the single source of truth
+// for "which core am I talking to": whether the client came from New (active
+// context), NewForCluster (the cluster's core), or the ENTIRE_TOKEN bypass
+// (the token's aud), the origin is whatever was actually wired in. Use it for
+// user-facing "talking to <core>" output so the named core can never diverge
+// from where requests go — re-deriving it from ResolveControlPlaneTarget would
+// silently miss the ENTIRE_TOKEN and cluster cases.
+func (c *Client) CoreOrigin() string {
+	return c.serverURL.Scheme + "://" + c.serverURL.Host
 }
 
 // NewWithBearer returns a *Client targeting an explicit core origin with a

@@ -444,6 +444,30 @@ relPath := paths.ToRelativePath("/repo/api/file.ts", repoRoot)  // returns "api/
 
 Test case in `state_test.go`: `TestFilterAndNormalizePaths_SiblingDirectories` documents this bug pattern.
 
+### Control-Plane Core Resolution (which core am I talking to?)
+
+Control-plane commands dial one of three cores: the active context's
+(`coreapi.New`), a specific cluster's (`coreapi.NewForCluster`), or — when
+`ENTIRE_TOKEN` is set — the env token's `aud` (the bypass inside `New`/
+`NewForCluster`). This precedence lives **only** inside `coreapi`; nothing else
+re-derives it.
+
+**To display which core a request uses, ask the client: `client.CoreOrigin()`.**
+It returns whatever was actually wired in, so the shown core can never diverge
+from where the request goes. **Do NOT** re-resolve with
+`auth.ResolveControlPlaneTarget()` for display — it only knows the active
+context and silently ignores both `ENTIRE_TOKEN` and the cluster case, so it can
+name a core the request never touches (this was a real bug in the `mirror list`
+banner; see `repo_mirror.go` and `coreapi.Client.CoreOrigin`).
+
+When a command resolves auth *outside* a `coreapi.Client` (e.g. `entire auth
+status`, which builds its own `/me` client), it must apply the same
+env-token-first precedence itself — see `resolveAuthStatusTarget` /
+`resolveEnvTokenStatusTarget` in `auth.go`, which branch on
+`auth.EnvTokenVar` before falling back to the active context. `logout` is the
+deliberate exception: it manages a *stored* login session, which an ephemeral
+env token has none of, so it stays on the active context.
+
 ### Session Strategy (`cmd/entire/cli/strategy/`)
 
 The CLI uses a manual-commit strategy for managing session data and checkpoints. The strategy implements the `Strategy` interface defined in `strategy.go`.

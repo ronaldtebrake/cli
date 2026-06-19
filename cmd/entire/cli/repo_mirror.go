@@ -239,20 +239,20 @@ func newRepoMirrorListCmd() *cobra.Command {
 		Short: "List mirrors you can see",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// mirror list is identity-scoped: it shows the mirrors visible from
-			// the active login's federation, so name that login server. It makes
-			// a surprising empty result legible — e.g. mirrors that live in a
-			// different deployment than the active context (--cluster is a filter,
-			// not a router). Reuses the same target coreapi.New dials. Best-effort:
-			// no header rather than a hard failure if the active context can't be
-			// resolved. Skipped for --json to keep machine output clean; on stderr
-			// so it never lands in a piped table.
-			if !jsonRequested(cmd) {
-				if t, err := auth.ResolveControlPlaneTarget(); err == nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Listing mirrors on %s\n", t.CoreURL)
-				}
-			}
 			return runCoreList(cmd, mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Mirror, error) {
+				// mirror list is identity-scoped: it shows the mirrors visible
+				// from the active login's federation, so naming that login server
+				// makes a surprising empty result legible — e.g. mirrors in a
+				// different deployment than the active context (--cluster is a
+				// filter, not a router). Name the core the client actually dials
+				// (c.CoreOrigin) so the banner can never diverge from where the
+				// request goes — in particular it reflects ENTIRE_TOKEN's aud,
+				// which a separately-resolved ResolveControlPlaneTarget would miss.
+				// On stderr so it never lands in a piped table; skipped for --json
+				// to keep machine output clean.
+				if !jsonRequested(cmd) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Listing mirrors on %s\n", c.CoreOrigin())
+				}
 				var params coreapi.ListMirrorsParams
 				if cluster != "" {
 					params.Cluster = coreapi.NewOptString(cluster)
