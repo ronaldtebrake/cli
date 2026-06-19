@@ -55,6 +55,12 @@ func reviewerTimeout(cfg reviewtypes.RunConfig) time.Duration {
 	}
 }
 
+var errReviewerTimeoutCause = errors.New("reviewer timeout elapsed")
+
+func withReviewerTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(parent, timeout, errReviewerTimeoutCause)
+}
+
 func reviewerDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) bool {
 	if waitErr == nil {
 		return false
@@ -63,14 +69,20 @@ func reviewerDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) b
 	if !ok {
 		return false
 	}
-	// Only an agent deadline that is strictly earlier than the parent deadline
-	// (or no parent deadline at all) proves this was the per-reviewer timeout.
-	// Equal deadlines mean the child may have inherited the parent's deadline, so
-	// parent cancellation/timeout must not be reported as a reviewer timeout.
+	// Only an agent deadline that is strictly earlier than a visible parent
+	// deadline can be this reviewer's timeout. Equal or later deadlines may have
+	// been inherited from the parent and must not be reported as reviewer timeouts.
 	if parentDeadline, parentHasDeadline := parentCtx.Deadline(); parentHasDeadline && !agentDeadline.Before(parentDeadline) {
 		return false
 	}
-	if errors.Is(waitErr, context.DeadlineExceeded) {
+	// Mark contexts we create for reviewer timeouts with a private cause. This
+	// distinguishes our timer from parent cancellations/deadlines, including
+	// custom parent contexts that propagate DeadlineExceeded through Err/Done while
+	// hiding their Deadline from this helper.
+	if !errors.Is(context.Cause(agentCtx), errReviewerTimeoutCause) {
+		return false
+	}
+	if errors.Is(waitErr, errReviewerTimeoutCause) || errors.Is(waitErr, context.DeadlineExceeded) {
 		return true
 	}
 	// Fallback only for adapters that formatted ctx.Err() without %w (for
@@ -122,7 +134,7 @@ func Run(
 	agentCtx := ctx
 	var cancelAgent context.CancelFunc = func() {}
 	if timeout > 0 {
-		agentCtx, cancelAgent = context.WithTimeout(ctx, timeout)
+		agentCtx, cancelAgent = withReviewerTimeout(ctx, timeout)
 	}
 	defer cancelAgent()
 

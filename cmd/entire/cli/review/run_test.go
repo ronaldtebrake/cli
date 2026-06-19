@@ -22,6 +22,10 @@ func (r *ctxReviewer) Start(ctx context.Context, _ reviewtypes.RunConfig) (revie
 
 type ctxProcess struct{ ctx context.Context }
 
+type deadlineHidingContext struct{ context.Context }
+
+func (deadlineHidingContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
 func (p *ctxProcess) Events() <-chan reviewtypes.Event {
 	out := make(chan reviewtypes.Event)
 	go func() {
@@ -587,7 +591,7 @@ func TestReviewerDeadlineFired_EqualParentDeadlineIsNotReviewerTimeout(t *testin
 	deadline := time.Now().Add(20 * time.Millisecond)
 	parentCtx, cancelParent := context.WithDeadline(context.Background(), deadline)
 	defer cancelParent()
-	agentCtx, cancelAgent := context.WithDeadline(parentCtx, deadline)
+	agentCtx, cancelAgent := context.WithDeadlineCause(parentCtx, deadline, errReviewerTimeoutCause)
 	defer cancelAgent()
 
 	select {
@@ -605,7 +609,7 @@ func TestReviewerDeadlineFired_EarlierAgentDeadlineIsReviewerTimeout(t *testing.
 	t.Parallel()
 	parentCtx, cancelParent := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 	defer cancelParent()
-	agentCtx, cancelAgent := context.WithTimeout(parentCtx, 20*time.Millisecond)
+	agentCtx, cancelAgent := withReviewerTimeout(parentCtx, 20*time.Millisecond)
 	defer cancelAgent()
 
 	select {
@@ -622,7 +626,7 @@ func TestReviewerDeadlineFired_EarlierAgentDeadlineIsReviewerTimeout(t *testing.
 func TestReviewerDeadlineFired_ContextCanceledIsNotReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	parentCtx := context.Background()
-	agentCtx, cancelAgent := context.WithTimeout(parentCtx, 20*time.Millisecond)
+	agentCtx, cancelAgent := withReviewerTimeout(parentCtx, 20*time.Millisecond)
 	defer cancelAgent()
 
 	select {
@@ -635,6 +639,28 @@ func TestReviewerDeadlineFired_ContextCanceledIsNotReviewerTimeout(t *testing.T)
 	}
 	if reviewerDeadlineFired(parentCtx, agentCtx, context.Canceled) {
 		t.Fatal("context.Canceled wait error should not classify as reviewer timeout")
+	}
+}
+
+func TestReviewerDeadlineFired_HiddenParentDeadlineIsNotReviewerTimeout(t *testing.T) {
+	t.Parallel()
+	underlyingParent, cancelParent := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelParent()
+	parentCtx := deadlineHidingContext{Context: underlyingParent}
+	agentCtx, cancelAgent := withReviewerTimeout(parentCtx, time.Hour)
+	defer cancelAgent()
+
+	select {
+	case <-agentCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("agent context did not observe hidden parent deadline")
+	}
+	if errors.Is(context.Cause(agentCtx), errReviewerTimeoutCause) {
+		t.Fatal("hidden parent deadline should not use the reviewer timeout cause")
+	}
+	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
+	if reviewerDeadlineFired(parentCtx, agentCtx, waitErr) {
+		t.Fatal("hidden parent deadline should not classify as reviewer timeout")
 	}
 }
 

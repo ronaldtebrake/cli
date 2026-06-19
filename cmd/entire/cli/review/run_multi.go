@@ -150,7 +150,7 @@ func RunMulti(
 		agentCtx := ctx
 		var cancelAgent context.CancelFunc = func() {}
 		if timeout > 0 {
-			agentCtx, cancelAgent = context.WithTimeout(ctx, timeout)
+			agentCtx, cancelAgent = withReviewerTimeout(ctx, timeout)
 		}
 		proc, err := r.Start(agentCtx, cfg)
 		if err != nil {
