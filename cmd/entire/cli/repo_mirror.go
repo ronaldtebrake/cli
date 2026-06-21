@@ -149,7 +149,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			"default cluster when omitted.",
 		Example: "  entire repo mirror create\n" +
 			"  entire repo mirror create github.com/octocat/hello-world\n" +
-			"  entire repo mirror create github.com/octocat/hello-world eu-west-1.entire.io",
+			"  entire repo mirror create github.com/octocat/hello-world aws-us-east-2.entire.io",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
