@@ -524,7 +524,10 @@ func (m CommittedMetadata) GetTranscriptStart() int {
 // Paths include the full checkpoint path prefix (e.g., "/a1/b2c3d4e5f6/1/metadata.json").
 // Used in CheckpointSummary.Sessions to map session IDs to their file locations.
 type SessionFilePaths struct {
-	Metadata    string `json:"metadata"`
+	Metadata string `json:"metadata"`
+	// Transcript points at the compact transcript.jsonl when one was
+	// generated, otherwise at the raw full.jsonl. Checkpoints written by
+	// older CLI versions always point at full.jsonl.
 	Transcript  string `json:"transcript,omitempty"`
 	ContentHash string `json:"content_hash,omitempty"`
 	Prompt      string `json:"prompt"`
@@ -541,7 +544,8 @@ type SessionFilePaths struct {
 //	├── metadata.json         # This CheckpointSummary
 //	├── 1/                    # First session
 //	│   ├── metadata.json     # Session-specific CommittedMetadata
-//	│   ├── full.jsonl
+//	│   ├── full.jsonl        # Raw agent transcript
+//	│   ├── transcript.jsonl  # Compact transcript scoped to this checkpoint
 //	│   ├── prompt.txt
 //	│   └── content_hash.txt
 //	├── 2/                    # Second session
