@@ -1354,6 +1354,14 @@ func TestRoundedPercentAvoidsIntermediateOverflow(t *testing.T) {
 	}
 }
 
+func TestRoundedPercentClampsAt100(t *testing.T) {
+	t.Parallel()
+
+	if got := roundedPercent(200, 100); got != 100 {
+		t.Fatalf("roundedPercent() = %d, want 100", got)
+	}
+}
+
 // --- checkpoint tokens tests ---
 
 func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {

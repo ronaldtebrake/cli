@@ -241,17 +241,18 @@ func roundedPercent(value, total int) int {
 		return 0
 	}
 
-	hi, lo := bits.Mul64(uint64(value), 100)
+	const maxPercent = 100
+
+	hi, lo := bits.Mul64(uint64(value), maxPercent)
 	lo, carry := bits.Add64(lo, uint64(total)/2, 0)
 	hi += carry
 	divisor := uint64(total)
 	if hi >= divisor {
-		return int(^uint(0) >> 1)
+		return maxPercent
 	}
 	quotient, _ := bits.Div64(hi, lo, divisor)
-	maxInt := uint64(^uint(0) >> 1)
-	if quotient > maxInt {
-		return int(maxInt)
+	if quotient > maxPercent {
+		return maxPercent
 	}
 	return int(quotient)
 }
