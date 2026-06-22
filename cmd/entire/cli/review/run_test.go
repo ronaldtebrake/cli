@@ -20,6 +20,14 @@ func (r *ctxReviewer) Start(ctx context.Context, _ reviewtypes.RunConfig) (revie
 	return &ctxProcess{ctx: ctx}, nil
 }
 
+type contextBlockingStartReviewer struct{ name string }
+
+func (r *contextBlockingStartReviewer) Name() string { return r.name }
+func (r *contextBlockingStartReviewer) Start(ctx context.Context, _ reviewtypes.RunConfig) (reviewtypes.Process, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 type ctxProcess struct{ ctx context.Context }
 
 type deadlineHidingContext struct{ context.Context }
@@ -691,6 +699,32 @@ func TestRun_ReviewerTimeout(t *testing.T) {
 	}
 }
 
+func TestRun_ReviewerTimeoutDuringStart(t *testing.T) {
+	t.Parallel()
+	summary, err := Run(
+		context.Background(),
+		&contextBlockingStartReviewer{name: "slow-start"},
+		reviewtypes.RunConfig{ReviewerTimeout: 30 * time.Millisecond},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a 'timed out' error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false for a per-reviewer timeout")
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("expected 1 AgentRun, got %d", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Errorf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || !strings.Contains(run.Err.Error(), "timed out") {
+		t.Errorf("run.Err = %v, want 'timed out'", run.Err)
+	}
+}
+
 func TestRun_ReviewerTimeoutWithStringWrappedContextError(t *testing.T) {
 	t.Parallel()
 	summary, err := Run(
@@ -766,6 +800,38 @@ func TestRunMulti_ReviewerTimeoutIsolated(t *testing.T) {
 	if got := byName["slow"]; got.Status != reviewtypes.AgentStatusFailed ||
 		got.Err == nil || !strings.Contains(got.Err.Error(), "timed out") {
 		t.Errorf("slow = %+v, want Failed with 'timed out'", got)
+	}
+	if byName["fast"].Status != reviewtypes.AgentStatusSucceeded {
+		t.Errorf("fast status = %v, want Succeeded", byName["fast"].Status)
+	}
+}
+
+func TestRunMulti_ReviewerTimeoutDuringStart(t *testing.T) {
+	t.Parallel()
+	slowStart := &contextBlockingStartReviewer{name: "slow-start"}
+	fast := &stubReviewer{name: "fast", events: []reviewtypes.Event{
+		reviewtypes.Started{},
+		reviewtypes.Finished{Success: true},
+	}}
+	summary, err := RunMulti(
+		context.Background(),
+		[]reviewtypes.AgentReviewer{slowStart, fast},
+		reviewtypes.RunConfig{ReviewerTimeout: 30 * time.Millisecond},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want the timed-out agent's error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false")
+	}
+	byName := map[string]reviewtypes.AgentRun{}
+	for _, r := range summary.AgentRuns {
+		byName[r.Name] = r
+	}
+	if got := byName["slow-start"]; got.Status != reviewtypes.AgentStatusFailed ||
+		got.Err == nil || !strings.Contains(got.Err.Error(), "timed out") {
+		t.Errorf("slow-start = %+v, want Failed with 'timed out'", got)
 	}
 	if byName["fast"].Status != reviewtypes.AgentStatusSucceeded {
 		t.Errorf("fast status = %v, want Succeeded", byName["fast"].Status)

@@ -158,10 +158,12 @@ func RunMulti(
 			// Cancel immediately to release the per-agent timeout timer while
 			// siblings continue running. Queue the terminal marker so the dispatch
 			// loop remains the single writer of perAgentState terminal fields.
+			timedOut := reviewerDeadlineFired(ctx, agentCtx, err)
 			cancelAgent()
 			startTerminals = append(startTerminals, taggedEvent{agentIdx: i, terminal: &agentTerminal{
 				startErr:   err,
 				finishedAt: time.Now(),
+				timedOut:   timedOut,
 			}})
 			continue
 		}
