@@ -49,13 +49,13 @@ var errStopIteration = errors.New("stop iteration")
 // unwrapped function.
 var chunkTranscript = agent.ChunkTranscript
 
-// WriteCommitted writes a committed checkpoint to the entire/checkpoints/v1 branch.
+// writeSession writes a committed checkpoint to the entire/checkpoints/v1 branch.
 // Checkpoints are stored at sharded paths: <id[:2]>/<id[2:]>/
 //
 // For task checkpoints (IsTask=true), additional files are written under tasks/<tool-use-id>/:
 //   - For incremental checkpoints: checkpoints/NNN-<tool-use-id>.json
 //   - For final checkpoints: checkpoint.json and agent-<agent-id>.jsonl
-func (s *GitStore) WriteCommitted(ctx context.Context, opts WriteOptions) error {
+func (s *GitStore) writeSession(ctx context.Context, opts WriteOptions) error {
 	// Validate identifiers to prevent path traversal and malformed data
 	if opts.CheckpointID.IsEmpty() {
 		return errors.New("invalid checkpoint options: checkpoint ID is required")
@@ -536,9 +536,9 @@ func (s *GitStore) writeCheckpointSummary(opts WriteOptions, basePath string, en
 	return nil
 }
 
-// UpdateCheckpointSummary updates root-level checkpoint metadata fields that depend
+// backfillAttribution updates root-level checkpoint metadata fields that depend
 // on the full set of sessions already written to the checkpoint.
-func (s *GitStore) UpdateCheckpointSummary(ctx context.Context, checkpointID id.CheckpointID, combinedAttribution *Attribution) error {
+func (s *GitStore) backfillAttribution(ctx context.Context, checkpointID id.CheckpointID, combinedAttribution *Attribution) error {
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -1343,9 +1343,9 @@ func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string
 	return ReadRawSessionLogForCheckpoint(ctx, stores.Primary, cpID)
 }
 
-// UpdateSummary updates the summary field in the latest session's metadata.
+// backfillSummary updates the summary field in the latest session's metadata.
 // Returns ErrCheckpointNotFound if the checkpoint doesn't exist.
-func (s *GitStore) UpdateSummary(ctx context.Context, checkpointID id.CheckpointID, summary *Summary) error {
+func (s *GitStore) backfillSummary(ctx context.Context, checkpointID id.CheckpointID, summary *Summary) error {
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -1429,7 +1429,7 @@ func (s *GitStore) UpdateSummary(ctx context.Context, checkpointID id.Checkpoint
 	return s.setPrimaryRef(newCommitHash)
 }
 
-// UpdateCommitted replaces the transcript, prompts, and context for an existing
+// backfillTranscript replaces the transcript, prompts, and context for an existing
 // committed checkpoint. Uses replace semantics: the full session transcript is
 // written, replacing whatever was stored at initial condensation time.
 //
@@ -1437,7 +1437,7 @@ func (s *GitStore) UpdateSummary(ctx context.Context, checkpointID id.Checkpoint
 // with the complete session transcript (from prompt to stop event).
 //
 // Returns ErrCheckpointNotFound if the checkpoint doesn't exist.
-func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateOptions) error {
+func (s *GitStore) backfillTranscript(ctx context.Context, opts UpdateOptions) error {
 	if opts.CheckpointID.IsEmpty() {
 		return errors.New("invalid update options: checkpoint ID is required")
 	}
@@ -1491,7 +1491,7 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateOptions) erro
 	if sessionIndex == -1 {
 		// Fall back to latest session; log so mismatches are diagnosable.
 		sessionIndex = len(checkpointSummary.Sessions) - 1
-		logging.Debug(ctx, "UpdateCommitted: session ID not found, falling back to latest",
+		logging.Debug(ctx, "backfillTranscript: session ID not found, falling back to latest",
 			slog.String("session_id", opts.SessionID),
 			slog.String("checkpoint_id", string(opts.CheckpointID)),
 			slog.Int("fallback_index", sessionIndex),
@@ -1674,7 +1674,7 @@ func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.Reda
 
 // PrecomputeTranscriptBlobs chunks the given transcript and writes each chunk
 // plus the content-hash blob to the object store once, returning the resulting
-// hashes for reuse across multiple UpdateCommitted calls that share the same
+// hashes for reuse across multiple backfillTranscript calls that share the same
 // transcript content.
 func PrecomputeTranscriptBlobs(ctx context.Context, repo *git.Repository, transcript redact.RedactedBytes, agentType types.AgentType) (*PrecomputedTranscriptBlobs, error) {
 	raw := transcript.Bytes()

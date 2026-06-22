@@ -54,7 +54,7 @@ func TestReadCommitted_MissingTokenUsage(t *testing.T) {
 	checkpointID := id.MustCheckpointID("def456abc123")
 
 	// Write checkpoint WITHOUT token usage (simulates old checkpoints)
-	err = store.WriteCommitted(context.Background(), WriteOptions{
+	err = store.Write(context.Background(), WriteSession{
 		CheckpointID: checkpointID,
 		SessionID:    "test-session-old",
 		Strategy:     "manual-commit",

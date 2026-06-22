@@ -56,7 +56,7 @@ func TestReadRawSessionLogForCheckpointReadsLatestV1Session(t *testing.T) {
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("222222222222")
 
-	require.NoError(t, store.WriteCommitted(ctx, WriteOptions{
+	require.NoError(t, store.Write(ctx, WriteSession{
 		CheckpointID: cpID,
 		SessionID:    "session-a",
 		Strategy:     "manual-commit",
@@ -64,7 +64,7 @@ func TestReadRawSessionLogForCheckpointReadsLatestV1Session(t *testing.T) {
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}))
-	require.NoError(t, store.WriteCommitted(ctx, WriteOptions{
+	require.NoError(t, store.Write(ctx, WriteSession{
 		CheckpointID: cpID,
 		SessionID:    "session-b",
 		Strategy:     "manual-commit",

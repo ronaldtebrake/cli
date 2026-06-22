@@ -46,7 +46,7 @@ func TestWriteCommitted_DoesNotEmitOPFAppliedTrailer(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 
-	err = store.WriteCommitted(context.Background(), WriteOptions{
+	err = store.Write(context.Background(), WriteSession{
 		CheckpointID: cpID,
 		SessionID:    "regression-no-opf-trailer",
 		Strategy:     "manual-commit",

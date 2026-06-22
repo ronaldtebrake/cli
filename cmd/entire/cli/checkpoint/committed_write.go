@@ -12,8 +12,8 @@ import (
 // the unexported isWriteRequest marker. A store dispatches on the concrete type;
 // a mirror/fan-out store forwards the same value to each backend's Write.
 //
-// This replaces the four separate writer methods (WriteCommitted /
-// UpdateCommitted / UpdateSummary / UpdateCheckpointSummary) with one
+// This replaces the four separate writer methods (writeSession /
+// backfillTranscript / backfillSummary / backfillAttribution) with one
 // Store.Write(ctx, req) entry point, so adding a write operation is a new
 // request type plus one dispatch case — the Store interface stays unchanged
 // and existing backends keep compiling.
@@ -23,23 +23,23 @@ type WriteRequest interface {
 
 // WriteSession creates or replaces a session document within a checkpoint,
 // materializing the checkpoint on its first session. This is condensation's
-// write. (Maps to the former WriteCommitted.)
+// write. (Maps to the former writeSession.)
 type WriteSession WriteOptions
 
 // BackfillTranscript replaces a session's transcript, prompts, and skill
 // events at stop time without clobbering sibling fields. (Maps to the former
-// UpdateCommitted.)
+// backfillTranscript.)
 type BackfillTranscript UpdateOptions
 
 // BackfillSummary rewrites only the summary of the checkpoint's latest
-// session. (Maps to the former UpdateSummary.)
+// session. (Maps to the former backfillSummary.)
 type BackfillSummary struct {
 	CheckpointID id.CheckpointID
 	Summary      *Summary
 }
 
 // BackfillAttribution rewrites the checkpoint root's combined attribution.
-// (Maps to the former UpdateCheckpointSummary.)
+// (Maps to the former backfillAttribution.)
 type BackfillAttribution struct {
 	CheckpointID id.CheckpointID
 	Attribution  *Attribution
@@ -61,13 +61,13 @@ type Writer interface {
 func (s *GitStore) Write(ctx context.Context, req WriteRequest) error {
 	switch r := req.(type) {
 	case WriteSession:
-		return s.WriteCommitted(ctx, WriteOptions(r))
+		return s.writeSession(ctx, WriteOptions(r))
 	case BackfillTranscript:
-		return s.UpdateCommitted(ctx, UpdateOptions(r))
+		return s.backfillTranscript(ctx, UpdateOptions(r))
 	case BackfillSummary:
-		return s.UpdateSummary(ctx, r.CheckpointID, r.Summary)
+		return s.backfillSummary(ctx, r.CheckpointID, r.Summary)
 	case BackfillAttribution:
-		return s.UpdateCheckpointSummary(ctx, r.CheckpointID, r.Attribution)
+		return s.backfillAttribution(ctx, r.CheckpointID, r.Attribution)
 	default:
 		return fmt.Errorf("checkpoint: unsupported write request %T", req)
 	}

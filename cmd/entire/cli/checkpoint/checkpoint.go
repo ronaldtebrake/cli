@@ -269,7 +269,7 @@ type WriteOptions struct {
 
 	// CombinedAttribution is holistic attribution across all sessions.
 	// Used during migration to preserve v1 root summary attribution.
-	// During normal condensation this is nil (computed post-commit via UpdateCheckpointSummary).
+	// During normal condensation this is nil (computed post-commit via a BackfillAttribution write).
 	CombinedAttribution *Attribution
 
 	// Summary is an optional AI-generated summary for this checkpoint.
@@ -341,15 +341,14 @@ type UpdateOptions struct {
 
 	// PrecomputedBlobs, if non-nil, provides chunk blob hashes and the
 	// content-hash blob hash computed once for this transcript. When set,
-	// UpdateCommitted skips the per-call ChunkTranscript + zlib work and
+	// transcript backfill skips the per-call ChunkTranscript + zlib work and
 	// reuses these hashes. Used by finalizeAllTurnCheckpoints to avoid
 	// re-compressing identical content N times.
 	PrecomputedBlobs *PrecomputedTranscriptBlobs
 }
 
 // PrecomputedTranscriptBlobs holds blob hashes for a transcript that was
-// chunked and written to the object store once, for reuse across multiple
-// UpdateCommitted calls sharing the same transcript content.
+// chunked and written to the object store once, for reuse across multiple// transcript-backfill writes sharing the same transcript content.
 // Callers should avoid constructing this for empty transcripts; agent.ChunkTranscript
 // would otherwise produce a single zero-length chunk and a hash for an empty
 // blob, which downstream stores would never reference.
@@ -376,7 +375,9 @@ func (p *PrecomputedTranscriptBlobs) isUsable() bool {
 	return p != nil && !p.ContentHashBlob.IsZero() && len(p.ChunkHashes) > 0
 }
 
-// CheckpointInfo contains summary information about a committed checkpoint.
+// CheckpointInfo contains summary information about a persisted checkpoint.
+//
+//nolint:revive // Named CheckpointInfo to avoid conflict with the generic Info type; the checkpoint.CheckpointInfo stutter is accepted (matches CheckpointSummary).
 type CheckpointInfo struct {
 	// CheckpointID is the stable 12-hex-char identifier
 	CheckpointID id.CheckpointID
