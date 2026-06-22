@@ -56,13 +56,13 @@ type attachOptions struct {
 }
 
 // committedRefs resolves the committed metadata topology.
-func (opts attachOptions) committedRefs(ctx context.Context) cpkg.CommittedRefs {
-	return cpkg.ResolveCommittedRefs(ctx)
+func (opts attachOptions) committedRefs(ctx context.Context) cpkg.PersistentRefs {
+	return cpkg.ResolvePersistentRefs(ctx)
 }
 
 // openAttachStore opens the committed store for the resolved topology. refs is
 // passed explicitly so attach preserves PrimaryAsRead() pinning.
-func openAttachStore(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs) (cpkg.PersistentStore, error) { //nolint:ireturn // committed store capability preserves attach's read-ref override
+func openAttachStore(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs) (cpkg.PersistentStore, error) { //nolint:ireturn // committed store capability preserves attach's read-ref override
 	stores, err := cpkg.Open(ctx, repo, cpkg.OpenOptions{Refs: &refs})
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
@@ -365,7 +365,7 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 // checkpointHasSessionMetadata reports whether sessionID has existing metadata
 // at Primary. Reads target Primary directly, not refs.Read, because this guard
 // must reflect what the next write would target.
-func checkpointHasSessionMetadata(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID, sessionID string) (bool, error) {
+func checkpointHasSessionMetadata(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID, sessionID string) (bool, error) {
 	store, err := openAttachStore(ctx, repo, refs.PrimaryAsRead())
 	if err != nil {
 		return false, err
@@ -416,7 +416,7 @@ func getHeadCommit(repo *git.Repository) (*object.Commit, error) {
 // metadata fetch fallback chain used by `entire resume` (which advances the
 // local ref on success) and re-check. Returns a possibly-freshly-opened repo
 // handle so go-git sees any newly fetched packfiles.
-func ensureCheckpointAvailable(ctx, logCtx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID, isExistingCheckpoint bool) (*git.Repository, error) {
+func ensureCheckpointAvailable(ctx, logCtx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID, isExistingCheckpoint bool) (*git.Repository, error) {
 	if !isExistingCheckpoint {
 		return repo, nil
 	}
@@ -465,7 +465,7 @@ func refreshCheckpointRefs(ctx context.Context) (*git.Repository, error) {
 // Primary locally. Reads target Primary directly, not refs.Read, because this
 // asks what the next write would find, not what readers see. A missing local
 // ref is reported as absent; the caller is responsible for any remote refresh.
-func checkpointPresentLocally(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID) (bool, error) {
+func checkpointPresentLocally(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID) (bool, error) {
 	if _, err := repo.Reference(refs.Primary, true); err != nil {
 		return false, nil //nolint:nilerr // Missing ref is the "absent" signal, not an error.
 	}

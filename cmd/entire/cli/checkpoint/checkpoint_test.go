@@ -32,14 +32,14 @@ import (
 
 func TestCheckpointType_Values(t *testing.T) {
 	// Verify the enum values are distinct
-	if Temporary == Committed {
-		t.Error("Temporary and Committed should have different values")
+	if Ephemeral == Persistent {
+		t.Error("Ephemeral and Persistent should have different values")
 	}
 
-	// Verify Temporary is the zero value (default for Type)
+	// Verify Ephemeral is the zero value (default for Type)
 	var defaultType Type
-	if defaultType != Temporary {
-		t.Errorf("expected zero value of Type to be Temporary, got %d", defaultType)
+	if defaultType != Ephemeral {
+		t.Errorf("expected zero value of Type to be Ephemeral, got %d", defaultType)
 	}
 }
 

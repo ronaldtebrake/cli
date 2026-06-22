@@ -393,7 +393,7 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader
 func readCheckpointInfoFromRef(
 	ctx context.Context,
 	repo *git.Repository,
-	refs checkpoint.CommittedRefs,
+	refs checkpoint.PersistentRefs,
 	checkpointID id.CheckpointID,
 ) (*strategy.CheckpointInfo, error) {
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &refs, BlobFetcher: FetchBlobsByHash})
@@ -412,7 +412,7 @@ func readCheckpointInfoFromRef(
 func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error) {
 	logCtx := logging.WithComponent(ctx, "resume.getMetadataTree")
 
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolvePersistentRefs(ctx)
 
 	// Helper to log ref hash for a repo's primary metadata ref
 	logRefHash := func(repo *git.Repository, source string) {
@@ -695,7 +695,7 @@ func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
 	checkpointID id.CheckpointID,
-	refs checkpoint.CommittedRefs,
+	refs checkpoint.PersistentRefs,
 ) error {
 	logCtx := logging.WithComponent(ctx, "resume.checkRemoteMetadata")
 
@@ -808,7 +808,7 @@ func checkRemoteMetadata(
 // the committed-checkpoint store only falls back to origin/... when the local
 // ref is *missing*, not when it's behind. No-op when Primary isn't in Push
 // (no remote-tracking ref exists).
-func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) {
+func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.PersistentRefs) {
 	if !refs.PrimaryFetchableFromOrigin() {
 		return
 	}

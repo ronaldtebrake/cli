@@ -404,7 +404,7 @@ func DeleteOrphanedCheckpoints(ctx context.Context, checkpointIDs []string) (del
 	}
 	defer repo.Close()
 
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolvePersistentRefs(ctx)
 	ref, err := repo.Reference(refs.Primary, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("primary metadata ref %s not found: %w", refs.Primary, err)

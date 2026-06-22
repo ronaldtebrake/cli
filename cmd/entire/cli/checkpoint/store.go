@@ -19,7 +19,7 @@ var (
 // shadow-branch surface lives in ephemeralStore.
 type GitStore struct {
 	repo        *git.Repository
-	refs        CommittedRefs
+	refs        PersistentRefs
 	blobFetcher BlobFetchFunc
 }
 
@@ -27,13 +27,13 @@ type GitStore struct {
 // an independent type from GitStore; the two share only package-level helpers.
 type ephemeralStore struct {
 	repo *git.Repository
-	refs CommittedRefs
+	refs PersistentRefs
 }
 
 // newEphemeralStore creates the shadow-branch store for the given repository
 // and committed-metadata topology (it consults refs.Primary to recognize the
 // committed branch when listing shadow branches).
-func newEphemeralStore(repo *git.Repository, refs CommittedRefs) *ephemeralStore {
+func newEphemeralStore(repo *git.Repository, refs PersistentRefs) *ephemeralStore {
 	return &ephemeralStore{repo: repo, refs: refs}
 }
 
@@ -41,14 +41,14 @@ func newEphemeralStore(repo *git.Repository, refs CommittedRefs) *ephemeralStore
 // store. Most callers reach it via Open(...).Ephemeral(); this direct
 // constructor exists for benchmarks and tests that exercise the shadow-branch
 // surface without the full facade.
-func NewEphemeralStore(repo *git.Repository, refs CommittedRefs) EphemeralStore { //nolint:ireturn // temporary store capability is the abstraction boundary
+func NewEphemeralStore(repo *git.Repository, refs PersistentRefs) EphemeralStore { //nolint:ireturn // temporary store capability is the abstraction boundary
 	return newEphemeralStore(repo, refs)
 }
 
 // NewGitStore creates a checkpoint store backed by the given git repository
 // and committed-metadata topology. Pass DefaultV1Refs() for the v1-only default
-// or ResolveCommittedRefs(ctx) in code paths that honor settings.
-func NewGitStore(repo *git.Repository, refs CommittedRefs) *GitStore {
+// or ResolvePersistentRefs(ctx) in code paths that honor settings.
+func NewGitStore(repo *git.Repository, refs PersistentRefs) *GitStore {
 	return &GitStore{repo: repo, refs: refs}
 }
 
@@ -64,12 +64,12 @@ func (s *GitStore) Repository() *git.Repository {
 }
 
 // Refs returns the committed-metadata topology the store was constructed with.
-func (s *GitStore) Refs() CommittedRefs {
+func (s *GitStore) Refs() PersistentRefs {
 	return s.refs
 }
 
-// CommittedReadRef returns the ref that committed-checkpoint reads resolve against.
-func (s *GitStore) CommittedReadRef() plumbing.ReferenceName {
+// PersistentReadRef returns the ref that committed-checkpoint reads resolve against.
+func (s *GitStore) PersistentReadRef() plumbing.ReferenceName {
 	return s.refs.Read
 }
 

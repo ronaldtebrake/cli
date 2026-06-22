@@ -50,13 +50,13 @@ type Checkpoint struct {
 type Type int
 
 const (
-	// Temporary checkpoints contain full state (code + metadata) and are stored
+	// Ephemeral checkpoints contain full state (code + metadata) and are stored
 	// on shadow branches (entire/<commit-hash>). Used for intra-session rewind.
-	Temporary Type = iota
+	Ephemeral Type = iota
 
-	// Committed checkpoints contain metadata + commit reference and are stored
+	// Persistent checkpoints contain metadata + commit reference and are stored
 	// on the entire/checkpoints/v1 branch. They are the permanent record.
-	Committed
+	Persistent
 )
 
 // EphemeralStore provides the production shadow-branch checkpoint surface.

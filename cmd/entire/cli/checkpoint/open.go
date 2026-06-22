@@ -17,7 +17,7 @@ type OpenOptions struct {
 
 	// Refs overrides the default committed-ref topology. A non-nil value wins,
 	// e.g. attach pins reads to Primary via PrimaryAsRead().
-	Refs *CommittedRefs
+	Refs *PersistentRefs
 }
 
 // Stores is the facade returned by Open: the persistent store plus the git-only
@@ -27,7 +27,7 @@ type Stores struct {
 	Persistent PersistentStore
 
 	ephemeral EphemeralStore
-	refs      CommittedRefs
+	refs      PersistentRefs
 }
 
 // Open resolves the checkpoint storage topology and constructs the backing
@@ -47,15 +47,15 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 	}, nil
 }
 
-func resolveOpenRefs(ctx context.Context, opts OpenOptions) CommittedRefs {
+func resolveOpenRefs(ctx context.Context, opts OpenOptions) PersistentRefs {
 	if opts.Refs != nil {
 		return *opts.Refs
 	}
-	return ResolveCommittedRefs(ctx)
+	return ResolvePersistentRefs(ctx)
 }
 
 // Ephemeral returns the git-backed shadow-branch (temporary) store.
 func (s *Stores) Ephemeral() EphemeralStore { return s.ephemeral } //nolint:ireturn // ephemeral store capability is the abstraction boundary
 
 // Refs returns the resolved committed-ref topology.
-func (s *Stores) Refs() CommittedRefs { return s.refs }
+func (s *Stores) Refs() PersistentRefs { return s.refs }

@@ -103,7 +103,7 @@ const FetchTmpRefPrefix = "refs/entire-fetch-tmp/"
 // label is a short human-readable name used in error messages. Typical use:
 //
 //	// fetch with refspec "+<src>:<tmpRefName>"
-//	refs := checkpoint.ResolveCommittedRefs(ctx)
+//	refs := checkpoint.ResolvePersistentRefs(ctx)
 //	return PromoteTmpRefSafely(ctx, tmpRefName, refs.Primary, refs.Primary.Short())
 func PromoteTmpRefSafely(ctx context.Context, tmpRefName, destRefName plumbing.ReferenceName, label string) error {
 	repo, err := OpenRepository(ctx)
@@ -468,7 +468,7 @@ func resolveAgentType(ctxAgentType types.AgentType, state *SessionState) types.A
 // empty, creates/updates the local ref from origin's remote-tracking ref.
 // Otherwise creates an empty orphan.
 func EnsurePrimaryRef(ctx context.Context, repo *git.Repository) error {
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolvePersistentRefs(ctx)
 	primaryName := refs.Primary.Short()
 
 	// Origin only tracks Primary when Primary is in Push.
@@ -983,7 +983,7 @@ func ReadAllSessionPromptsFromTree(tree *object.Tree, checkpointPath string, ses
 // GetRemotePrimaryTree returns the tree at origin's remote-tracking ref for
 // the configured Primary. Errors when Primary isn't in Push (no origin shadow).
 func GetRemotePrimaryTree(ctx context.Context, repo *git.Repository) (*object.Tree, error) {
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolvePersistentRefs(ctx)
 	if !refs.PrimaryFetchableFromOrigin() {
 		return nil, fmt.Errorf("primary metadata ref %s is not pushed to origin", refs.Primary)
 	}

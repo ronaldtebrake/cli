@@ -166,7 +166,7 @@ func (s *ManualCommitStrategy) GetLogsOnlyRewindPoints(ctx context.Context, limi
 	}
 
 	// Get committed metadata read tree for session prompts (best-effort, ignore errors)
-	readRef := cpkg.ResolveCommittedRefs(ctx).Read
+	readRef := cpkg.ResolvePersistentRefs(ctx).Read
 	metadataTree, _ := GetMetadataRefTree(repo, readRef) //nolint:errcheck // Best-effort for session prompts
 
 	head, err := repo.Head()

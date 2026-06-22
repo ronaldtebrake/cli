@@ -773,7 +773,7 @@ func loadCheckpointForExplain(ctx context.Context, lookup *explainCheckpointLook
 // inside this function so the caller's spinner provides continuous
 // feedback.
 func prefetchCheckpointBlobs(ctx context.Context, repo *git.Repository, cpID id.CheckpointID) {
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolvePersistentRefs(ctx)
 	loadPrimaryRoot := func(repo *git.Repository) (*object.Tree, error) {
 		return loadPrimaryMetadataRootTree(ctx, repo, refs)
 	}
@@ -838,7 +838,7 @@ func runPreFetch(ctx context.Context, ft *checkpoint.FetchingTree, cpID id.Check
 
 // loadPrimaryMetadataRootTree reads the tree at refs.Primary, falling back to
 // origin's remote-tracking ref when Primary is pushed.
-func loadPrimaryMetadataRootTree(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) (*object.Tree, error) {
+func loadPrimaryMetadataRootTree(ctx context.Context, repo *git.Repository, refs checkpoint.PersistentRefs) (*object.Tree, error) {
 	if tree, err := strategy.GetMetadataRefTree(repo, refs.Primary); err == nil {
 		return tree, nil
 	}
