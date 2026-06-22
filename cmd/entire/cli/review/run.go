@@ -144,6 +144,11 @@ func Run(
 		// No event-stream signals available since Start failed before producing any.
 		finished := time.Now()
 		status := classifyStatus(ctx, err, eventOutcome{})
+		runErr := err
+		if reviewerDeadlineFired(ctx, agentCtx, err) {
+			status = reviewtypes.AgentStatusFailed
+			runErr = timedOutError(displayName, timeout)
+		}
 		summary := reviewtypes.RunSummary{
 			StartedAt:  started,
 			FinishedAt: finished,
@@ -153,7 +158,7 @@ func Run(
 				AgentName: agentName,
 				Model:     modelName,
 				Status:    status,
-				Err:       err,
+				Err:       runErr,
 				StartedAt: started,
 				Duration:  finished.Sub(started),
 			}},
@@ -161,7 +166,7 @@ func Run(
 		for _, sink := range sinks {
 			sink.RunFinished(summary)
 		}
-		return summary, err //nolint:wrapcheck // interface-boundary passthrough; wrapping breaks classifyStatus's ctx.Err() identity check for cancelled-during-Start scenarios
+		return summary, runErr
 	}
 
 	var (

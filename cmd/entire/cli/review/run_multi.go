@@ -155,14 +155,12 @@ func RunMulti(
 		proc, err := r.Start(agentCtx, cfg)
 		if err != nil {
 			// No Process exists, so there is no Events/Wait lifecycle to preserve.
-			// Cancel immediately to release the per-agent timeout timer while
-			// siblings continue running. Queue the terminal marker so the dispatch
-			// loop remains the single writer of perAgentState terminal fields.
+			// Build the terminal marker before cancelAgent so a Start call that blocked
+			// until the per-reviewer deadline keeps the reviewer-timeout cause visible.
+			// Then cancel immediately to release the per-agent timeout timer while
+			// siblings continue running.
+			startTerminals = append(startTerminals, startFailureTerminal(ctx, agentCtx, i, err))
 			cancelAgent()
-			startTerminals = append(startTerminals, taggedEvent{agentIdx: i, terminal: &agentTerminal{
-				startErr:   err,
-				finishedAt: time.Now(),
-			}})
 			continue
 		}
 		states[i].proc = proc
@@ -299,6 +297,14 @@ func RunMulti(
 	}
 
 	return summary, firstErr
+}
+
+func startFailureTerminal(parentCtx, agentCtx context.Context, agentIdx int, startErr error) taggedEvent {
+	return taggedEvent{agentIdx: agentIdx, terminal: &agentTerminal{
+		startErr:   startErr,
+		finishedAt: time.Now(),
+		timedOut:   reviewerDeadlineFired(parentCtx, agentCtx, startErr),
+	}}
 }
 
 func emitEnrichedAgentTokens(

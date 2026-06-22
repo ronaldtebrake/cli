@@ -40,6 +40,20 @@ func (p *ctxProcess) Wait() error {
 	return p.ctx.Err()
 }
 
+type startBlockingReviewer struct {
+	name       string
+	stringWrap bool
+}
+
+func (r *startBlockingReviewer) Name() string { return r.name }
+func (r *startBlockingReviewer) Start(ctx context.Context, _ reviewtypes.RunConfig) (reviewtypes.Process, error) {
+	<-ctx.Done()
+	if r.stringWrap {
+		return nil, errors.New("start failed: " + ctx.Err().Error())
+	}
+	return nil, ctx.Err()
+}
+
 type stringWrappedCtxReviewer struct{ name string }
 
 func (r *stringWrappedCtxReviewer) Name() string { return r.name }
@@ -664,6 +678,37 @@ func TestReviewerDeadlineFired_HiddenParentDeadlineIsNotReviewerTimeout(t *testi
 	}
 }
 
+func TestRun_ReviewerTimeoutDuringStart(t *testing.T) {
+	t.Parallel()
+	rec := &stubSinkRecorder{}
+	summary, err := Run(
+		context.Background(),
+		&startBlockingReviewer{name: "slow-start"},
+		reviewtypes.RunConfig{ReviewerTimeout: 20 * time.Millisecond},
+		[]reviewtypes.Sink{rec},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a 'timed out' error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false for a per-reviewer timeout during Start")
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("AgentRuns = %d, want 1", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Fatalf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || !strings.Contains(run.Err.Error(), "timed out") {
+		t.Fatalf("run.Err = %v, want 'timed out'", run.Err)
+	}
+	if len(rec.finishedCalls) != 1 {
+		t.Fatalf("RunFinished calls = %d, want 1", len(rec.finishedCalls))
+	}
+}
+
 func TestRun_ReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	rec := &stubSinkRecorder{}
@@ -734,6 +779,37 @@ func TestRun_DeadlineDuringOrdinaryWaitFailureIsNotTimeout(t *testing.T) {
 	}
 	if run.Err == nil || strings.Contains(run.Err.Error(), "timed out") {
 		t.Fatalf("run.Err = %v, want ordinary failure, not timeout", run.Err)
+	}
+}
+
+func TestRunMulti_ReviewerTimeoutDuringStart(t *testing.T) {
+	t.Parallel()
+	rec := &stubSinkRecorder{}
+	summary, err := RunMulti(
+		context.Background(),
+		[]reviewtypes.AgentReviewer{&startBlockingReviewer{name: "slow-start", stringWrap: true}},
+		reviewtypes.RunConfig{ReviewerTimeout: 20 * time.Millisecond},
+		[]reviewtypes.Sink{rec},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a 'timed out' error", err)
+	}
+	if summary.Cancelled {
+		t.Error("Cancelled should be false for a per-reviewer timeout during Start")
+	}
+	if len(summary.AgentRuns) != 1 {
+		t.Fatalf("AgentRuns = %d, want 1", len(summary.AgentRuns))
+	}
+	run := summary.AgentRuns[0]
+	if run.Status != reviewtypes.AgentStatusFailed {
+		t.Fatalf("status = %v, want Failed", run.Status)
+	}
+	if run.Err == nil || !strings.Contains(run.Err.Error(), "timed out") {
+		t.Fatalf("run.Err = %v, want 'timed out'", run.Err)
+	}
+	if len(rec.finishedCalls) != 1 {
+		t.Fatalf("RunFinished calls = %d, want 1", len(rec.finishedCalls))
 	}
 }
 
