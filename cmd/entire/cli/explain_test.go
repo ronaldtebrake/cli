@@ -1009,7 +1009,7 @@ func TestGenerateCheckpointSummary_AdvancesV1Metadata(t *testing.T) {
 	v1Refs := checkpoint.DefaultV1Refs()
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &v1Refs})
 	require.NoError(t, err)
-	store := stores.Primary
+	store := stores.Persistent
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 	require.NoError(t, store.Write(ctx, checkpoint.WriteSession{
 		CheckpointID: cpID,
@@ -1056,7 +1056,7 @@ func TestGenerateCheckpointSummary_AdvancesV1Metadata(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	require.NoError(t, generateCheckpointSummary(ctx, &stdout, &stderr, stores.Primary, cpID, cpSummary, content, false, 0))
+	require.NoError(t, generateCheckpointSummary(ctx, &stdout, &stderr, stores.Persistent, cpID, cpSummary, content, false, 0))
 
 	v1After, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	require.NoError(t, err)

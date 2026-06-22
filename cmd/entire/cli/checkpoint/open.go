@@ -20,13 +20,13 @@ type OpenOptions struct {
 	Refs *CommittedRefs
 }
 
-// Stores is the facade returned by Open: the committed store plus the git-only
-// temporary capability and resolved committed-ref topology.
+// Stores is the facade returned by Open: the persistent store plus the git-only
+// ephemeral (shadow-branch) capability and resolved committed-ref topology.
 type Stores struct {
-	// Primary is the committed store that serves committed reads and writes.
-	Primary PersistentStore
+	// Persistent is the committed store that serves permanent reads and writes.
+	Persistent PersistentStore
 
-	temporary EphemeralStore
+	ephemeral EphemeralStore
 	refs      CommittedRefs
 }
 
@@ -41,9 +41,9 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 		store.SetBlobFetcher(opts.BlobFetcher)
 	}
 	return &Stores{
-		Primary:   store,
-		temporary: newEphemeralStore(repo, refs),
-		refs:      refs,
+		Persistent: store,
+		ephemeral:  newEphemeralStore(repo, refs),
+		refs:       refs,
 	}, nil
 }
 
@@ -54,8 +54,8 @@ func resolveOpenRefs(ctx context.Context, opts OpenOptions) CommittedRefs {
 	return ResolveCommittedRefs(ctx)
 }
 
-// Temporary returns the git-backed temporary shadow-branch store.
-func (s *Stores) Temporary() EphemeralStore { return s.temporary } //nolint:ireturn // temporary store capability is the abstraction boundary
+// Ephemeral returns the git-backed shadow-branch (temporary) store.
+func (s *Stores) Ephemeral() EphemeralStore { return s.ephemeral } //nolint:ireturn // ephemeral store capability is the abstraction boundary
 
 // Refs returns the resolved committed-ref topology.
 func (s *Stores) Refs() CommittedRefs { return s.refs }

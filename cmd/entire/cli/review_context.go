@@ -103,7 +103,7 @@ func reviewCommittedCheckpointContext(ctx context.Context, worktreeRoot string, 
 		logging.Debug(ctx, "review checkpoint context: open store", slog.String("error", err.Error()))
 		return ""
 	}
-	store := stores.Primary
+	store := stores.Persistent
 
 	var lines []string
 	seen := map[checkpointid.CheckpointID]bool{}

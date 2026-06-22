@@ -38,7 +38,7 @@ func newEphemeralStore(repo *git.Repository, refs CommittedRefs) *ephemeralStore
 }
 
 // NewEphemeralStore constructs the git shadow-branch (temporary) checkpoint
-// store. Most callers reach it via Open(...).Temporary(); this direct
+// store. Most callers reach it via Open(...).Ephemeral(); this direct
 // constructor exists for benchmarks and tests that exercise the shadow-branch
 // surface without the full facade.
 func NewEphemeralStore(repo *git.Repository, refs CommittedRefs) EphemeralStore { //nolint:ireturn // temporary store capability is the abstraction boundary

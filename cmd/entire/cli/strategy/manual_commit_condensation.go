@@ -49,7 +49,7 @@ func (s *ManualCommitStrategy) listCheckpoints(ctx context.Context) ([]Checkpoin
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store, err := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *ManualCommitStrategy) getCheckpointLog(ctx context.Context, checkpointI
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store, err := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		return skipped, nil
 	}
 
-	store, err := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
 	if err != nil {
 		return nil, err
 	}

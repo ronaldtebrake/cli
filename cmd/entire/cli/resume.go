@@ -206,7 +206,7 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
 		promoteRemoteTrackingPrimary(ctx, repo, refs)
@@ -274,7 +274,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 
 	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
@@ -400,7 +400,7 @@ func readCheckpointInfoFromRef(
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	return readCheckpointInfoFromStore(ctx, stores.Primary, checkpointID)
+	return readCheckpointInfoFromStore(ctx, stores.Persistent, checkpointID)
 }
 
 // getMetadataTree returns the metadata branch tree and a fresh repo handle.
@@ -942,7 +942,7 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	logContent, _, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Primary, checkpointID)
+	logContent, _, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Persistent, checkpointID)
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
 			logging.Debug(ctx, "resume session completed (no metadata)",

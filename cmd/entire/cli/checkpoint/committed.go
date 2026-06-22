@@ -1340,7 +1340,7 @@ func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string
 	if err != nil {
 		return nil, "", fmt.Errorf("open checkpoint store: %w", err)
 	}
-	return ReadRawSessionLogForCheckpoint(ctx, stores.Primary, cpID)
+	return ReadRawSessionLogForCheckpoint(ctx, stores.Persistent, cpID)
 }
 
 // backfillSummary updates the summary field in the latest session's metadata.

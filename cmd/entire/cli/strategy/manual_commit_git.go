@@ -52,7 +52,7 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 		}
 		migrateSpan.End()
 
-		store, err := s.getTemporaryStore(ctx, repo)
+		store, err := s.getEphemeralStore(ctx, repo)
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func (s *ManualCommitStrategy) SaveTaskStep(ctx context.Context, step TaskStepCo
 			return fmt.Errorf("failed to check/migrate shadow branch: %w", err)
 		}
 
-		store, err := s.getTemporaryStore(ctx, repo)
+		store, err := s.getEphemeralStore(ctx, repo)
 		if err != nil {
 			return err
 		}

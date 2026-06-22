@@ -180,7 +180,7 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 	infos, err := store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list committed checkpoints: %w", err)

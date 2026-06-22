@@ -325,7 +325,7 @@ func newAttributionResolver(ctx context.Context, fetchOnMiss bool) (*attribution
 	return &attributionResolver{
 		ctx:             ctx,
 		repo:            repo,
-		store:           stores.Primary,
+		store:           stores.Persistent,
 		fetchOnMiss:     fetchOnMiss,
 		commitCache:     make(map[string]*object.Commit),
 		checkpointCache: make(map[string]attributionCheckpointContext),

@@ -67,7 +67,7 @@ func openAttachStore(ctx context.Context, repo *git.Repository, refs cpkg.Commit
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	return stores.Primary, nil
+	return stores.Persistent, nil
 }
 
 func newAttachCmd() *cobra.Command {
