@@ -406,7 +406,7 @@ func buildCheckpointMetricDelta(baseline, current int) *checkpointTokensMetricDe
 		Direction: checkpointDeltaDirection(change),
 	}
 	if baseline != 0 {
-		percent := float64(delta.Change) * 100 / float64(baseline)
+		percent := (float64(delta.Change) / float64(baseline)) * 100
 		delta.ChangePercent = &percent
 	}
 	return delta
