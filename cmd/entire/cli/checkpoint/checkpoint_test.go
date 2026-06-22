@@ -346,7 +346,7 @@ func TestWriteTemporary_Deduplication(t *testing.T) {
 	}
 
 	// Create checkpoint store
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 
 	// First checkpoint should be created
 	baseCommit := initialCommit.String()
@@ -1800,7 +1800,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesModifiedTrackedFiles(t *testing.
 	// Create checkpoint store and write first checkpoint
 	// Note: ModifiedFiles is empty because agent hasn't touched anything yet
 	// The first checkpoint should still capture README.md because it's modified in working dir
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -1930,7 +1930,7 @@ func TestWriteTemporary_PathNormalizationAndSkipping(t *testing.T) {
 				t.Fatalf("failed to write transcript: %v", err)
 			}
 
-			store := NewGitStore(repo, DefaultV1Refs())
+			store := newEphemeralStore(repo, DefaultV1Refs())
 			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
 				SessionID:      "test-session",
 				BaseCommit:     initialCommit.String(),
@@ -2030,7 +2030,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2148,7 +2148,7 @@ func TestWriteTemporary_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
 				newFiles = []string{"leaked-key"}
 			}
 
-			store := NewGitStore(repo, DefaultV1Refs())
+			store := newEphemeralStore(repo, DefaultV1Refs())
 			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
 				SessionID:         "test-session",
 				BaseCommit:        initialCommit.String(),
@@ -2263,7 +2263,7 @@ func TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2363,7 +2363,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesGitIgnoredModifiedFiles(t *
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// Write first checkpoint to establish the shadow branch
@@ -2484,7 +2484,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesGitIgnoredNewFiles(t *testi
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// First checkpoint
@@ -2595,7 +2595,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesNestedGitIgnoredFiles(t *te
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// First checkpoint
@@ -2719,7 +2719,7 @@ func TestWriteTemporary_FirstCheckpoint_UserAndAgentChanges(t *testing.T) {
 	}
 
 	// Create checkpoint - agent reports main.go as modified (from transcript)
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2834,7 +2834,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUserDeletedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2933,7 +2933,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesRenamedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -3030,7 +3030,7 @@ func TestWriteTemporary_FirstCheckpoint_FilenamesWithSpaces(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -4137,7 +4137,7 @@ func TestWriteTemporaryTask_SubagentTranscript_RedactsSecrets(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	_, err = store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
@@ -4427,7 +4427,7 @@ func TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
 
 	t.Chdir(tempDir)
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	commitHash, err := store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
 		SessionID:      "test-session",
 		BaseCommit:     initialCommit.String(),
@@ -4531,7 +4531,7 @@ func TestWriteTemporaryTask_ExcludesGitIgnoredFiles(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo, DefaultV1Refs())
+	store := newEphemeralStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// Write task checkpoint where subagent reports .env as modified

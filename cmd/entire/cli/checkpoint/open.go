@@ -42,7 +42,7 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 	}
 	return &Stores{
 		Primary:   store,
-		temporary: store,
+		temporary: newEphemeralStore(repo, refs),
 		refs:      refs,
 	}, nil
 }

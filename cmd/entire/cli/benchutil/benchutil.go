@@ -38,8 +38,11 @@ type BenchRepo struct {
 	// Repo is the go-git repository handle.
 	Repo *git.Repository
 
-	// Store is the checkpoint GitStore for this repo.
+	// Store is the committed (persistent) checkpoint store for this repo.
 	Store *checkpoint.GitStore
+
+	// Ephemeral is the shadow-branch (temporary) checkpoint store for this repo.
+	Ephemeral checkpoint.TemporaryStore
 
 	// HeadHash is the current HEAD commit hash string.
 	HeadHash string
@@ -169,11 +172,12 @@ func NewBenchRepo(b *testing.B, opts RepoOpts) *BenchRepo {
 	}
 
 	br := &BenchRepo{
-		Dir:      dir,
-		Repo:     repo,
-		Store:    checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()),
-		HeadHash: headHash.String(),
-		Strategy: opts.Strategy,
+		Dir:       dir,
+		Repo:      repo,
+		Store:     checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()),
+		Ephemeral: checkpoint.NewEphemeralStore(repo, checkpoint.DefaultV1Refs()),
+		HeadHash:  headHash.String(),
+		Strategy:  opts.Strategy,
 	}
 
 	// Determine worktree ID
@@ -357,7 +361,7 @@ func (br *BenchRepo) SeedShadowBranch(b *testing.B, sessionID string, checkpoint
 			b.Fatalf("write transcript: %v", err)
 		}
 
-		_, err := br.Store.WriteTemporary(context.Background(), checkpoint.WriteTemporaryOptions{
+		_, err := br.Ephemeral.WriteTemporary(context.Background(), checkpoint.WriteTemporaryOptions{
 			SessionID:         sessionID,
 			BaseCommit:        br.HeadHash,
 			WorktreeID:        br.WorktreeID,

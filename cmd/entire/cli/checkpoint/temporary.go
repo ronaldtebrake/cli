@@ -54,7 +54,7 @@ func HashWorktreeID(worktreeID string) string {
 // Returns the result containing commit hash and whether it was skipped.
 // If the new tree hash matches the last checkpoint's tree hash, the checkpoint
 // is skipped to avoid duplicate commits (deduplication).
-func (s *GitStore) WriteTemporary(ctx context.Context, opts WriteTemporaryOptions) (WriteTemporaryResult, error) {
+func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporaryOptions) (WriteTemporaryResult, error) {
 	// Validate base commit - required for shadow branch naming
 	if opts.BaseCommit == "" {
 		return WriteTemporaryResult{}, errors.New("BaseCommit is required for temporary checkpoint")
@@ -183,7 +183,7 @@ func (s *GitStore) WriteTemporary(ctx context.Context, opts WriteTemporaryOption
 // ReadTemporary reads the latest checkpoint from a shadow branch.
 // Returns nil if the shadow branch doesn't exist.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *GitStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error) {
+func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -215,7 +215,7 @@ func (s *GitStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID str
 }
 
 // ListTemporary lists all shadow branches with their checkpoint info.
-func (s *GitStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, error) {
+func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -273,7 +273,7 @@ func (s *GitStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, error) {
 // WriteTemporaryTask writes a task checkpoint to a shadow branch.
 // Task checkpoints include both code changes and task-specific metadata.
 // Returns the commit hash of the created checkpoint.
-func (s *GitStore) WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
+func (s *ephemeralStore) WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
 	// Validate base commit - required for shadow branch naming
 	if opts.BaseCommit == "" {
 		return plumbing.ZeroHash, errors.New("BaseCommit is required for task checkpoint")
@@ -361,7 +361,7 @@ func (s *GitStore) WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTa
 //
 // Uses ApplyTreeChanges (tree surgery) instead of FlattenTree+BuildTreeFromEntries,
 // so only affected subtrees are read/rebuilt.
-func (s *GitStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash plumbing.Hash, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
+func (s *ephemeralStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash plumbing.Hash, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
 	// Compute metadata paths
 	sessionMetadataDir := paths.EntireMetadataDir + "/" + opts.SessionID
 	taskMetadataDir := sessionMetadataDir + "/tasks/" + opts.ToolUseID
@@ -489,7 +489,7 @@ func (s *GitStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash plumb
 // This returns individual commits (rewind points), not just branch info.
 // The sessionID filter, if provided, limits results to commits from that session.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *GitStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
 	return s.listCheckpointsForBranch(ctx, shadowBranchName, sessionID, limit)
 }
@@ -497,13 +497,13 @@ func (s *GitStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, wor
 // ListCheckpointsForBranch lists checkpoint commits for a shadow branch by name.
 // Use this when you already have the full branch name (e.g., from ListTemporary).
 // The sessionID filter, if provided, limits results to commits from that session.
-func (s *GitStore) ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
 	return s.listCheckpointsForBranch(ctx, branchName, sessionID, limit)
 }
 
 // listCheckpointsForBranch lists checkpoint commits for a specific shadow branch name.
 // This is an internal helper used by ListTemporaryCheckpoints, ListCheckpointsForBranch, and ListAllTemporaryCheckpoints.
-func (s *GitStore) listCheckpointsForBranch(ctx context.Context, shadowBranchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBranchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -585,7 +585,7 @@ func (s *GitStore) listCheckpointsForBranch(ctx context.Context, shadowBranchNam
 // ListAllTemporaryCheckpoints lists checkpoint commits from ALL shadow branches.
 // This is used for checkpoint lookup when the base commit is unknown (e.g., HEAD advanced since session start).
 // The sessionID filter, if provided, limits results to commits from that session.
-func (s *GitStore) ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -637,7 +637,7 @@ var errStop = errors.New("stop iteration")
 // commitHash is the commit to read from, metadataDir is the path within the tree.
 // agentType is used for reassembling chunked transcripts in the correct format.
 // Handles both chunked and non-chunked transcripts.
-func (s *GitStore) GetTranscriptFromCommit(ctx context.Context, commitHash plumbing.Hash, metadataDir string, agentType types.AgentType) ([]byte, error) {
+func (s *ephemeralStore) GetTranscriptFromCommit(ctx context.Context, commitHash plumbing.Hash, metadataDir string, agentType types.AgentType) ([]byte, error) {
 	commit, err := s.repo.CommitObject(commitHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get commit: %w", err)
@@ -682,7 +682,7 @@ func (s *GitStore) GetTranscriptFromCommit(ctx context.Context, commitHash plumb
 
 // ShadowBranchExists checks if a shadow branch exists for the given base commit and worktree.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *GitStore) ShadowBranchExists(baseCommit, worktreeID string) bool {
+func (s *ephemeralStore) ShadowBranchExists(baseCommit, worktreeID string) bool {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
 	refName := plumbing.NewBranchReferenceName(shadowBranchName)
 	_, err := s.repo.Reference(refName, true)
@@ -693,7 +693,7 @@ func (s *GitStore) ShadowBranchExists(baseCommit, worktreeID string) bool {
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
 // Uses git CLI instead of go-git's RemoveReference because go-git v5 doesn't properly
 // persist deletions with packed refs or worktrees.
-func (s *GitStore) DeleteShadowBranch(ctx context.Context, baseCommit, worktreeID string) error {
+func (s *ephemeralStore) DeleteShadowBranch(ctx context.Context, baseCommit, worktreeID string) error {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
 	cmd := exec.CommandContext(ctx, "git", "branch", "-D", "--", shadowBranchName)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -737,7 +737,7 @@ func ParseShadowBranchName(branchName string) (commitPrefix, worktreeHash string
 
 // getOrCreateShadowBranch gets or creates the shadow branch for checkpoints.
 // Returns (parentHash, baseTreeHash, error).
-func (s *GitStore) getOrCreateShadowBranch(branchName string) (plumbing.Hash, plumbing.Hash, error) {
+func (s *ephemeralStore) getOrCreateShadowBranch(branchName string) (plumbing.Hash, plumbing.Hash, error) {
 	refName := plumbing.NewBranchReferenceName(branchName)
 	ref, err := s.repo.Reference(refName, true)
 
@@ -770,7 +770,7 @@ func (s *GitStore) getOrCreateShadowBranch(branchName string) (plumbing.Hash, pl
 //
 // Uses ApplyTreeChanges (tree surgery) instead of FlattenTree+BuildTreeFromEntries,
 // so only affected subtrees are read/rebuilt — O(changed dirs) instead of O(total files).
-func (s *GitStore) buildTreeWithChanges(
+func (s *ephemeralStore) buildTreeWithChanges(
 	ctx context.Context,
 	baseTreeHash plumbing.Hash,
 	modifiedFiles, deletedFiles []string,
@@ -844,7 +844,6 @@ func (s *GitStore) buildTreeWithChanges(
 
 	return ApplyTreeChanges(ctx, s.repo, baseTreeHash, changes)
 }
-
 
 // Helper functions extracted from strategy/common.go
 // These are exported for use by strategy package (push_common.go, session_test.go)
