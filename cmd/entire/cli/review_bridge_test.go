@@ -146,6 +146,21 @@ func TestReviewTrailFindingInputsSingleVerdictUnchanged(t *testing.T) {
 	}
 }
 
+func TestReviewTrailLocationFromJSON_SingleLineRangeBecomesLine(t *testing.T) {
+	loc := reviewTrailLocationFromJSON(reviewTrailJSONLocation{
+		Granularity: "range",
+		FilePath:    "src/app.ts",
+		StartLine:   42,
+		EndLine:     42,
+	})
+	if loc.Granularity != "line" {
+		t.Fatalf("granularity = %q, want line", loc.Granularity)
+	}
+	if loc.FilePath == nil || *loc.FilePath != "src/app.ts" || loc.StartLine == nil || *loc.StartLine != 42 || loc.EndLine != nil {
+		t.Fatalf("location = %+v, want single-line location at src/app.ts:42", loc)
+	}
+}
+
 func TestSplitReviewVerdictFindingsNumberedList(t *testing.T) {
 	items := splitReviewVerdictFindings("Verdict\n\n1. First\n2. Second")
 	if len(items) != 2 || items[0] != "First" || items[1] != "Second" {
