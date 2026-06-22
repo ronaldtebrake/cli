@@ -50,7 +50,7 @@ func ReadCommittedCheckpoint(ctx context.Context, reader CommittedReader, checkp
 	if summary == nil {
 		return nil, ErrCheckpointNotFound
 	}
-	return summary, nil
+	return normalizeCheckpointSummary(summary), nil
 }
 
 // ReadLatestSessionContent reads the latest session from an already-resolved

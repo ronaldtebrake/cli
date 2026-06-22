@@ -509,6 +509,7 @@ func (s *GitStore) writeCheckpointSummary(opts WriteCommittedOptions, basePath s
 	summary := CheckpointSummary{
 		CheckpointID:        opts.CheckpointID,
 		CLIVersion:          versioninfo.Version,
+		CheckpointVersion:   CheckpointVersionBranchV1,
 		Strategy:            opts.Strategy,
 		Branch:              opts.Branch,
 		CheckpointsCount:    checkpointsCount,
@@ -690,7 +691,11 @@ func readJSONFromBlob[T any](repo *git.Repository, hash plumbing.Hash) (*T, erro
 
 // readSummaryFromBlob reads CheckpointSummary from a blob hash.
 func (s *GitStore) readSummaryFromBlob(hash plumbing.Hash) (*CheckpointSummary, error) {
-	return readJSONFromBlob[CheckpointSummary](s.repo, hash)
+	summary, err := readJSONFromBlob[CheckpointSummary](s.repo, hash)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeCheckpointSummary(summary), nil
 }
 
 // aggregateTokenUsage sums two TokenUsage structs.
@@ -982,7 +987,7 @@ func (s *GitStore) ReadCommitted(ctx context.Context, checkpointID id.Checkpoint
 		return nil, fmt.Errorf("failed to parse metadata.json: %w", err)
 	}
 
-	return &summary, nil
+	return normalizeCheckpointSummary(&summary), nil
 }
 
 // ReadSessionMetadata reads only the metadata.json for a specific session within a checkpoint.

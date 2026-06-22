@@ -87,6 +87,42 @@ func TestWrite_DispatchesEachRequest(t *testing.T) {
 	}
 }
 
+func TestWriteCommittedWritesBranchCheckpointVersion(t *testing.T) {
+	t.Parallel()
+	repo, _ := setupBranchTestRepo(t)
+	store := NewGitStore(repo, DefaultV1Refs())
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("b1b2c3d4e5f6")
+
+	if err := store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-001",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("transcript\n")),
+		Prompts:      []string{"initial"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	summary, err := store.ReadCommitted(ctx, cpID)
+	if err != nil {
+		t.Fatalf("ReadCommitted() error = %v", err)
+	}
+	if summary == nil {
+		t.Fatal("ReadCommitted() returned nil summary")
+	}
+	if summary.CheckpointVersion != CheckpointVersionBranchV1 {
+		t.Fatalf("CheckpointVersion = %q, want %q", summary.CheckpointVersion, CheckpointVersionBranchV1)
+	}
+
+	rawSummary := readSummaryFromBranch(t, repo, cpID)
+	if rawSummary.CheckpointVersion != CheckpointVersionBranchV1 {
+		t.Fatalf("raw checkpoint_version = %q, want %q", rawSummary.CheckpointVersion, CheckpointVersionBranchV1)
+	}
+}
+
 // TestWrite_UnknownRequestErrors verifies the dispatcher surfaces an
 // unhandled request type rather than silently ignoring it.
 func TestWrite_UnknownRequestErrors(t *testing.T) {

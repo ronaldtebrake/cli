@@ -28,6 +28,9 @@ var (
 	ErrNoTranscript = errors.New("no transcript found for checkpoint")
 )
 
+// CheckpointVersionBranchV1 identifies the branch-backed checkpoint metadata format.
+const CheckpointVersionBranchV1 = "branch-v1"
+
 // Checkpoint represents a save point within a session.
 type Checkpoint struct {
 	// ID is the unique checkpoint identifier
@@ -550,6 +553,7 @@ type SessionFilePaths struct {
 //nolint:revive // Named CheckpointSummary to avoid conflict with existing Summary struct
 type CheckpointSummary struct {
 	CLIVersion          string              `json:"cli_version,omitempty"`
+	CheckpointVersion   string              `json:"checkpoint_version,omitempty"`
 	CheckpointID        id.CheckpointID     `json:"checkpoint_id"`
 	Strategy            string              `json:"strategy"`
 	Branch              string              `json:"branch,omitempty"`
@@ -573,6 +577,16 @@ type CheckpointSummary struct {
 	// be set so callers can keep asking "was this investigated in any way?"
 	// without caring about the variant.
 	HasInvestigation bool `json:"has_investigation,omitempty"`
+}
+
+func normalizeCheckpointSummary(summary *CheckpointSummary) *CheckpointSummary {
+	if summary == nil {
+		return nil
+	}
+	if summary.CheckpointVersion == "" {
+		summary.CheckpointVersion = CheckpointVersionBranchV1
+	}
+	return summary
 }
 
 // SessionMetrics contains hook-provided session metrics from agents that report

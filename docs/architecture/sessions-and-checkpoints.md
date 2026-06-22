@@ -212,6 +212,8 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json
 {
+  "cli_version": "0.0.0-dev",
+  "checkpoint_version": "branch-v1",
   "checkpoint_id": "abc123def456",
   "strategy": "manual-commit",
   "branch": "main",
