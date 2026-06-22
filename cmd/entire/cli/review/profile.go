@@ -127,12 +127,7 @@ func nonZeroProfiles(in map[string]settings.ReviewProfileConfig) map[string]sett
 }
 
 func sortedProfileNames(in map[string]settings.ReviewProfileConfig) []string {
-	names := make([]string, 0, len(in))
-	for name := range in {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return sortedMapKeys(in)
 }
 
 func nonZeroAgentConfigs(in map[string]settings.ReviewConfig) map[string]settings.ReviewConfig {
@@ -148,12 +143,7 @@ func nonZeroAgentConfigs(in map[string]settings.ReviewConfig) map[string]setting
 }
 
 func sortedProfileAgentNames(profile settings.ReviewProfileConfig) []string {
-	names := make([]string, 0, len(profile.Agents))
-	for name := range profile.Agents {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return sortedMapKeys(profile.Agents)
 }
 
 func reviewAgentName(workerName string, cfg settings.ReviewConfig) string {
@@ -396,8 +386,12 @@ func defaultJudge(ctx context.Context, configured map[string]settings.ReviewConf
 }
 
 func sortedReviewConfigKeys(configured map[string]settings.ReviewConfig) []string {
-	names := make([]string, 0, len(configured))
-	for name := range configured {
+	return sortedMapKeys(configured)
+}
+
+func sortedMapKeys[V any](in map[string]V) []string {
+	names := make([]string, 0, len(in))
+	for name := range in {
 		names = append(names, name)
 	}
 	sort.Strings(names)
