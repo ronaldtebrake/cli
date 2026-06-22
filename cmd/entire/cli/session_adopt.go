@@ -61,9 +61,17 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 		return errors.New("source worktree is required; pass --from <path>")
 	}
 
-	sourceStore, sourceWorktree, err := stateStoreForWorktree(ctx, opts.FromWorktree)
+	sourceStore, sourceWorktree, sourceCommonDir, err := stateStoreForWorktree(ctx, opts.FromWorktree)
 	if err != nil {
 		return err
+	}
+
+	targetStore, _, targetCommonDir, err := stateStoreForWorktree(ctx, ".")
+	if err != nil {
+		return fmt.Errorf("open current session store: %w", err)
+	}
+	if sourceCommonDir == targetCommonDir {
+		return errors.New("source and target share the same git common dir; session adopt only moves sessions across independent git session stores")
 	}
 
 	sourceState, err := selectAdoptSourceSession(ctx, sourceStore, sourceWorktree, sessionID)
@@ -76,10 +84,6 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 		return err
 	}
 
-	targetStore, err := session.NewStateStore(ctx)
-	if err != nil {
-		return fmt.Errorf("open current session store: %w", err)
-	}
 	existing, err := targetStore.Load(ctx, adopted.SessionID)
 	if err != nil {
 		return fmt.Errorf("load current session state: %w", err)
@@ -101,10 +105,10 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	return nil
 }
 
-func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.StateStore, string, error) {
+func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.StateStore, string, string, error) {
 	absWorktree, err := filepath.Abs(worktreePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve source worktree: %w", err)
+		return nil, "", "", fmt.Errorf("resolve source worktree: %w", err)
 	}
 
 	cmd := exec.CommandContext(ctx, "git", "-C", absWorktree, "rev-parse", "--show-toplevel", "--git-common-dir")
@@ -112,14 +116,14 @@ func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.S
 	if err != nil {
 		msg := strings.TrimSpace(string(output))
 		if msg != "" {
-			return nil, "", fmt.Errorf("resolve source git directory: %s: %w", msg, err)
+			return nil, "", "", fmt.Errorf("resolve source git directory: %s: %w", msg, err)
 		}
-		return nil, "", fmt.Errorf("resolve source git directory: %w", err)
+		return nil, "", "", fmt.Errorf("resolve source git directory: %w", err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if len(lines) < 2 {
-		return nil, "", fmt.Errorf("resolve source git directory: unexpected git output %q", strings.TrimSpace(string(output)))
+		return nil, "", "", fmt.Errorf("resolve source git directory: unexpected git output %q", strings.TrimSpace(string(output)))
 	}
 	sourceRoot := strings.TrimSpace(lines[0])
 	commonDir := strings.TrimSpace(lines[1])
@@ -127,8 +131,11 @@ func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.S
 		commonDir = filepath.Join(absWorktree, commonDir)
 	}
 	commonDir = filepath.Clean(commonDir)
+	if resolved, err := filepath.EvalSymlinks(commonDir); err == nil {
+		commonDir = resolved
+	}
 
-	return session.NewStateStoreWithDir(filepath.Join(commonDir, session.SessionStateDirName)), sourceRoot, nil
+	return session.NewStateStoreWithDir(filepath.Join(commonDir, session.SessionStateDirName)), sourceRoot, commonDir, nil
 }
 
 func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, sourceWorktree, sessionID string) (*session.State, error) {

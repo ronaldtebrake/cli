@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -315,6 +316,69 @@ func TestSessionAdopt_FromSubdirectoryReadsSourceStore(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_RejectsSameGitCommonDir(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetWorktree := filepath.Join(t.TempDir(), "target-worktree")
+	runAdoptGit(t, sourceRepo, "worktree", "add", targetWorktree, "-b", "target-worktree")
+	t.Cleanup(func() {
+		runAdoptGit(t, sourceRepo, "worktree", "remove", targetWorktree, "--force")
+	})
+
+	sessionID := "test-adopt-same-common-dir"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:                 sessionID,
+		AgentType:                 agent.AgentTypeClaudeCode,
+		StartedAt:                 time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:       &lastInteraction,
+		Phase:                     session.PhaseActive,
+		BaseCommit:                testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:              sourceRepo,
+		StepCount:                 4,
+		CheckpointTranscriptStart: 2,
+		LastCheckpointID:          id.MustCheckpointID("abc123def456"),
+		LastCheckpointCommitHash:  "source-commit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetWorktree, "feature.txt", "agent change\n")
+	t.Chdir(targetWorktree)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err == nil {
+		t.Fatal("runAdopt succeeded, want same-common-dir refusal")
+	}
+	if !strings.Contains(err.Error(), "same git common dir") {
+		t.Fatalf("runAdopt error = %v, want same git common dir refusal", err)
+	}
+
+	loaded, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded == nil {
+		t.Fatal("expected source session state to remain")
+	}
+	if loaded.StepCount != 4 {
+		t.Fatalf("StepCount = %d, want source state preserved at 4", loaded.StepCount)
+	}
+	if loaded.CheckpointTranscriptStart != 2 {
+		t.Fatalf("CheckpointTranscriptStart = %d, want source state preserved at 2", loaded.CheckpointTranscriptStart)
+	}
+	if loaded.LastCheckpointID.String() != "abc123def456" {
+		t.Fatalf("LastCheckpointID = %s, want source checkpoint preserved", loaded.LastCheckpointID.String())
+	}
+	if loaded.LastCheckpointCommitHash != "source-commit" {
+		t.Fatalf("LastCheckpointCommitHash = %q, want source commit preserved", loaded.LastCheckpointCommitHash)
+	}
+}
+
 func setupAdoptRepo(t *testing.T) string {
 	t.Helper()
 
@@ -329,4 +393,15 @@ func setupAdoptRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return realRepoDir
+}
+
+func runAdoptGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
 }
