@@ -47,6 +47,31 @@ func TestNewTrailCreateRequestUsesLinkBranchAction(t *testing.T) {
 	}, req)
 }
 
+func TestNewTrailCreateRequestCanBeBranchless(t *testing.T) {
+	req := newTrailCreateRequest("title", "body", "", "main", "open")
+
+	require.Equal(t, api.TrailCreateRequest{
+		Title:  "title",
+		Body:   "body",
+		Base:   "main",
+		Status: "open",
+	}, req)
+
+	encoded, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "branch_name")
+	require.NotContains(t, string(encoded), "branch_action")
+}
+
+func TestPrepareTrailCreateBranchSkipsBranchlessTrail(t *testing.T) {
+	state, err := prepareTrailCreateBranch(io.Discard, io.Discard, nil, "", "main", true)
+
+	require.NoError(t, err)
+	require.False(t, state.NeedsCreation)
+	require.False(t, state.LocalCreated)
+	require.False(t, state.RemotePushed)
+}
+
 func TestCleanupCreatedTrailBranch(t *testing.T) {
 	cases := []struct {
 		name             string
