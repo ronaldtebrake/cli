@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/spf13/cobra"
 )
 
@@ -248,8 +249,8 @@ func TestFetchLatestVersion(t *testing.T) {
 		if r.Header.Get("Accept") != "application/vnd.github+json" {
 			t.Errorf("Accept header = %q, want application/vnd.github+json", r.Header.Get("Accept"))
 		}
-		if r.Header.Get("User-Agent") != "entire-cli" {
-			t.Errorf("User-Agent header = %q, want entire-cli", r.Header.Get("User-Agent"))
+		if want := versioninfo.UserAgent(); r.Header.Get("User-Agent") != want {
+			t.Errorf("User-Agent header = %q, want %q", r.Header.Get("User-Agent"), want)
 		}
 
 		release := GitHubRelease{
@@ -422,13 +423,13 @@ func TestUpdateCommand(t *testing.T) {
 	}
 }
 
-// setupCheckAndNotifyTest sets HOME to a temp dir and overrides githubAPIURL.
-// Returns a cobra.Command with captured stdout and a cleanup function.
+// setupCheckAndNotifyTest points the global config dir at a per-test temp
+// dir and overrides githubAPIURL. Returns a cobra.Command with captured
+// stdout and a cleanup function.
 func setupCheckAndNotifyTest(t *testing.T, serverURL string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
 
 	origURL := githubAPIURL
 	githubAPIURL = serverURL
@@ -505,10 +506,7 @@ func TestCheckAndNotify_SkipsWhenCacheIsFresh(t *testing.T) {
 	cmd, buf := setupCheckAndNotifyTest(t, server.URL)
 
 	// Pre-seed the cache with a recent check time
-	configDir, err := globalConfigDirPath()
-	if err != nil {
-		t.Fatalf("globalConfigDirPath() error = %v", err)
-	}
+	configDir := globalConfigDirPath()
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}

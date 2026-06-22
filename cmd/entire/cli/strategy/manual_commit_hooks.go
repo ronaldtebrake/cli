@@ -320,18 +320,18 @@ func isGitSequenceOperation(ctx context.Context) bool {
 	}
 
 	// Check for rebase state directories
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-merge")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-apply")); err == nil {
 		return true
 	}
 
 	// Check for cherry-pick and revert state files
-	if _, err := os.Stat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
 		return true
 	}
 
@@ -829,7 +829,7 @@ func warnStaleEndedSessionsTo(ctx context.Context, count int, w io.Writer) {
 	}
 	warnDir := filepath.Join(commonDir, session.SessionStateDirName)
 	warnFile := filepath.Join(warnDir, staleEndedSessionWarnFile)
-	if info, statErr := os.Stat(warnFile); statErr == nil {
+	if info, statErr := os.Lstat(warnFile); statErr == nil {
 		if time.Since(info.ModTime()) < staleEndedSessionWarnInterval {
 			return // rate-limited
 		}
@@ -1061,7 +1061,11 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	repoDir string,
 ) error {
 	logCtx := logging.WithComponent(ctx, "attribution")
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
 
 	summary, err := store.ReadCommitted(ctx, checkpointID)
 	if err != nil {
@@ -1154,13 +1158,9 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		slog.Float64("agent_percentage", agentPercentage),
 	)
 
-	if err := store.UpdateCheckpointSummary(ctx, checkpointID, combined); err != nil {
+	if err := store.Write(ctx, checkpoint.BackfillAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
-
-	// Combined attribution is a committed write in the post-commit hook, so the
-	// mirror must track it too when configured (best-effort).
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	return nil
 }
@@ -2295,6 +2295,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		if transcriptPath != "" && state.TranscriptPath != transcriptPath {
 			state.TranscriptPath = transcriptPath
 		}
+		captureSessionBranch(repo, state)
 
 		// ORDERING: attribution runs BEFORE migrate to use the pre-migration
 		// BaseCommit as the base tree (preserving correct agent-line counts
@@ -2338,6 +2339,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		}
 		promptAttr := s.calculatePromptAttributionAtStart(ctx, repo, state)
 		state.PendingPromptAttribution = &promptAttr
+		captureSessionBranch(repo, state)
 		return nil
 	})
 	if mutErr != nil && !errors.Is(mutErr, ErrStateNotFound) {
@@ -2347,6 +2349,25 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 	logging.Info(logging.WithComponent(ctx, "hooks"), "initialized shadow session",
 		slog.String("session_id", sessionID))
 	return nil
+}
+
+// captureSessionBranch records the branch HEAD currently points at into the
+// session state so `entire resume` can map a stopped session back to its branch.
+// It is a no-op when HEAD is detached or cannot be read — the branch field is
+// best-effort and resume derives it from commit trailers when absent.
+func captureSessionBranch(repo *git.Repository, state *SessionState) {
+	headRef, err := repo.Head()
+	if err != nil {
+		return
+	}
+	if headRef.Name().IsBranch() {
+		state.Branch = headRef.Name().Short()
+	} else {
+		// Detached HEAD: clear any branch recorded on a previous turn so resume
+		// falls back to deriving the branch from checkpoint trailers instead of
+		// using a stale, now-incorrect value.
+		state.Branch = ""
+	}
 }
 
 // calculatePromptAttributionAtStart calculates attribution at prompt start (before agent runs).
@@ -2759,6 +2780,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (attribution, files touched, prompts). Hooks run without user interaction
 	// so there is no retry path — preserving partial metadata is better than
 	// losing everything. Persisting an unredacted transcript would be worse.
+	// Run the 7-layer pipeline over the transcript — OPF runs later in
+	// the pre-push rewrite path, which re-redacts these 7-layer blobs
+	// and produces 8-layer commits before the push goes out.
 	_, redactSpan := perf.Start(logCtx, "redact_transcript")
 	redactedTranscript, redactErr := redact.JSONLBytes(fullTranscript)
 	redactSpan.End()
@@ -2769,11 +2793,18 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 		redactedTranscript = redact.RedactedBytes{}
 	}
-	for i, p := range prompts {
-		prompts[i] = redact.String(p)
-	}
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	// Post-commit emits 7-layer-only blobs; the writer joins + redacts
+	// via checkpoint.redactedJoinedPrompts. OPF runs later, once per
+	// push, in the pre-push rewrite path.
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "finalize: failed to open checkpoint store",
+			slog.String("error", err.Error()),
+		)
+		return 1 // Count as error - all checkpoints will be skipped
+	}
+	store := stores.Primary
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2799,7 +2830,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			PrecomputedBlobs: precomputed,
 		}
 
-		updateErr := store.UpdateCommitted(ctx, updateOpts)
+		updateErr := store.Write(ctx, checkpoint.BackfillTranscript(updateOpts))
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),
@@ -2814,11 +2845,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			slog.String("session_id", state.SessionID),
 		)
 	}
-
-	// Mirror the finalized primary metadata to refs.Mirror when configured
-	// (best-effort; failures are logged, not fatal). Once after the loop is
-	// enough — it tracks Primary's final commit.
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	// Clear turn checkpoint IDs. Do NOT update CheckpointTranscriptStart here — it was
 	// already set correctly by PostCommit: condenseAndUpdateState sets it to the total
@@ -2889,14 +2915,21 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	start := time.Now()
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "post-commit: carry-forward failed to open checkpoint store",
+			slog.String("session_id", state.SessionID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
 	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
-	result, err := store.WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
+	result, err := stores.Temporary().WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,

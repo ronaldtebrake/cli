@@ -38,17 +38,20 @@ func TestTrailCommandSurfaceUsesFindings(t *testing.T) {
 	if children["review"] != nil {
 		t.Fatal("trail command should not register review subcommand")
 	}
+	if children["watch"] == nil {
+		t.Fatal("trail command should register watch subcommand")
+	}
 
 	subcommands := map[string]bool{}
 	for _, child := range findingCmd.Commands() {
 		subcommands[child.Name()] = true
 	}
-	for _, required := range []string{"list", "add", "show", "apply", "resolve", "dismiss", "reopen", "watch"} {
+	for _, required := range []string{"list", "add", "show", "update", "apply", "resolve", "dismiss", "reopen"} {
 		if !subcommands[required] {
 			t.Fatalf("trail finding missing %q subcommand", required)
 		}
 	}
-	for _, removed := range []string{"start", "comments", "approve", "request-changes"} {
+	for _, removed := range []string{"start", "comments", "approve", "request-changes", "watch"} {
 		if subcommands[removed] {
 			t.Fatalf("trail finding should not register removed %q subcommand", removed)
 		}
@@ -92,14 +95,54 @@ func TestTrailReviewCommentsPath(t *testing.T) {
 	got := trailReviewCommentsPath("trail id/with slash", trailReviewListOptions{
 		Status:           "open,resolved",
 		Severity:         "high,medium",
-		Stale:            "any",
+		Freshness:        "any",
 		IncludeDismissed: true,
 		Limit:            25,
 		Offset:           50,
 	})
-	want := "/api/v1/trails/trail%20id%2Fwith%20slash/reviews/comments?include_dismissed=true&limit=25&offset=50&severity=high%2Cmedium&status=open%2Cresolved"
+	want := "/api/v1/trails/trail%20id%2Fwith%20slash/reviews/comments?include_dismissed=true&limit=25&offset=50&severity=high%2Cmedium&stale=any&status=open%2Cresolved"
 	if got != want {
 		t.Fatalf("trailReviewCommentsPath = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeTrailReviewListOptionsIncludeDismissedBroadensDefaultStatus(t *testing.T) {
+	t.Parallel()
+	opts := defaultTrailReviewListOptions()
+	opts.IncludeDismissed = true
+	got, err := normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		t.Fatalf("normalizeTrailReviewListOptions: %v", err)
+	}
+	if got.Status != trailReviewStatusAny {
+		t.Fatalf("Status = %q, want %q", got.Status, trailReviewStatusAny)
+	}
+
+	opts = defaultTrailReviewListOptions()
+	opts.IncludeDismissed = true
+	opts.StatusChanged = true
+	got, err = normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		t.Fatalf("normalizeTrailReviewListOptions explicit status: %v", err)
+	}
+	if got.Status != trailReviewStatusOpen {
+		t.Fatalf("explicit Status = %q, want open", got.Status)
+	}
+}
+
+func TestNormalizeTrailReviewListOptionsRejectsInvalidFilters(t *testing.T) {
+	t.Parallel()
+	cases := []trailReviewListOptions{
+		{Status: "open,nope", Freshness: trailReviewFreshnessAny, Limit: 1},
+		{Status: trailReviewStatusAny, Severity: "urgent", Freshness: trailReviewFreshnessAny, Limit: 1},
+		{Status: trailReviewStatusAny, Freshness: "old", Limit: 1},
+		{Status: trailReviewStatusAny, Freshness: trailReviewFreshnessAny, Limit: 0},
+		{Status: trailReviewStatusAny, Freshness: trailReviewFreshnessAny, Limit: 1, Offset: -1},
+	}
+	for _, opts := range cases {
+		if _, err := normalizeTrailReviewListOptions(opts); err == nil {
+			t.Fatalf("normalizeTrailReviewListOptions(%+v) succeeded, want error", opts)
+		}
 	}
 }
 
@@ -141,10 +184,50 @@ func TestLoadTrailReviewCommentPatchFile(t *testing.T) {
 	}
 }
 
-func TestBuildTrailReviewCommentCreateRequest(t *testing.T) {
+func TestBuildTrailReviewCommentPatchRequest(t *testing.T) {
 	t.Parallel()
-	req, err := buildTrailReviewCommentCreateRequest(trailReviewCommentAddOptions{
-		Title:       "Missing expiry skew handling",
+
+	req, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{
+		Body:              "Allow a five minute skew.",
+		BodyChanged:       true,
+		Severity:          "HIGH",
+		SeverityChanged:   true,
+		Confidence:        0.94,
+		ConfidenceChanged: true,
+	})
+	if err != nil {
+		t.Fatalf("buildTrailReviewCommentPatchRequest: %v", err)
+	}
+	if req.Title != nil {
+		t.Fatalf("Title = %#v, want nil", req.Title)
+	}
+	if req.Body == nil || *req.Body != "Allow a five minute skew." {
+		t.Fatalf("Body = %#v", req.Body)
+	}
+	if req.Severity == nil || *req.Severity != trailReviewSeverityHigh {
+		t.Fatalf("Severity = %#v", req.Severity)
+	}
+	if req.Confidence == nil || *req.Confidence != 0.94 {
+		t.Fatalf("Confidence = %#v", req.Confidence)
+	}
+
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{}); err == nil {
+		t.Fatal("expected an error when no update fields are provided")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: "urgent", SeverityChanged: true}); err == nil {
+		t.Fatal("expected an error for invalid severity")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Body: " ", BodyChanged: true}); err == nil {
+		t.Fatal("expected an error for empty body")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: " ", SeverityChanged: true}); err == nil {
+		t.Fatal("expected an error for empty severity")
+	}
+}
+
+func TestBuildTrailReviewCommentInput(t *testing.T) {
+	t.Parallel()
+	input, err := buildTrailReviewCommentInput(trailReviewCommentAddOptions{
 		Body:        "Token refresh should allow clock skew.",
 		Severity:    "HIGH",
 		Confidence:  0.94,
@@ -155,62 +238,125 @@ func TestBuildTrailReviewCommentCreateRequest(t *testing.T) {
 		Instruction: "Allow a five minute skew.",
 	})
 	if err != nil {
-		t.Fatalf("buildTrailReviewCommentCreateRequest: %v", err)
+		t.Fatalf("buildTrailReviewCommentInput: %v", err)
 	}
-	if req.Body != "Token refresh should allow clock skew." {
-		t.Fatalf("Body = %q", req.Body)
+	if input.Body == nil || *input.Body != "Token refresh should allow clock skew." {
+		t.Fatalf("Body = %#v", input.Body)
 	}
-	if req.Title == nil || *req.Title != "Missing expiry skew handling" {
-		t.Fatalf("Title = %#v", req.Title)
+	if input.Severity == nil || *input.Severity != trailReviewSeverityHigh {
+		t.Fatalf("Severity = %#v", input.Severity)
 	}
-	if req.Severity == nil || *req.Severity != trailReviewSeverityHigh {
-		t.Fatalf("Severity = %#v", req.Severity)
+	if input.Confidence == nil || *input.Confidence != 0.94 {
+		t.Fatalf("Confidence = %#v", input.Confidence)
 	}
-	if req.Confidence == nil || *req.Confidence != 0.94 {
-		t.Fatalf("Confidence = %#v", req.Confidence)
+	if input.ClientID != "agent-run-1:finding-7" {
+		t.Fatalf("ClientID = %q", input.ClientID)
 	}
-	if req.ClientID == nil || *req.ClientID != "agent-run-1:finding-7" {
-		t.Fatalf("ClientID = %#v", req.ClientID)
+	if input.Location.Granularity != "range" || input.Location.FilePath == nil || *input.Location.FilePath != "src/auth/session.ts" {
+		t.Fatalf("Location = %#v", input.Location)
 	}
-	if req.Location.Granularity != "range" || req.Location.FilePath == nil || *req.Location.FilePath != "src/auth/session.ts" {
-		t.Fatalf("Location = %#v", req.Location)
+	if input.Location.StartLine == nil || *input.Location.StartLine != 88 || input.Location.EndLine == nil || *input.Location.EndLine != 91 {
+		t.Fatalf("Location lines = %#v", input.Location)
 	}
-	if req.Location.StartLine == nil || *req.Location.StartLine != 88 || req.Location.EndLine == nil || *req.Location.EndLine != 91 {
-		t.Fatalf("Location lines = %#v", req.Location)
-	}
-	if len(req.SuggestedChanges) != 1 || req.SuggestedChanges[0].ChangeType != "manual_instruction" {
-		t.Fatalf("SuggestedChanges = %#v", req.SuggestedChanges)
+	if input.SuggestedChange == nil || input.SuggestedChange.ChangeType != "manual_instruction" {
+		t.Fatalf("SuggestedChange = %#v", input.SuggestedChange)
 	}
 }
 
-func TestCreateTrailReviewCommentPostsTrailScopedPath(t *testing.T) {
-	var gotBody api.TrailReviewCommentCreateRequest
+func TestBuildTrailReviewCommentInputGeneratesClientID(t *testing.T) {
+	t.Parallel()
+	input, err := buildTrailReviewCommentInput(trailReviewCommentAddOptions{Body: "finding body"})
+	if err != nil {
+		t.Fatalf("buildTrailReviewCommentInput: %v", err)
+	}
+	if input.ClientID == "" {
+		t.Fatal("expected a generated client_id when --client-id is omitted")
+	}
+}
+
+func TestCreateTrailReviewFindingStartsReviewThenPostsBatch(t *testing.T) {
+	var (
+		gotBatch    api.TrailReviewCommentBatchRequest
+		startCalled bool
+		batchCalled bool
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/trails/trl_1/reviews/comments" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/trails/trl_1/reviews":
+			startCalled = true
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/trails/trl_1/reviews/rvw_1/comments":
+			batchCalled = true
+			if err := json.NewDecoder(r.Body).Decode(&gotBatch); err != nil {
+				t.Fatalf("decode batch body: %v", err)
+			}
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentBatchResponse{Results: []api.TrailReviewCommentBatchResult{{
+				ClientID: "agent-run-1:finding-1",
+				Status:   "created",
+				Comment:  &api.TrailReviewComment{ID: trailReviewTestCommentID, TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusOpen},
+			}}})
+		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		encodeTrailReviewTestJSON(t, w, api.TrailReviewComment{ID: trailReviewTestCommentID, TrailID: "trl_1", Status: trailReviewStatusOpen})
 	}))
 	defer srv.Close()
 	t.Setenv(api.BaseURLEnvVar, srv.URL)
 	client := api.NewClient("tok")
 
-	created, err := createTrailReviewComment(context.Background(), client, "trl_1", api.TrailReviewCommentCreateRequest{
-		Body:     "body",
-		ClientID: trailReviewStrPtr("agent-run-1:finding-1"),
+	created, err := createTrailReviewFinding(context.Background(), client, "trl_1", api.TrailReviewCommentInput{
+		ClientID: "agent-run-1:finding-1",
+		Body:     trailReviewStrPtr("body"),
 		Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"},
 	})
 	if err != nil {
-		t.Fatalf("createTrailReviewComment: %v", err)
+		t.Fatalf("createTrailReviewFinding: %v", err)
+	}
+	if !startCalled || !batchCalled {
+		t.Fatalf("startCalled=%v batchCalled=%v (expected both)", startCalled, batchCalled)
 	}
 	if created.ID != trailReviewTestCommentID {
 		t.Fatalf("created.ID = %q", created.ID)
 	}
-	if gotBody.Body != "body" || gotBody.ClientID == nil || *gotBody.ClientID != "agent-run-1:finding-1" {
-		t.Fatalf("request body = %#v", gotBody)
+	if len(gotBatch.Comments) != 1 {
+		t.Fatalf("batch comments = %#v, want 1", gotBatch.Comments)
+	}
+	if gotBatch.Comments[0].ClientID != "agent-run-1:finding-1" {
+		t.Fatalf("batch client_id = %q", gotBatch.Comments[0].ClientID)
+	}
+	if gotBatch.Comments[0].Body == nil || *gotBatch.Comments[0].Body != "body" {
+		t.Fatalf("batch body = %#v", gotBatch.Comments[0].Body)
+	}
+}
+
+func TestCreateTrailReviewFindingSurfacesBatchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/trails/trl_1/reviews":
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1"})
+		case "/api/v1/trails/trl_1/reviews/rvw_1/comments":
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentBatchResponse{Results: []api.TrailReviewCommentBatchResult{{
+				ClientID: "c1",
+				Status:   "error",
+				Error:    &api.TrailReviewCommentBatchError{Code: "invalid_location", Message: "bad location"},
+			}}})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+	t.Setenv(api.BaseURLEnvVar, srv.URL)
+	client := api.NewClient("tok")
+
+	_, err := createTrailReviewFinding(context.Background(), client, "trl_1", api.TrailReviewCommentInput{
+		ClientID: "c1",
+		Body:     trailReviewStrPtr("body"),
+		Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the batch result reports status=error")
+	}
+	if !strings.Contains(err.Error(), "invalid_location") || !strings.Contains(err.Error(), "bad location") {
+		t.Fatalf("error = %v, want code+message surfaced", err)
 	}
 }
 
@@ -224,7 +370,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		{
 			ID:       "comment-high-123",
 			ReviewID: "review-1",
-			Title:    trailReviewStrPtr("Missing expiry skew handling"),
+			Body:     trailReviewStrPtr("Missing expiry skew handling"),
 			Severity: &high,
 			Status:   trailReviewStatusOpen,
 			Location: api.TrailReviewLocation{
@@ -236,7 +382,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		{
 			ID:       "comment-medium-123",
 			ReviewID: "review-1",
-			Title:    trailReviewStrPtr("Retry loop can spin forever"),
+			Body:     trailReviewStrPtr("Retry loop can spin forever"),
 			Severity: &medium,
 			Status:   trailReviewStatusResolved,
 			Location: api.TrailReviewLocation{Granularity: "whole_change"},
@@ -247,7 +393,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		ID:     "trl_1",
 		Number: 42,
 		Title:  "Add token refresh",
-		Status: "in_review",
+		Status: "open",
 		Branch: "feat/token-refresh",
 		Base:   "main",
 	}}, comments, false, defaultTrailReviewListOptions(), countTrailReviewComments(comments))
@@ -256,6 +402,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		"Trail #42  Add token refresh",
 		"Open findings: 1  high 1  medium 0  low 0",
 		"Resolved: 1",
+		"FRESHNESS",
 		"High",
 		"src/auth/session.ts:88",
 		"Missing expiry skew handling",
@@ -278,7 +425,7 @@ func TestPrintTrailReviewDashboard_UsesSeparateCountsWhenFilteredCommentsEmpty(t
 		ID:     "trl_1",
 		Number: 42,
 		Title:  "Add token refresh",
-		Status: "in_review",
+		Status: "open",
 		Branch: "feat/token-refresh",
 		Base:   "main",
 	}}, nil, false, defaultTrailReviewListOptions(), counts)

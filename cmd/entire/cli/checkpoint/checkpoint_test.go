@@ -48,9 +48,10 @@ func TestCopyMetadataDir_SkipsSymlinks(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory structure
@@ -81,7 +82,7 @@ func TestCopyMetadataDir_SkipsSymlinks(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	entries := make(map[string]object.TreeEntry)
 
-	err = store.copyMetadataDir(metadataDir, "checkpoint/", entries)
+	err = store.copyMetadataDir(context.Background(), metadataDir, "checkpoint/", entries)
 	if err != nil {
 		t.Fatalf("copyMetadataDir failed: %v", err)
 	}
@@ -108,9 +109,10 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create worktree and make initial commit
@@ -299,9 +301,10 @@ func TestWriteTemporary_Deduplication(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create worktree and make initial commit
@@ -423,9 +426,10 @@ func setupBranchTestRepo(t *testing.T) (*git.Repository, plumbing.Hash) {
 	t.Helper()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -846,9 +850,10 @@ func TestUpdateSummary_NotFound(t *testing.T) {
 func TestListCommitted_FallsBackToRemote(t *testing.T) {
 	// Create "remote" repo (non-bare, so we can make commits)
 	remoteDir := t.TempDir()
-	remoteRepo, err := git.PlainInit(remoteDir, false)
+	testutil.InitRepo(t, remoteDir)
+	remoteRepo, err := git.PlainOpen(remoteDir)
 	if err != nil {
-		t.Fatalf("failed to init remote repo: %v", err)
+		t.Fatalf("failed to open remote repo: %v", err)
 	}
 
 	// Create an initial commit on main branch (required for cloning)
@@ -993,9 +998,10 @@ func TestGetCheckpointAuthor_NotFound(t *testing.T) {
 func TestGetCheckpointAuthor_NoSessionsBranch(t *testing.T) {
 	// Create a fresh repo without sessions branch
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	store := NewGitStore(repo, DefaultV1Refs())
@@ -1746,9 +1752,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesModifiedTrackedFiles(t *testing.
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit containing README.md
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -1883,9 +1890,10 @@ func TestWriteTemporary_PathNormalizationAndSkipping(t *testing.T) {
 				t.Fatalf("failed to resolve symlinks: %v", err)
 			}
 
-			repo, err := git.PlainInit(tempDir, false)
+			testutil.InitRepo(t, tempDir)
+			repo, err := git.PlainOpen(tempDir)
 			if err != nil {
-				t.Fatalf("failed to init git repo: %v", err)
+				t.Fatalf("failed to open git repo: %v", err)
 			}
 
 			worktree, err := repo.Worktree()
@@ -1976,9 +1984,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2067,15 +2076,139 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	}
 }
 
+// TestWriteTemporary_PreservesSymlinkWithoutReadingTarget verifies that changed
+// worktree symlinks are snapshotted as git symlinks, not as the target contents.
+func TestWriteTemporary_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tests := []struct {
+		name              string
+		isFirstCheckpoint bool
+	}{
+		{
+			name:              "first checkpoint untracked symlink",
+			isFirstCheckpoint: true,
+		},
+		{
+			name:              "subsequent checkpoint new symlink",
+			isFirstCheckpoint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			externalDir := t.TempDir()
+
+			repo, err := git.PlainInit(tempDir, false)
+			if err != nil {
+				t.Fatalf("failed to init git repo: %v", err)
+			}
+
+			worktree, err := repo.Worktree()
+			if err != nil {
+				t.Fatalf("failed to get worktree: %v", err)
+			}
+
+			readmeFile := filepath.Join(tempDir, "README.md")
+			if err := os.WriteFile(readmeFile, []byte("# Test\n"), 0o644); err != nil {
+				t.Fatalf("failed to write README: %v", err)
+			}
+			if _, err := worktree.Add("README.md"); err != nil {
+				t.Fatalf("failed to add README: %v", err)
+			}
+			initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+				Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+			})
+			if err != nil {
+				t.Fatalf("failed to commit: %v", err)
+			}
+
+			secretContent := "SECRET DATA THAT MUST NOT ENTER CHECKPOINTS"
+			secretFile := filepath.Join(externalDir, "id_rsa")
+			if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+				t.Fatalf("failed to write external secret: %v", err)
+			}
+
+			linkPath := filepath.Join(tempDir, "leaked-key")
+			if err := os.Symlink(secretFile, linkPath); err != nil {
+				t.Skipf("cannot create symlink on this platform: %v", err)
+			}
+
+			t.Chdir(tempDir)
+
+			metadataDir := filepath.Join(tempDir, ".entire", "metadata", "test-session")
+			if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+				t.Fatalf("failed to create metadata dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(metadataDir, "full.jsonl"), []byte(`{"test": true}`), 0o644); err != nil {
+				t.Fatalf("failed to write transcript: %v", err)
+			}
+
+			var newFiles []string
+			if !tt.isFirstCheckpoint {
+				newFiles = []string{"leaked-key"}
+			}
+
+			store := NewGitStore(repo, DefaultV1Refs())
+			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
+				SessionID:         "test-session",
+				BaseCommit:        initialCommit.String(),
+				NewFiles:          newFiles,
+				MetadataDir:       ".entire/metadata/test-session",
+				MetadataDirAbs:    metadataDir,
+				CommitMessage:     "Checkpoint symlink",
+				AuthorName:        "Test",
+				AuthorEmail:       "test@test.com",
+				IsFirstCheckpoint: tt.isFirstCheckpoint,
+			})
+			if err != nil {
+				t.Fatalf("WriteTemporary() error = %v", err)
+			}
+
+			commit, err := repo.CommitObject(result.CommitHash)
+			if err != nil {
+				t.Fatalf("failed to get commit object: %v", err)
+			}
+			tree, err := commit.Tree()
+			if err != nil {
+				t.Fatalf("failed to get tree: %v", err)
+			}
+
+			entry, err := tree.FindEntry("leaked-key")
+			if err != nil {
+				t.Fatalf("leaked-key not found in checkpoint tree: %v", err)
+			}
+			if entry.Mode != filemode.Symlink {
+				t.Fatalf("leaked-key mode = %v, want %v", entry.Mode, filemode.Symlink)
+			}
+
+			file, err := tree.File("leaked-key")
+			if err != nil {
+				t.Fatalf("failed to get leaked-key file: %v", err)
+			}
+			content, err := file.Contents()
+			if err != nil {
+				t.Fatalf("failed to read leaked-key blob: %v", err)
+			}
+			if content != secretFile {
+				t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+			}
+			if content == secretContent {
+				t.Fatal("checkpoint stored symlink target contents instead of link target")
+			}
+		})
+	}
+}
+
 // TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles verifies that
 // the first checkpoint does NOT capture files that are in .gitignore.
 func TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2528,9 +2661,10 @@ func TestWriteTemporary_FirstCheckpoint_UserAndAgentChanges(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2647,9 +2781,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUserDeletedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2749,9 +2884,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesRenamedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2847,9 +2983,10 @@ func TestWriteTemporary_FirstCheckpoint_FilenamesWithSpaces(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -3384,9 +3521,10 @@ func TestWriteCommitted_RedactsPromptSecrets(t *testing.T) {
 func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	metadataDir := filepath.Join(tempDir, "metadata")
@@ -3409,7 +3547,7 @@ func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	entries := make(map[string]object.TreeEntry)
 
-	if err := store.copyMetadataDir(metadataDir, "cp/", entries); err != nil {
+	if err := store.copyMetadataDir(context.Background(), metadataDir, "cp/", entries); err != nil {
 		t.Fatalf("copyMetadataDir() error = %v", err)
 	}
 
@@ -3454,9 +3592,10 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -3567,9 +3706,10 @@ func TestWriteCommitted_ModelFieldAlwaysPresent(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -3965,9 +4105,10 @@ func TestWriteTemporaryTask_SubagentTranscript_RedactsSecrets(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -4056,9 +4197,10 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create a directory structure where the relative path could escape
@@ -4075,7 +4217,7 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	}
 
 	entries := make(map[string]object.TreeEntry)
-	err = addDirectoryToEntriesWithAbsPath(repo, metadataDir, ".entire/metadata/session", entries)
+	err = addDirectoryToEntriesWithAbsPath(context.Background(), repo, metadataDir, ".entire/metadata/session", entries)
 	if err != nil {
 		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
 	}
@@ -4087,13 +4229,59 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestMetadataDirectoryWalkersAllowDotDotPrefixedNames(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
+	require.NoError(t, err)
+
+	metadataDir := filepath.Join(tempDir, "metadata")
+	generatedDir := filepath.Join(metadataDir, "..generated")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(generatedDir, "schema.json"), []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("failed to write metadata file: %v", err)
+	}
+
+	expectedPath := filepath.ToSlash(filepath.Join("checkpoint", "..generated", "schema.json"))
+
+	entries := make(map[string]object.TreeEntry)
+	if err := addDirectoryToEntriesWithAbsPath(context.Background(), repo, metadataDir, "checkpoint", entries); err != nil {
+		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
+	}
+	if _, ok := entries[expectedPath]; !ok {
+		t.Fatalf("expected entry at %q, got entries: %v", expectedPath, entries)
+	}
+
+	changes, err := addDirectoryToChanges(context.Background(), repo, metadataDir, "checkpoint")
+	if err != nil {
+		t.Fatalf("addDirectoryToChanges failed: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Path != expectedPath {
+		t.Fatalf("expected one change at %q, got %#v", expectedPath, changes)
+	}
+
+	committedEntries := make(map[string]object.TreeEntry)
+	store := NewGitStore(repo, DefaultV1Refs())
+	if err := store.copyMetadataDir(context.Background(), metadataDir, "checkpoint/", committedEntries); err != nil {
+		t.Fatalf("copyMetadataDir failed: %v", err)
+	}
+	if _, ok := committedEntries[expectedPath]; !ok {
+		t.Fatalf("expected committed entry at %q, got entries: %v", expectedPath, committedEntries)
+	}
+}
+
 func TestAddDirectoryToEntries_SkipsSymlinks(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory
@@ -4121,7 +4309,7 @@ func TestAddDirectoryToEntries_SkipsSymlinks(t *testing.T) {
 	}
 
 	entries := make(map[string]object.TreeEntry)
-	err = addDirectoryToEntriesWithAbsPath(repo, metadataDir, "checkpoint/", entries)
+	err = addDirectoryToEntriesWithAbsPath(context.Background(), repo, metadataDir, "checkpoint/", entries)
 	if err != nil {
 		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
 	}
@@ -4145,9 +4333,10 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory with a regular file
@@ -4176,7 +4365,7 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 	}
 
 	entries := make(map[string]object.TreeEntry)
-	err = addDirectoryToEntriesWithAbsPath(repo, metadataDir, "checkpoint/", entries)
+	err = addDirectoryToEntriesWithAbsPath(context.Background(), repo, metadataDir, "checkpoint/", entries)
 	if err != nil {
 		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
 	}
@@ -4196,6 +4385,97 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 	}
 }
 
+// TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget verifies that task
+// checkpoints use the same symlink-safe blob path as session checkpoints.
+func TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tempDir := t.TempDir()
+	externalDir := t.TempDir()
+
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	if _, err := worktree.Add("README.md"); err != nil {
+		t.Fatalf("failed to add README: %v", err)
+	}
+	initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	secretContent := "SECRET DATA THAT MUST NOT ENTER TASK CHECKPOINTS"
+	secretFile := filepath.Join(externalDir, "token")
+	if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+		t.Fatalf("failed to write external secret: %v", err)
+	}
+
+	linkPath := filepath.Join(tempDir, "reported-link")
+	if err := os.Symlink(secretFile, linkPath); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
+	}
+
+	t.Chdir(tempDir)
+
+	store := NewGitStore(repo, DefaultV1Refs())
+	commitHash, err := store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
+		SessionID:      "test-session",
+		BaseCommit:     initialCommit.String(),
+		ToolUseID:      "toolu_symlink123",
+		AgentID:        "agent1",
+		ModifiedFiles:  []string{"reported-link"},
+		CheckpointUUID: "test-uuid",
+		CommitMessage:  "Task checkpoint",
+		AuthorName:     "Test",
+		AuthorEmail:    "test@test.com",
+	})
+	if err != nil {
+		t.Fatalf("WriteTemporaryTask() error = %v", err)
+	}
+
+	commit, err := repo.CommitObject(commitHash)
+	if err != nil {
+		t.Fatalf("failed to get commit object: %v", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatalf("failed to get tree: %v", err)
+	}
+
+	entry, err := tree.FindEntry("reported-link")
+	if err != nil {
+		t.Fatalf("reported-link not found in task checkpoint tree: %v", err)
+	}
+	if entry.Mode != filemode.Symlink {
+		t.Fatalf("reported-link mode = %v, want %v", entry.Mode, filemode.Symlink)
+	}
+
+	file, err := tree.File("reported-link")
+	if err != nil {
+		t.Fatalf("failed to get reported-link file: %v", err)
+	}
+	content, err := file.Contents()
+	if err != nil {
+		t.Fatalf("failed to read reported-link blob: %v", err)
+	}
+	if content != secretFile {
+		t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+	}
+	if content == secretContent {
+		t.Fatal("task checkpoint stored symlink target contents instead of link target")
+	}
+}
+
 // TestWriteTemporaryTask_ExcludesGitIgnoredFiles verifies that task (subagent)
 // checkpoints also filter out gitignored files. This is the same vulnerability as
 // the WriteTemporary path — a subagent that touches .env must not leak it into the
@@ -4203,9 +4483,10 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 func TestWriteTemporaryTask_ExcludesGitIgnoredFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -4410,6 +4691,45 @@ func TestCheckpointSummary_HasReview(t *testing.T) {
 	}
 }
 
+// TestRedactBlobBytes_JSONMetadata pins the .json branch of RedactBlobBytes:
+// checkpoint metadata files (metadata.json) carry free-form fields like
+// Summary.Intent and ReviewPrompt that previously bypassed redaction because
+// the dispatcher only matched .jsonl. The PR 1236 fix extended the JSON-aware
+// branch to .json. We assert via a low-entropy AWS-key shaped secret (catches
+// the 7-layer pipeline) so the test stays deterministic without the OPF binary.
+func TestRedactBlobBytes_JSONMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := CommittedMetadata{
+		Kind:         "agent_review",
+		ReviewPrompt: "credential leak: key=AKIAYRWQG5EJLPZLBYNP",
+		Summary: &Summary{
+			Intent: "leak: key=AKIAYRWQG5EJLPZLBYNP",
+		},
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got := RedactBlobBytes(context.Background(), b, "metadata.json", false)
+	if strings.Contains(string(got), "AKIAYRWQG5EJLPZLBYNP") {
+		t.Errorf("expected AWS key redacted in metadata.json blob, got %s", string(got))
+	}
+	if !strings.Contains(string(got), "REDACTED") {
+		t.Errorf("expected REDACTED placeholder in metadata.json blob, got %s", string(got))
+	}
+	// JSON structure must survive — Kind is not redactable content, so it
+	// should round-trip through the JSON-aware redactor.
+	var roundTripped map[string]any
+	if err := json.Unmarshal(got, &roundTripped); err != nil {
+		t.Errorf("redacted .json blob must remain valid JSON, got parse err %v (content: %s)", err, string(got))
+	}
+	if roundTripped["kind"] != "agent_review" {
+		t.Errorf(`expected "kind":"agent_review" preserved after redaction, got %v`, roundTripped["kind"])
+	}
+}
+
 // TestCheckpointSummary_HasInvestigation pins the JSON wire format for the
 // HasInvestigation umbrella flag on CheckpointSummary. Mirrors the
 // HasReview test: callers depend on the on-disk shape, so this asserts on
@@ -4522,9 +4842,10 @@ func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID
 func initRepoForCheckpointTest(t *testing.T) *git.Repository {
 	t.Helper()
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("init git repo: %v", err)
+		t.Fatalf("open git repo: %v", err)
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {

@@ -128,9 +128,12 @@ func TestStreamOnce_ShowPingsTrimsSSECommentWhitespace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, _, err := streamOnce(ctx, client, "/stream", "", false, true, &stdout, &stderr)
-	if err == nil {
-		t.Errorf("expected EOF after fixed test stream")
+	reason, _, err := streamOnce(ctx, client, "/stream", "", false, true, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("streamOnce error: %v", err)
+	}
+	if reason != streamCloseTransport {
+		t.Errorf("reason = %d, want streamCloseTransport", reason)
 	}
 	if got := stderr.String(); !strings.Contains(got, "ping: ping 123\n") {
 		t.Errorf("stderr = %q, want trimmed ping output", got)

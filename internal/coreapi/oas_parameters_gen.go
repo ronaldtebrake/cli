@@ -75,9 +75,24 @@ type GrantServiceAccountAccessParams struct {
 	AccountId string
 }
 
+// ListAvailableMirrorsParams is parameters of listAvailableMirrors operation.
+type ListAvailableMirrorsParams struct {
+	// Optional: restrict to repos with this owner login.
+	Owner OptString `json:",omitempty,omitzero"`
+}
+
 // ListBindingsParams is parameters of listBindings operation.
 type ListBindingsParams struct {
 	AccountId string
+}
+
+// ListMirrorCollaboratorsParams is parameters of listMirrorCollaborators operation.
+type ListMirrorCollaboratorsParams struct {
+	Provider ListMirrorCollaboratorsProvider
+	Owner    string
+	Repo     string
+	// Public host of the cluster serving the mirror.
+	ClusterHost string
 }
 
 // ListMirrorsParams is parameters of listMirrors operation.
@@ -146,6 +161,17 @@ type ResolveHandleParams struct {
 	// IdP slug (e.g. "github").
 	Provider string
 	// User-visible handle at the provider.
+	Handle string
+}
+
+// RevokeMirrorCollaboratorParams is parameters of revokeMirrorCollaborator operation.
+type RevokeMirrorCollaboratorParams struct {
+	Provider RevokeMirrorCollaboratorProvider
+	Owner    string
+	Repo     string
+	// Public host of the cluster serving the mirror.
+	ClusterHost string
+	// Qualified grantee handle, e.g. github:alice.
 	Handle string
 }
 

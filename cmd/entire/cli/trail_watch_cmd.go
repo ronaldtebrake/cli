@@ -84,17 +84,13 @@ Events emitted by the server:
 }
 
 func runTrailWatch(cmd *cobra.Command, number int, jsonOutput, showPings, once bool) error {
-	ctx := cmd.Context()
-	client, err := NewAuthenticatedAPIClient(ctx, trailInsecureHTTP(cmd))
-	if err != nil {
-		return fmt.Errorf("authentication required: %w", err)
-	}
-
-	trailID, description, err := resolveTrailWatchTarget(ctx, client, number)
-	if err != nil {
-		return err
-	}
-	return runTrailWatchResolved(cmd, client, trailID, description, jsonOutput, showPings, once)
+	return runAuthenticatedDataAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+		trailID, description, err := resolveTrailWatchTarget(ctx, client, number)
+		if err != nil {
+			return err
+		}
+		return runTrailWatchResolved(cmd, client, trailID, description, jsonOutput, showPings, once)
+	})
 }
 
 func runTrailWatchResolved(cmd *cobra.Command, client *api.Client, trailID, description string, jsonOutput, showPings, once bool) error {
@@ -379,7 +375,7 @@ func streamOnce(
 		}
 		return streamCloseTransport, lastSeenID, fmt.Errorf("read SSE stream: %w", err)
 	}
-	return streamCloseTransport, lastSeenID, io.ErrUnexpectedEOF
+	return streamCloseTransport, lastSeenID, nil
 }
 
 // printSSEEvent renders a single SSE event in either human-readable or

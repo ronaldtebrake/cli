@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "AddOrgMemberInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -39,7 +39,7 @@
         "type": "object"
       },
       "AuditEvent": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "actorId": {
             "type": "string"
@@ -71,8 +71,50 @@
         ],
         "type": "object"
       },
+      "AvailableMirror": {
+        "additionalProperties": true,
+        "properties": {
+          "access": {
+            "description": "Caller's effective GitHub access: read, write, or admin.",
+            "enum": [
+              "read",
+              "write",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "isArchived": {
+            "type": "boolean"
+          },
+          "isPrivate": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "status": {
+            "description": "available (can onboard), mirrored (already mirrored), or owner-only (personal repo of another user).",
+            "enum": [
+              "available",
+              "mirrored",
+              "owner-only"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "access",
+          "status"
+        ],
+        "type": "object"
+      },
       "BatchLookupInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -98,7 +140,7 @@
         "type": "object"
       },
       "BatchLookupOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -122,7 +164,7 @@
         "type": "object"
       },
       "Binding": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -158,7 +200,7 @@
         "type": "object"
       },
       "CreateBindingInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -183,7 +225,7 @@
         "type": "object"
       },
       "CreateMirrorInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -223,7 +265,7 @@
         "type": "object"
       },
       "CreateOrgInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -251,7 +293,7 @@
         "type": "object"
       },
       "CreateProjectInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -290,7 +332,7 @@
         "type": "object"
       },
       "CreateRepoInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -329,7 +371,7 @@
         "type": "object"
       },
       "CreateServiceAccountInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -356,7 +398,7 @@
         "type": "object"
       },
       "CreatedMirror": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -395,7 +437,7 @@
         "type": "object"
       },
       "ErrorDetail": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "location": {
             "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
@@ -412,7 +454,7 @@
         "type": "object"
       },
       "ErrorModel": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -473,7 +515,7 @@
         "type": "object"
       },
       "GetMeOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -515,7 +557,7 @@
         "type": "object"
       },
       "GetPermissionsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -549,8 +591,94 @@
         ],
         "type": "object"
       },
+      "GetVersionOutputBody": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GetVersionOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "mode": {
+            "description": "Server mode.",
+            "enum": [
+              "standalone",
+              "global",
+              "regional"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "description": "Git commit SHA of the running entire-core binary, or \"dev\" for an untagged local build.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
+      "GrantMirrorCollaboratorInputBody": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GrantMirrorCollaboratorInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "clusterHost": {
+            "description": "Public host of the cluster serving the mirror.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "handle": {
+            "description": "Qualified grantee handle, e.g. github:alice.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "github"
+            ],
+            "type": "string"
+          },
+          "repo": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "role": {
+            "description": "Grant level: reader (pull) or writer (pull+push).",
+            "enum": [
+              "reader",
+              "writer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "owner",
+          "repo",
+          "clusterHost",
+          "handle",
+          "role"
+        ],
+        "type": "object"
+      },
       "GrantProjectAccessInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -591,7 +719,7 @@
         "type": "object"
       },
       "GrantProjectAccessOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -612,7 +740,7 @@
         "type": "object"
       },
       "GrantRepoAccessInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -653,7 +781,7 @@
         "type": "object"
       },
       "GrantRepoAccessOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -674,7 +802,7 @@
         "type": "object"
       },
       "GrantServiceAccountAccessInputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -709,7 +837,7 @@
         "type": "object"
       },
       "GrantServiceAccountAccessOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -729,8 +857,34 @@
         ],
         "type": "object"
       },
+      "GrantedMirrorCollaborator": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GrantedMirrorCollaborator.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "accountId": {
+            "description": "Entire account the grant was written for.",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accountId",
+          "role"
+        ],
+        "type": "object"
+      },
       "ListAuditEventsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -753,8 +907,32 @@
         ],
         "type": "object"
       },
+      "ListAvailableMirrorsOutputBody": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ListAvailableMirrorsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "available": {
+            "items": {
+              "$ref": "#/components/schemas/AvailableMirror"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "type": "object"
+      },
       "ListBindingsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -777,8 +955,32 @@
         ],
         "type": "object"
       },
+      "ListMirrorCollaboratorsOutputBody": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ListMirrorCollaboratorsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "collaborators": {
+            "items": {
+              "$ref": "#/components/schemas/MirrorCollaborator"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "collaborators"
+        ],
+        "type": "object"
+      },
       "ListMirrorsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -802,7 +1004,7 @@
         "type": "object"
       },
       "ListOIDCProvidersOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -826,7 +1028,7 @@
         "type": "object"
       },
       "ListOrgMembersOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -850,7 +1052,7 @@
         "type": "object"
       },
       "ListOrgProjectsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -874,7 +1076,7 @@
         "type": "object"
       },
       "ListOrgsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -898,7 +1100,7 @@
         "type": "object"
       },
       "ListProjectMembersOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -922,7 +1124,7 @@
         "type": "object"
       },
       "ListProjectReposOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -946,7 +1148,7 @@
         "type": "object"
       },
       "ListProjectsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -970,7 +1172,7 @@
         "type": "object"
       },
       "ListServiceAccountGrantsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -994,7 +1196,7 @@
         "type": "object"
       },
       "ListServiceAccountsOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1018,7 +1220,7 @@
         "type": "object"
       },
       "LookupRef": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "minLength": 1,
@@ -1037,7 +1239,7 @@
         "type": "object"
       },
       "LookupRefResult": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "string"
@@ -1072,7 +1274,7 @@
         "type": "object"
       },
       "LookupResourcesOutputBody": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1108,7 +1310,7 @@
         "type": "object"
       },
       "MeAuth": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "provider": {
             "type": "string"
@@ -1124,7 +1326,7 @@
         "type": "object"
       },
       "MeGlobal": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "accountId": {
             "type": "string"
@@ -1152,7 +1354,7 @@
         "type": "object"
       },
       "MeIdentityHandle": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "handle": {
             "type": "string"
@@ -1172,7 +1374,7 @@
         "type": "object"
       },
       "MeRegional": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "bio": {
             "type": "string"
@@ -1193,7 +1395,7 @@
         "type": "object"
       },
       "MeRegionalUnavailable": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "error": {
             "description": "Always 'foreign_jurisdiction'. Discriminator for client-side state machines.",
@@ -1224,7 +1426,7 @@
         "type": "object"
       },
       "Membership": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1269,7 +1471,7 @@
         "type": "object"
       },
       "Mirror": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1328,8 +1530,29 @@
         ],
         "type": "object"
       },
+      "MirrorCollaborator": {
+        "additionalProperties": true,
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "handle": {
+            "description": "Primary handle (provider:label), empty if none resolves.",
+            "type": "string"
+          },
+          "role": {
+            "description": "reader (pull) or writer (pull+push).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accountId",
+          "role"
+        ],
+        "type": "object"
+      },
       "OIDCProvider": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "description": {
             "type": "string"
@@ -1351,7 +1574,7 @@
         "type": "object"
       },
       "Org": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1388,7 +1611,7 @@
         "type": "object"
       },
       "Project": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1434,7 +1657,7 @@
         "type": "object"
       },
       "ProjectGrant": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "granteeId": {
             "type": "string"
@@ -1454,7 +1677,7 @@
         "type": "object"
       },
       "Repo": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1472,6 +1695,12 @@
             "type": "boolean"
           },
           "id": {
+            "type": "string"
+          },
+          "mirrorSuspended": {
+            "type": "boolean"
+          },
+          "mirrorSuspendedAt": {
             "type": "string"
           },
           "name": {
@@ -1514,7 +1743,7 @@
         "type": "object"
       },
       "ResolvedIdentity": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1547,7 +1776,7 @@
         "type": "object"
       },
       "ResourceAccess": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "permissions": {
             "items": {
@@ -1566,7 +1795,7 @@
         "type": "object"
       },
       "ServiceAccount": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
@@ -1608,7 +1837,7 @@
         "type": "object"
       },
       "ServiceAccountGrant": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "resourceId": {
             "type": "string"
@@ -1631,7 +1860,7 @@
         "type": "object"
       },
       "ServiceAccountWithGrants": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "accountId": {
             "type": "string"
@@ -2203,6 +2432,277 @@
           }
         ],
         "summary": "Create GitHub mirror",
+        "tags": [
+          "mirrors"
+        ]
+      }
+    },
+    "/mirrors/available": {
+      "get": {
+        "operationId": "listAvailableMirrors",
+        "parameters": [
+          {
+            "description": "Optional: restrict to repos with this owner login.",
+            "explode": false,
+            "in": "query",
+            "name": "owner",
+            "schema": {
+              "description": "Optional: restrict to repos with this owner login.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAvailableMirrorsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "summary": "List GitHub repos the caller could onboard as mirrors",
+        "tags": [
+          "mirrors"
+        ]
+      }
+    },
+    "/mirrors/collaborators": {
+      "delete": {
+        "operationId": "revokeMirrorCollaborator",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "github"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Public host of the cluster serving the mirror.",
+            "explode": false,
+            "in": "query",
+            "name": "clusterHost",
+            "required": true,
+            "schema": {
+              "description": "Public host of the cluster serving the mirror.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Qualified grantee handle, e.g. github:alice.",
+            "explode": false,
+            "in": "query",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "description": "Qualified grantee handle, e.g. github:alice.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "summary": "Revoke a user's access to a mirror (live GitHub-admin gated)",
+        "tags": [
+          "mirrors"
+        ]
+      },
+      "get": {
+        "operationId": "listMirrorCollaborators",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "github"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Public host of the cluster serving the mirror.",
+            "explode": false,
+            "in": "query",
+            "name": "clusterHost",
+            "required": true,
+            "schema": {
+              "description": "Public host of the cluster serving the mirror.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMirrorCollaboratorsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "summary": "List the principals with access to a mirror (live GitHub-admin gated)",
+        "tags": [
+          "mirrors"
+        ]
+      },
+      "post": {
+        "operationId": "grantMirrorCollaborator",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantMirrorCollaboratorInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantedMirrorCollaborator"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "summary": "Grant a user reader/writer access to a mirror (live GitHub-admin gated)",
         "tags": [
           "mirrors"
         ]
@@ -3700,6 +4200,37 @@
         "summary": "Revoke service account access",
         "tags": [
           "service-accounts"
+        ]
+      }
+    },
+    "/version": {
+      "get": {
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetVersionOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get the server version and mode",
+        "tags": [
+          "meta"
         ]
       }
     }

@@ -327,13 +327,13 @@ func settingsTargetFile(ctx context.Context, useLocal, useProject bool) (string,
 	// Check project file first, then local.
 	projectAbs, err := paths.AbsPath(ctx, settings.EntireSettingsFile)
 	if err == nil {
-		if _, statErr := os.Stat(projectAbs); statErr == nil {
+		if _, statErr := os.Lstat(projectAbs); statErr == nil {
 			return settings.EntireSettingsFile, configDisplayProject
 		}
 	}
 	localAbs, err := paths.AbsPath(ctx, settings.EntireSettingsLocalFile)
 	if err == nil {
-		if _, statErr := os.Stat(localAbs); statErr == nil {
+		if _, statErr := os.Lstat(localAbs); statErr == nil {
 			return settings.EntireSettingsLocalFile, configDisplayLocal
 		}
 	}
@@ -952,6 +952,22 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 		return
 	}
 
+	info, err := gitremote.ParseURL(rawURL)
+	if err != nil {
+		logging.Debug(ctx, "skipping enable report: unparseable origin remote", "error", err)
+		return
+	}
+	if info.Forge == "" {
+		// Trails are only available for remotes that map to a supported forge.
+		// Persist the negative locally even if auth is unavailable so a stale true
+		// cache from a previous origin does not inject on the prompt path. No API
+		// report is useful for non-forge remotes.
+		if err := saveTrailsEnabledForRepo(ctx, false); err != nil {
+			logging.Debug(ctx, "failed to cache trails enablement", "error", err)
+		}
+		return
+	}
+
 	cleanURL, err := cleanRemoteURLForReport(rawURL)
 	if err != nil {
 		logging.Debug(ctx, "skipping enable report: unparseable origin remote", "error", err)
@@ -966,7 +982,19 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 	}
 
 	if _, err := client.ReportEnable(ctx, cleanURL); err != nil {
+		// The enable report is best-effort and independent from the trails cache:
+		// still try the trails probe so a reporting failure doesn't leave the
+		// prompt-path cache stale or unknown.
 		logging.Debug(ctx, "enable report failed", "error", err)
+	}
+
+	enabled, err := client.TrailsEnabled(ctx, info.Forge, info.Owner, info.Repo)
+	if err != nil {
+		logging.Debug(ctx, "trails enablement probe failed", "error", err)
+		return
+	}
+	if err := saveTrailsEnabledForRepo(ctx, enabled); err != nil {
+		logging.Debug(ctx, "failed to cache trails enablement", "error", err)
 	}
 }
 
@@ -1230,7 +1258,7 @@ func localExists(ctx context.Context) bool {
 	if abs, err := paths.AbsPath(ctx, localFile); err == nil {
 		localFile = abs
 	}
-	_, err := os.Stat(localFile)
+	_, err := os.Lstat(localFile)
 	return err == nil
 }
 
@@ -1666,7 +1694,7 @@ func determineSettingsTarget(entireDir string, useLocal, useProject bool) (bool,
 
 	// No flags specified - check if settings file exists
 	settingsPath := filepath.Join(entireDir, paths.SettingsFileName)
-	if _, err := os.Stat(settingsPath); err == nil {
+	if _, err := os.Lstat(settingsPath); err == nil {
 		// Settings file exists - auto-redirect to local with notification
 		return true, true
 	}
@@ -1686,7 +1714,7 @@ func setupEntireDirectory(ctx context.Context) (bool, error) { //nolint:unparam 
 
 	// Check if directory already exists
 	created := false
-	if _, err := os.Stat(entireDirAbs); os.IsNotExist(err) {
+	if _, err := os.Lstat(entireDirAbs); os.IsNotExist(err) {
 		created = true
 	}
 
@@ -2123,7 +2151,7 @@ func checkEntireDirExists(ctx context.Context) bool {
 	if err != nil {
 		entireDirAbs = paths.EntireDir
 	}
-	_, err = os.Stat(entireDirAbs)
+	_, err = os.Lstat(entireDirAbs)
 	return err == nil
 }
 

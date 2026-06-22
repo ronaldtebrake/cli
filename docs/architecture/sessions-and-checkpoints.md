@@ -44,7 +44,6 @@ type Type int
 const (
     Temporary Type = iota // Full state snapshot, shadow branch
     Committed             // Metadata + commit ref, entire/checkpoints/v1
-                          // (or the local v1.1 read mirror when configured)
 )
 ```
 
@@ -150,13 +149,19 @@ func (s *ManualCommitStrategy) CondenseSession(
 | Session State | `.git/entire-sessions/<id>.json` | Active session tracking |
 | Temporary | `entire/<commit[:7]>-<worktreeHash[:6]>` branch | Full state (code + metadata) |
 | Committed | `entire/checkpoints/v1` branch (sharded) | Metadata + commit reference |
-| Committed read mirror | `refs/entire/checkpoints/v1.1` ref | Mirror used by v1.1 reads; pushed alongside v1 when opted in |
 
 ### Session State
 
 Location: `.git/entire-sessions/<session-id>.json`
 
 Stored in git common dir (shared across worktrees). Tracks active session info.
+
+The state records `Branch` — the branch HEAD pointed at on the session's last turn
+(captured each turn start, so it follows branches created/renamed after the
+session began). `entire resume` (bare, no arg) uses it to list stopped sessions
+and map each back to its branch; for sessions recorded before the field existed
+it falls back to deriving the branch from the session's last checkpoint ID found
+in branch-only commit trailers.
 
 ### Temporary Checkpoints
 
@@ -219,35 +224,6 @@ by older CLI versions). CLI read paths (rewind/resume/explain) ignore the
 pointer and read `full.jsonl` by filename. Generation failures are logged but
 never fail the checkpoint write; during finalization a failed regeneration
 keeps the previous `transcript.jsonl` so the pointer never dangles.
-
-#### v1.1 local read mirror
-
-`entire/checkpoints/v1` remains the durable source of truth: committed writes
-target this branch, and push/fetch operations synchronize this branch with
-remotes. When `strategy_options.checkpoints_version` is `"1.1"`, committed reads
-resolve against `refs/entire/checkpoints/v1.1` instead.
-
-The v1.1 ref lives outside `refs/heads/` and does not appear in normal branch
-listings. It is pushed to the configured remote alongside `entire/checkpoints/v1`
-— the resolver adds it to the push set and `PrePush` pushes every ref there.
-Because it is not a branch it gets no `refs/remotes/origin/...` tracking ref,
-and reads still resolve against the local ref rather than bootstrapping it from
-origin (reads target v1.1 while the primary write/fetch ref stays
-`entire/checkpoints/v1`). Entire-managed v1 write and fetch paths advance the
-mirror best-effort after they advance `entire/checkpoints/v1`; mirror failures
-are logged but never fail the primary operation. `PrePush` re-points the mirror
-at the v1 tip before pushing so the published ref reflects the current primary.
-The resume bootstrap that promotes local v1 from origin's remote-tracking ref
-is the deliberate exception — it does not mirror and is skipped entirely in
-v1.1 mode.
-
-Read paths do not create, repair, or advance the mirror before use; they read
-the configured committed-read ref as-is. The repair tool is `entire doctor`:
-it diagnoses a missing, stale (behind v1), or diverged mirror via
-`strategy.DiagnoseCommittedMetadataMirror` and — with confirmation, or
-automatically under `--force` — points the mirror back at the v1 tip.
-`entire doctor bundle` captures the entire-related refs and the mirror
-diagnosis in `entire-refs.txt`.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json

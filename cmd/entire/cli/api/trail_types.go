@@ -7,8 +7,13 @@ import (
 )
 
 // TrailListResponse is the response from GET /api/v1/trails/:org/:repo.
+// The endpoint paginates: Trails holds one page (server max 200 rows) and
+// Total is the full match count for the requested filters.
 type TrailListResponse struct {
 	Trails        []TrailResource `json:"trails"`
+	Total         int             `json:"total"`
+	Limit         int             `json:"limit"`
+	Offset        int             `json:"offset"`
 	RepoFullName  string          `json:"repo_full_name"`
 	DefaultBranch string          `json:"default_branch"`
 	UpdatedAt     time.Time       `json:"updated_at"`
@@ -23,6 +28,7 @@ type TrailResource struct {
 	Title           string           `json:"title"`
 	Body            string           `json:"body"`
 	Status          string           `json:"status"`
+	Phase           string           `json:"phase,omitempty"`
 	Author          *trail.Author    `json:"author"`
 	Assignees       []string         `json:"assignees"`
 	Labels          []string         `json:"labels"`
@@ -48,6 +54,7 @@ func (r *TrailResource) ToMetadata() *trail.Metadata {
 		Title:     r.Title,
 		Body:      r.Body,
 		Status:    trail.Status(r.Status),
+		Phase:     r.Phase,
 		Author:    r.Author,
 		Assignees: r.Assignees,
 		Labels:    r.Labels,
@@ -69,15 +76,18 @@ func (r *TrailResource) ToMetadata() *trail.Metadata {
 
 // TrailCreateRequest is the body for POST /api/v1/trails/:host/:owner/:repo.
 type TrailCreateRequest struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body,omitempty"`
-	BranchName string   `json:"branch_name"`
-	Base       string   `json:"base,omitempty"`
-	Status     string   `json:"status,omitempty"`
-	Assignees  []string `json:"assignees,omitempty"`
-	Labels     []string `json:"labels,omitempty"`
-	Priority   string   `json:"priority,omitempty"`
-	Type       string   `json:"type,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body,omitempty"`
+	BranchName string `json:"branch_name"`
+	// BranchAction is "create" (default) or "link". The CLI sends "link" to
+	// attach the already-pushed branch instead of backfilling it at base.
+	BranchAction string   `json:"branch_action,omitempty"`
+	Base         string   `json:"base,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	Assignees    []string `json:"assignees,omitempty"`
+	Labels       []string `json:"labels,omitempty"`
+	Priority     string   `json:"priority,omitempty"`
+	Type         string   `json:"type,omitempty"`
 }
 
 // TrailCreateResponse is the response from POST /api/v1/trails/:org/:repo.
@@ -111,4 +121,11 @@ type TrailUpdateRequest struct {
 // TrailUpdateResponse is the response from PATCH /api/v1/trails/:org/:repo/:trailId.
 type TrailUpdateResponse struct {
 	Trail TrailResource `json:"trail"`
+}
+
+// TrailDeleteResponse is the response from DELETE /api/v1/trails/:host/:owner/:repo/:number.
+// OK is the server's explicit success signal; a destructive delete should not be
+// reported as done unless it is true.
+type TrailDeleteResponse struct {
+	OK bool `json:"ok"`
 }

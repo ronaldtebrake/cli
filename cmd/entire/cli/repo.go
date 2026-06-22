@@ -2,6 +2,10 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +43,55 @@ func repoRow(r coreapi.Repo) []string {
 	return []string{r.ID, r.Name, r.OwningProjectId, r.ClusterHost.Or("-"), state}
 }
 
+// repoRemoteURL synthesizes the entire:// clone/remote URL for a repo from
+// its resolved cluster host and path — the form `git clone` and
+// `git remote add` accept, which git-remote-entire reads back as the repo
+// slug from the URL path. Returns "" when either coordinate is missing (a
+// still-provisioning repo may not have them yet); a half-formed URL is worse
+// than none.
+func repoRemoteURL(r coreapi.Repo) string {
+	host := strings.TrimSpace(r.ClusterHost.Or(""))
+	path := strings.TrimSpace(r.Path.Or(""))
+	if host == "" || path == "" {
+		return ""
+	}
+	return "entire://" + host + "/" + strings.TrimPrefix(path, "/")
+}
+
+// repoCreateOutput renders a created repo as JSON with a synthesized `remote`
+// field merged in — the entire:// URL callers paste into `git clone` or
+// `git remote add`. The repo carries a custom marshaler plus arbitrary
+// additional properties, so it can't simply be embedded in a wrapper struct;
+// instead it's round-tripped through its own encoder and the remote is merged
+// into the resulting object. The synthesis only fills a gap: if the wire
+// object already carries a `remote` (a future first-class field, or one
+// arriving via additional properties) it's left untouched, so the
+// server-provided value always wins. The field is omitted when the clone
+// coordinates aren't resolvable yet rather than emitted half-formed.
+func repoCreateOutput(r *coreapi.Repo) (any, error) {
+	if r == nil {
+		return nil, errors.New("nil repo")
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("encode repo: %w", err)
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("decode repo: %w", err)
+	}
+	if _, ok := obj["remote"]; !ok {
+		if remote := repoRemoteURL(*r); remote != "" {
+			encoded, err := json.Marshal(remote)
+			if err != nil {
+				return nil, fmt.Errorf("encode remote: %w", err)
+			}
+			obj["remote"] = encoded
+		}
+	}
+	return obj, nil
+}
+
 func newRepoCreateCmd() *cobra.Command {
 	var (
 		projectID   string
@@ -57,7 +110,11 @@ func newRepoCreateCmd() *cobra.Command {
 				if clusterHost != "" {
 					body.ClusterHost = coreapi.NewOptString(clusterHost)
 				}
-				return c.CreateRepo(ctx, body)
+				created, err := c.CreateRepo(ctx, body)
+				if err != nil {
+					return nil, err
+				}
+				return repoCreateOutput(created)
 			})
 		},
 	}
