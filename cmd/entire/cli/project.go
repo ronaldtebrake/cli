@@ -96,45 +96,57 @@ func newProjectListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCoreList(cmd, projectColumns, projectRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Project, error) {
 				// Both the global and org-scoped list endpoints filter by name
-				// server-side (case-insensitive), returning the single match
-				// under the response's `project` field or 404. Listing by a name
-				// that doesn't exist is an empty result, not an error.
+				// server-side (case-insensitive), returning the single match under
+				// the response's `project` field (or 404 → empty result, not an
+				// error). Without --name we page through the full list.
 				if org != "" {
 					orgID, err := resolveOrgRef(ctx, c, org)
 					if err != nil {
 						return nil, err
 					}
-					params := coreapi.ListOrgProjectsParams{OrgId: orgID}
 					if name != "" {
-						params.Name = coreapi.NewOptString(name)
+						out, err := c.ListOrgProjects(ctx, coreapi.ListOrgProjectsParams{OrgId: orgID, Name: coreapi.NewOptString(name)})
+						if err != nil {
+							if isCoreNotFound(err) {
+								return nil, nil
+							}
+							return nil, err
+						}
+						return toProjectList(out.Project), nil
 					}
-					out, err := c.ListOrgProjects(ctx, params)
+					return fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]coreapi.Project, string, error) {
+						params := coreapi.ListOrgProjectsParams{OrgId: orgID}
+						if cursor != "" {
+							params.PageToken = coreapi.NewOptString(cursor)
+						}
+						out, err := c.ListOrgProjects(ctx, params)
+						if err != nil {
+							return nil, "", err
+						}
+						return out.Projects, out.NextPageToken.Or(""), nil
+					})
+				}
+				if name != "" {
+					out, err := c.ListProjects(ctx, coreapi.ListProjectsParams{Name: coreapi.NewOptString(name)})
 					if err != nil {
-						if name != "" && isCoreNotFound(err) {
+						if isCoreNotFound(err) {
 							return nil, nil
 						}
 						return nil, err
 					}
-					if name != "" {
-						return toProjectList(out.Project), nil
-					}
-					return out.Projects, nil
-				}
-				params := coreapi.ListProjectsParams{}
-				if name != "" {
-					params.Name = coreapi.NewOptString(name)
-				}
-				out, err := c.ListProjects(ctx, params)
-				if err != nil {
-					if name != "" && isCoreNotFound(err) {
-						return nil, nil
-					}
-					return nil, err
-				}
-				if name != "" {
 					return toProjectList(out.Project), nil
 				}
-				return out.Projects, nil
+				return fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]coreapi.Project, string, error) {
+					params := coreapi.ListProjectsParams{}
+					if cursor != "" {
+						params.PageToken = coreapi.NewOptString(cursor)
+					}
+					out, err := c.ListProjects(ctx, params)
+					if err != nil {
+						return nil, "", err
+					}
+					return out.Projects, out.NextPageToken.Or(""), nil
+				})
 			})
 		},
 	}
