@@ -891,6 +891,41 @@ func TestFindBranchCheckpoint_SquashMergeMultipleCheckpoints(t *testing.T) {
 	}
 }
 
+func TestResumeFromCurrentBranch_MultipleCheckpointsSaysLatestReadable(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(tmpDir, "claude-projects"))
+
+	repo, w, _ := setupResumeTestRepo(t, tmpDir, false)
+	oldID := id.MustCheckpointID("aaa111bbb222")
+	newID := id.MustCheckpointID("ccc333ddd444")
+	writeCommittedResumeCheckpoint(t, repo, oldID, "session-old", time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+	writeCommittedResumeCheckpoint(t, repo, newID, "session-new", time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC))
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "squash.txt"), []byte("squash content"), 0o644); err != nil {
+		t.Fatalf("write squash file: %v", err)
+	}
+	if _, err := w.Add("squash.txt"); err != nil {
+		t.Fatalf("add squash file: %v", err)
+	}
+	commitMsg := fmt.Sprintf("Squash merge\n\nEntire-Checkpoint: %s\n\nEntire-Checkpoint: %s\n", oldID, newID)
+	if _, err := w.Commit(commitMsg, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test User", Email: "test@example.com"},
+	}); err != nil {
+		t.Fatalf("commit squash merge: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := resumeFromCurrentBranch(context.Background(), &stdout, &stderr, "master", true); err != nil {
+		t.Fatalf("resumeFromCurrentBranch() error = %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	want := "resuming from the latest readable checkpoint"
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout = %q, want substring %q", stdout.String(), want)
+	}
+}
+
 // TestResumeSingleSession_RejectsPathTraversalSessionID is an end-to-end proof
 // that a malicious session ID cannot cause an arbitrary file write during resume.
 //

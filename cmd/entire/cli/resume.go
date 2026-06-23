@@ -301,7 +301,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 			return checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], stores.Refs())
 		}
 		skipped := len(result.checkpointIDs) - 1
-		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest (%d older checkpoints skipped)\n",
+		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest readable checkpoint (%d skipped)\n",
 			len(result.checkpointIDs), result.commitHash[:7], skipped)
 		checkpointID = latestMetadata.CheckpointID
 		metadata = latestMetadata
@@ -336,8 +336,8 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	return resumeSession(ctx, w, errW, metadata, force)
 }
 
-// resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
-// the checkpoint with the latest CreatedAt.
+// resolveLatestCheckpoint reads metadata for each checkpoint ID and returns the
+// readable checkpoint with the latest CreatedAt.
 func resolveLatestCheckpoint(ctx context.Context, store checkpointInfoReader, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, bool, error) {
 	infoMap := make(map[id.CheckpointID]strategy.CheckpointInfo, len(checkpointIDs))
 	for _, cpID := range checkpointIDs {
