@@ -454,7 +454,7 @@ func agentBriefUsageLine(tokens *sessionTokensUsage) string {
 		return fmt.Sprintf(
 			"Token usage: %s total; %s cache/context replay; %s.",
 			formatTokenCount(tokens.Total),
-			formatPercent(tokenPercent(tokens.CacheRead, tokens.Total)),
+			formatPercent(tokenPercent(tokens.CacheRead, topLevelSessionTokenTotal(tokens))),
 			formatAPICalls(tokens.APICalls),
 		)
 	}

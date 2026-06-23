@@ -1290,6 +1290,25 @@ func TestTokensCmd_AgentBriefPrioritizesNextAction(t *testing.T) {
 	}
 }
 
+func TestAgentBriefUsageLineUsesTopLevelCacheReplayTotal(t *testing.T) {
+	t.Parallel()
+
+	line := agentBriefUsageLine(&sessionTokensUsage{
+		Total:         10000,
+		Input:         100,
+		CacheRead:     800,
+		CacheWrite:    50,
+		Output:        50,
+		APICalls:      20,
+		SubagentTotal: 9000,
+	})
+
+	want := "Token usage: 10k total; 80% cache/context replay; 20 API calls."
+	if line != want {
+		t.Fatalf("agentBriefUsageLine() = %q, want %q", line, want)
+	}
+}
+
 func TestTokensCmd_AgentBriefHighCacheReplayWithoutHighAPICalls(t *testing.T) {
 	setupStopTestRepo(t)
 
