@@ -768,6 +768,99 @@ printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
 	}
 }
 
+func TestSessionAdopt_SameStoreReloadsSourceStateUnderLock(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetWorktree := filepath.Join(t.TempDir(), "target-worktree")
+	runAdoptGit(t, sourceRepo, "worktree", "add", targetWorktree, "-b", "target-worktree")
+	resolvedTargetWorktree, err := filepath.EvalSymlinks(targetWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetWorktree = resolvedTargetWorktree
+	t.Cleanup(func() {
+		runAdoptGit(t, sourceRepo, "worktree", "remove", targetWorktree, "--force")
+	})
+
+	sourceWorktreeID, err := paths.GetWorktreeID(sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetWorktreeID, err := paths.GetWorktreeID(targetWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "test-adopt-same-store-reload"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:           sessionID,
+		AgentType:           agent.AgentTypeClaudeCode,
+		StartedAt:           time.Now().Add(-5 * time.Minute),
+		LastInteractionTime: &lastInteraction,
+		Phase:               session.PhaseActive,
+		BaseCommit:          testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:        sourceRepo,
+		WorktreeID:          sourceWorktreeID,
+		LastPrompt:          "stale prompt",
+		SessionTurnCount:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staleSelected, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:           sessionID,
+		AgentType:           agent.AgentTypeClaudeCode,
+		StartedAt:           time.Now().Add(-5 * time.Minute),
+		LastInteractionTime: &lastInteraction,
+		Phase:               session.PhaseActive,
+		BaseCommit:          testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:        sourceRepo,
+		WorktreeID:          sourceWorktreeID,
+		LastPrompt:          "fresh hook prompt",
+		SessionTurnCount:    9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetWorktree, "feature.txt", "agent change\n")
+	testutil.GitAdd(t, targetWorktree, "feature.txt")
+	t.Chdir(targetWorktree)
+
+	adopted, _, err := adoptFromSameSessionStore(context.Background(), sourceRepo, staleSelected, adoptOptions{
+		Force: true,
+	})
+	if err != nil {
+		t.Fatalf("adoptFromSameSessionStore failed: %v", err)
+	}
+	if adopted.LastPrompt != "fresh hook prompt" {
+		t.Fatalf("adopted LastPrompt = %q, want fresh hook prompt", adopted.LastPrompt)
+	}
+	if adopted.SessionTurnCount != 9 {
+		t.Fatalf("adopted SessionTurnCount = %d, want fresh source value", adopted.SessionTurnCount)
+	}
+
+	loaded, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.WorktreePath != targetWorktree {
+		t.Fatalf("WorktreePath = %q, want %q", loaded.WorktreePath, targetWorktree)
+	}
+	if loaded.WorktreeID != targetWorktreeID {
+		t.Fatalf("WorktreeID = %q, want %q", loaded.WorktreeID, targetWorktreeID)
+	}
+	if loaded.LastPrompt != "fresh hook prompt" {
+		t.Fatalf("loaded LastPrompt = %q, want fresh hook prompt", loaded.LastPrompt)
+	}
+	if loaded.SessionTurnCount != 9 {
+		t.Fatalf("loaded SessionTurnCount = %d, want fresh source value", loaded.SessionTurnCount)
+	}
+}
+
 func TestSessionAdopt_MovesSameStoreSessionIntoCurrentWorktree(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetWorktree := filepath.Join(t.TempDir(), "target-worktree")

@@ -18,6 +18,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/spf13/cobra"
 )
@@ -91,20 +92,15 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 		return err
 	}
 
-	adopted, filesTouched, err := buildAdoptedSessionState(ctx, sourceState)
+	var adopted *session.State
+	var filesTouched []string
+	if sameSessionStore {
+		adopted, filesTouched, err = adoptFromSameSessionStore(ctx, sourceWorktree, sourceState, opts)
+	} else {
+		adopted, filesTouched, err = adoptFromExternalSessionStore(ctx, targetStore, sourceState, opts)
+	}
 	if err != nil {
 		return err
-	}
-
-	existing, err := targetStore.Load(ctx, adopted.SessionID)
-	if err != nil {
-		return fmt.Errorf("load current session state: %w", err)
-	}
-	if existing != nil && !opts.Force {
-		return fmt.Errorf("session %s is already tracked in this repo; rerun with --force to replace it", adopted.SessionID)
-	}
-	if err := targetStore.Save(ctx, adopted); err != nil {
-		return fmt.Errorf("save adopted session state: %w", err)
 	}
 
 	fmt.Fprintf(w, "Adopted session %s from %s\n", shortSessionID(adopted.SessionID), sourceWorktree)
@@ -115,6 +111,67 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	fmt.Fprintf(w, "Tracking %d file(s): %s\n", len(filesTouched), strings.Join(filesTouched, ", "))
 	fmt.Fprintln(w, "Review tracked files before committing; adoption attributes current changes in this repo to the adopted session.")
 	return nil
+}
+
+func adoptFromExternalSessionStore(ctx context.Context, targetStore *session.StateStore, sourceState *session.State, opts adoptOptions) (*session.State, []string, error) {
+	adopted, filesTouched, err := buildAdoptedSessionState(ctx, sourceState)
+	if err != nil {
+		return nil, nil, err
+	}
+	existing, err := targetStore.Load(ctx, adopted.SessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load current session state: %w", err)
+	}
+	if existing != nil && !opts.Force {
+		return nil, nil, fmt.Errorf("session %s is already tracked in this repo; rerun with --force to replace it", adopted.SessionID)
+	}
+	if err := targetStore.Save(ctx, adopted); err != nil {
+		return nil, nil, fmt.Errorf("save adopted session state: %w", err)
+	}
+	return adopted, filesTouched, nil
+}
+
+func adoptFromSameSessionStore(ctx context.Context, sourceWorktree string, sourceState *session.State, opts adoptOptions) (*session.State, []string, error) {
+	if !opts.Force {
+		return nil, nil, fmt.Errorf("session %s is already tracked in this repo; rerun with --force to replace it", sourceState.SessionID)
+	}
+
+	sourceWorktreeID, worktreeIDErr := paths.GetWorktreeID(sourceWorktree)
+	if worktreeIDErr != nil {
+		sourceWorktreeID = ""
+	}
+
+	var adopted *session.State
+	var filesTouched []string
+	err := strategy.MutateSessionState(ctx, sourceState.SessionID, func(current *strategy.SessionState) error {
+		if !isAdoptableSourceSession(current) {
+			return fmt.Errorf("session %s is ended or fully condensed and cannot be adopted", sourceState.SessionID)
+		}
+		if !sessionBelongsToSourceWorktree(current, sourceWorktree, sourceWorktreeID) {
+			return fmt.Errorf("session %s belongs to %s, not %s",
+				sourceState.SessionID, adoptSessionWorktreeLabel(current), sourceWorktree)
+		}
+		if err := validateAdoptSourceTranscript(current, sourceWorktree); err != nil {
+			return err
+		}
+
+		next, touched, err := buildAdoptedSessionState(ctx, current)
+		if err != nil {
+			return err
+		}
+		*current = *next
+		snapshot := cloneAdoptSourceState(next)
+		adopted = &snapshot
+		filesTouched = touched
+		return nil
+	})
+	if errors.Is(err, strategy.ErrStateNotFound) {
+		return nil, nil, fmt.Errorf("session %s was not found in %s", sourceState.SessionID, sourceWorktree)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("adopt same-store session state: %w", err)
+	}
+	return adopted, filesTouched, nil
 }
 
 func validateAdoptSourceTranscript(source *session.State, sourceWorktree string) error {
