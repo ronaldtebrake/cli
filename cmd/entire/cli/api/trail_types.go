@@ -21,11 +21,8 @@ type TrailListResponse struct {
 
 // TrailResource represents a single trail from the API.
 type TrailResource struct {
-	ID     string `json:"id,omitempty"`
-	Number int    `json:"number,omitempty"`
-	// URL is the canonical browser URL for the trail. The server provides it so
-	// clients need not reconstruct the route; it may be empty against older
-	// servers that predate the field.
+	ID              string           `json:"id,omitempty"`
+	Number          int              `json:"number,omitempty"`
 	URL             string           `json:"url,omitempty"`
 	Branch          string           `json:"branch"`
 	Base            string           `json:"base"`
