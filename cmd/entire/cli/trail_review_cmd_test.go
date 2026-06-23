@@ -38,17 +38,20 @@ func TestTrailCommandSurfaceUsesFindings(t *testing.T) {
 	if children["review"] != nil {
 		t.Fatal("trail command should not register review subcommand")
 	}
+	if children["watch"] == nil {
+		t.Fatal("trail command should register watch subcommand")
+	}
 
 	subcommands := map[string]bool{}
 	for _, child := range findingCmd.Commands() {
 		subcommands[child.Name()] = true
 	}
-	for _, required := range []string{"list", "add", "show", "apply", "resolve", "dismiss", "reopen", "watch"} {
+	for _, required := range []string{"list", "add", "show", "update", "apply", "resolve", "dismiss", "reopen"} {
 		if !subcommands[required] {
 			t.Fatalf("trail finding missing %q subcommand", required)
 		}
 	}
-	for _, removed := range []string{"start", "comments", "approve", "request-changes"} {
+	for _, removed := range []string{"start", "comments", "approve", "request-changes", "watch"} {
 		if subcommands[removed] {
 			t.Fatalf("trail finding should not register removed %q subcommand", removed)
 		}
@@ -92,12 +95,12 @@ func TestTrailReviewCommentsPath(t *testing.T) {
 	got := trailReviewCommentsPath("trail id/with slash", trailReviewListOptions{
 		Status:           "open,resolved",
 		Severity:         "high,medium",
-		Stale:            "any",
+		Freshness:        "any",
 		IncludeDismissed: true,
 		Limit:            25,
 		Offset:           50,
 	})
-	want := "/api/v1/trails/trail%20id%2Fwith%20slash/reviews/comments?include_dismissed=true&limit=25&offset=50&severity=high%2Cmedium&status=open%2Cresolved"
+	want := "/api/v1/trails/trail%20id%2Fwith%20slash/reviews/comments?include_dismissed=true&limit=25&offset=50&severity=high%2Cmedium&stale=any&status=open%2Cresolved"
 	if got != want {
 		t.Fatalf("trailReviewCommentsPath = %q, want %q", got, want)
 	}
@@ -130,11 +133,11 @@ func TestNormalizeTrailReviewListOptionsIncludeDismissedBroadensDefaultStatus(t 
 func TestNormalizeTrailReviewListOptionsRejectsInvalidFilters(t *testing.T) {
 	t.Parallel()
 	cases := []trailReviewListOptions{
-		{Status: "open,nope", Stale: trailReviewStaleAny, Limit: 1},
-		{Status: trailReviewStatusAny, Severity: "urgent", Stale: trailReviewStaleAny, Limit: 1},
-		{Status: trailReviewStatusAny, Stale: "old", Limit: 1},
-		{Status: trailReviewStatusAny, Stale: trailReviewStaleAny, Limit: 0},
-		{Status: trailReviewStatusAny, Stale: trailReviewStaleAny, Limit: 1, Offset: -1},
+		{Status: "open,nope", Freshness: trailReviewFreshnessAny, Limit: 1},
+		{Status: trailReviewStatusAny, Severity: "urgent", Freshness: trailReviewFreshnessAny, Limit: 1},
+		{Status: trailReviewStatusAny, Freshness: "old", Limit: 1},
+		{Status: trailReviewStatusAny, Freshness: trailReviewFreshnessAny, Limit: 0},
+		{Status: trailReviewStatusAny, Freshness: trailReviewFreshnessAny, Limit: 1, Offset: -1},
 	}
 	for _, opts := range cases {
 		if _, err := normalizeTrailReviewListOptions(opts); err == nil {
@@ -178,6 +181,47 @@ func TestLoadTrailReviewCommentPatchFile(t *testing.T) {
 
 	if _, err := loadTrailReviewCommentPatchFile(trailReviewCommentAddOptions{Patch: "inline", PatchFile: "-"}, strings.NewReader("patch")); err == nil {
 		t.Fatal("expected error when --patch and --patch-file are both provided")
+	}
+}
+
+func TestBuildTrailReviewCommentPatchRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{
+		Body:              "Allow a five minute skew.",
+		BodyChanged:       true,
+		Severity:          "HIGH",
+		SeverityChanged:   true,
+		Confidence:        0.94,
+		ConfidenceChanged: true,
+	})
+	if err != nil {
+		t.Fatalf("buildTrailReviewCommentPatchRequest: %v", err)
+	}
+	if req.Title != nil {
+		t.Fatalf("Title = %#v, want nil", req.Title)
+	}
+	if req.Body == nil || *req.Body != "Allow a five minute skew." {
+		t.Fatalf("Body = %#v", req.Body)
+	}
+	if req.Severity == nil || *req.Severity != trailReviewSeverityHigh {
+		t.Fatalf("Severity = %#v", req.Severity)
+	}
+	if req.Confidence == nil || *req.Confidence != 0.94 {
+		t.Fatalf("Confidence = %#v", req.Confidence)
+	}
+
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{}); err == nil {
+		t.Fatal("expected an error when no update fields are provided")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: "urgent", SeverityChanged: true}); err == nil {
+		t.Fatal("expected an error for invalid severity")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Body: " ", BodyChanged: true}); err == nil {
+		t.Fatal("expected an error for empty body")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: " ", SeverityChanged: true}); err == nil {
+		t.Fatal("expected an error for empty severity")
 	}
 }
 
@@ -326,7 +370,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		{
 			ID:       "comment-high-123",
 			ReviewID: "review-1",
-			Title:    trailReviewStrPtr("Missing expiry skew handling"),
+			Body:     trailReviewStrPtr("Missing expiry skew handling"),
 			Severity: &high,
 			Status:   trailReviewStatusOpen,
 			Location: api.TrailReviewLocation{
@@ -338,7 +382,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		{
 			ID:       "comment-medium-123",
 			ReviewID: "review-1",
-			Title:    trailReviewStrPtr("Retry loop can spin forever"),
+			Body:     trailReviewStrPtr("Retry loop can spin forever"),
 			Severity: &medium,
 			Status:   trailReviewStatusResolved,
 			Location: api.TrailReviewLocation{Granularity: "whole_change"},
@@ -358,6 +402,7 @@ func TestPrintTrailReviewDashboard(t *testing.T) {
 		"Trail #42  Add token refresh",
 		"Open findings: 1  high 1  medium 0  low 0",
 		"Resolved: 1",
+		"FRESHNESS",
 		"High",
 		"src/auth/session.ts:88",
 		"Missing expiry skew handling",

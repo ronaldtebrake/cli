@@ -25,6 +25,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/proclive"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
@@ -1061,7 +1062,11 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	repoDir string,
 ) error {
 	logCtx := logging.WithComponent(ctx, "attribution")
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
 
 	summary, err := store.ReadCommitted(ctx, checkpointID)
 	if err != nil {
@@ -1154,13 +1159,9 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		slog.Float64("agent_percentage", agentPercentage),
 	)
 
-	if err := store.UpdateCheckpointSummary(ctx, checkpointID, combined); err != nil {
+	if err := store.Write(ctx, checkpoint.BackfillAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
-
-	// Combined attribution is a committed write in the post-commit hook, so the
-	// mirror must track it too when configured (best-effort).
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	return nil
 }
@@ -2296,6 +2297,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 			state.TranscriptPath = transcriptPath
 		}
 		captureSessionBranch(repo, state)
+		captureSessionOwner(state)
 
 		// ORDERING: attribution runs BEFORE migrate to use the pre-migration
 		// BaseCommit as the base tree (preserving correct agent-line counts
@@ -2340,6 +2342,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		promptAttr := s.calculatePromptAttributionAtStart(ctx, repo, state)
 		state.PendingPromptAttribution = &promptAttr
 		captureSessionBranch(repo, state)
+		captureSessionOwner(state)
 		return nil
 	})
 	if mutErr != nil && !errors.Is(mutErr, ErrStateNotFound) {
@@ -2367,6 +2370,26 @@ func captureSessionBranch(repo *git.Repository, state *SessionState) {
 		// falls back to deriving the branch from checkpoint trailers instead of
 		// using a stale, now-incorrect value.
 		state.Branch = ""
+	}
+}
+
+// captureSessionOwner records the owning agent process (PID + start-time
+// fingerprint) into the session state so liveness checks can later detect an
+// ACTIVE session whose agent exited without firing a SessionStop hook. The hook
+// runs as a short-lived child of the agent, so proclive.ResolveOwner walks up
+// past our own binary and any shells to the long-lived agent process.
+//
+// It is best-effort and re-run on every turn start: if the owner can't be
+// resolved (unsupported platform, transient-only ancestry) the field is cleared
+// and liveness degrades to the inactivity timeout; re-resolving each turn keeps
+// the fingerprint current across agent restarts.
+func captureSessionOwner(state *SessionState) {
+	// Clear first: a failed resolve must never leave a stale owner from an
+	// earlier turn. Otherwise a now-live session (agent restarted with a new
+	// PID) could still carry a dead PID and be wrongly finalized as exited.
+	state.Owner = nil
+	if owner, ok := proclive.ResolveOwner(); ok {
+		state.Owner = &owner
 	}
 }
 
@@ -2780,6 +2803,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (attribution, files touched, prompts). Hooks run without user interaction
 	// so there is no retry path — preserving partial metadata is better than
 	// losing everything. Persisting an unredacted transcript would be worse.
+	// Run the 7-layer pipeline over the transcript — OPF runs later in
+	// the pre-push rewrite path, which re-redacts these 7-layer blobs
+	// and produces 8-layer commits before the push goes out.
 	_, redactSpan := perf.Start(logCtx, "redact_transcript")
 	redactedTranscript, redactErr := redact.JSONLBytes(fullTranscript)
 	redactSpan.End()
@@ -2790,11 +2816,18 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 		redactedTranscript = redact.RedactedBytes{}
 	}
-	for i, p := range prompts {
-		prompts[i] = redact.String(p)
-	}
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	// Post-commit emits 7-layer-only blobs; the writer joins + redacts
+	// via checkpoint.redactedJoinedPrompts. OPF runs later, once per
+	// push, in the pre-push rewrite path.
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "finalize: failed to open checkpoint store",
+			slog.String("error", err.Error()),
+		)
+		return 1 // Count as error - all checkpoints will be skipped
+	}
+	store := stores.Primary
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2820,7 +2853,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			PrecomputedBlobs: precomputed,
 		}
 
-		updateErr := store.UpdateCommitted(ctx, updateOpts)
+		updateErr := store.Write(ctx, checkpoint.BackfillTranscript(updateOpts))
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),
@@ -2835,11 +2868,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			slog.String("session_id", state.SessionID),
 		)
 	}
-
-	// Mirror the finalized primary metadata to refs.Mirror when configured
-	// (best-effort; failures are logged, not fatal). Once after the loop is
-	// enough — it tracks Primary's final commit.
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	// Clear turn checkpoint IDs. Do NOT update CheckpointTranscriptStart here — it was
 	// already set correctly by PostCommit: condenseAndUpdateState sets it to the total
@@ -2910,14 +2938,21 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	start := time.Now()
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "post-commit: carry-forward failed to open checkpoint store",
+			slog.String("session_id", state.SessionID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
 	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
-	result, err := store.WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
+	result, err := stores.Temporary().WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,

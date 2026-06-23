@@ -30,7 +30,7 @@ import (
 )
 
 // GetRewindPoints returns available rewind points.
-// Uses checkpoint.GitStore.ListTemporaryCheckpoints for reading from shadow branches.
+// Uses checkpoint.TemporaryStore for reading from shadow branches.
 func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) ([]RewindPoint, error) {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
@@ -38,7 +38,10 @@ func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) (
 	}
 	defer repo.Close()
 
-	store := s.getCheckpointStore(ctx, repo)
+	store, err := s.getTemporaryStore(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get current HEAD to find matching shadow branch
 	head, err := repo.Head()
@@ -55,7 +58,7 @@ func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) (
 
 	var allPoints []RewindPoint
 
-	// Collect checkpoint points from active sessions using checkpoint.GitStore
+	// Collect checkpoint points from active sessions using temporary storage.
 	// Cache session prompts by session ID to avoid re-reading the same prompt file
 	sessionPrompts := make(map[string]string)
 
@@ -639,10 +642,11 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store := cpkg.NewGitStore(repo, cpkg.ResolveCommittedRefs(ctx))
-	if s.blobFetcher != nil {
-		store.SetBlobFetcher(s.blobFetcher)
+	stores, err := cpkg.Open(ctx, repo, cpkg.OpenOptions{BlobFetcher: s.blobFetcher})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
+	store := stores.Primary
 	summary, err := cpkg.ReadCommittedCheckpoint(ctx, store, point.CheckpointID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)

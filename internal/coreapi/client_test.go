@@ -2,6 +2,7 @@ package coreapi
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,63 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 )
+
+// CoreOrigin reports the scheme://host the client dials, with the apiBasePath
+// (and any trailing slash) stripped — the single source of truth display sites
+// use so the named core can't diverge from where requests go.
+func TestClient_CoreOrigin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		coreURL string
+		want    string
+	}{
+		{name: "bare origin", coreURL: "https://eu.auth.entire.io", want: "https://eu.auth.entire.io"},
+		{name: "trailing slash", coreURL: "https://eu.auth.entire.io/", want: "https://eu.auth.entire.io"},
+		{name: "with port", coreURL: "https://localhost:8443", want: "https://localhost:8443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := NewWithBearer(tt.coreURL, "tok")
+			if err != nil {
+				t.Fatalf("NewWithBearer: %v", err)
+			}
+			if got := c.CoreOrigin(); got != tt.want {
+				t.Fatalf("CoreOrigin() = %q, want %q (apiBasePath and trailing slash must be stripped)", got, tt.want)
+			}
+		})
+	}
+}
+
+// The whole point of the getter: a client built through the ENTIRE_TOKEN bypass
+// reports the token's aud, so a display site asking the client "which core?"
+// names the core the request actually dials — not a stale active context that a
+// separate ResolveControlPlaneTarget would return.
+//
+// Not parallel: sets ENTIRE_TOKEN (process-global).
+func TestNew_CoreOrigin_HonoursEnvToken(t *testing.T) {
+	const core = "https://core.us.entire.io"
+	t.Setenv(auth.EnvTokenVar, makeAudJWT(core))
+	c, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := c.CoreOrigin(); got != core {
+		t.Fatalf("CoreOrigin() = %q, want the env token's aud %q", got, core)
+	}
+}
+
+// makeAudJWT builds a JWT carrying only an aud claim. CoreURLFromEnvToken reads
+// aud without verifying the signature, so the "sig" is a placeholder — but the
+// header must name a real alg (alg:none is refused), matching how login JWTs
+// look on the wire.
+func makeAudJWT(aud string) string {
+	enc := base64.RawURLEncoding
+	header := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := enc.EncodeToString([]byte(`{"aud":"` + aud + `"}`))
+	return header + "." + payload + "." + enc.EncodeToString([]byte("sig"))
+}
 
 func TestAPIError(t *testing.T) {
 	t.Parallel()

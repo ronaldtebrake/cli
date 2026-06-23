@@ -26,6 +26,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
+	transcriptcompact "github.com/entireio/cli/cmd/entire/cli/transcript/compact"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
 	"github.com/entireio/cli/cmd/entire/cli/vercelconfig"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
@@ -292,7 +293,8 @@ func (s *GitStore) writeFinalTaskCheckpoint(ctx context.Context, opts WriteCommi
 //	├── metadata.json         # CheckpointSummary (aggregated stats)
 //	├── 1/                    # First session
 //	│   ├── metadata.json     # CommittedMetadata (session-specific, includes initial_attribution)
-//	│   ├── full.jsonl
+//	│   ├── full.jsonl        # Raw agent transcript (CLI rewind/resume/explain)
+//	│   ├── transcript.jsonl  # Compact transcript scoped to this checkpoint (pushed; not yet referenced by metadata.json)
 //	│   ├── prompt.txt
 //	│   └── content_hash.txt
 //	├── 2/                    # Second session
@@ -349,7 +351,7 @@ func (s *GitStore) writeStandardCheckpointEntries(ctx context.Context, opts Writ
 
 	// Copy additional metadata files from directory if specified (to session subdirectory)
 	if opts.MetadataDir != "" {
-		if err := s.copyMetadataDir(opts.MetadataDir, sessionPath, entries); err != nil {
+		if err := s.copyMetadataDir(ctx, opts.MetadataDir, sessionPath, entries); err != nil {
 			return fmt.Errorf("failed to copy metadata directory: %w", err)
 		}
 	}
@@ -402,7 +404,9 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 		}
 	}
 
-	// Write transcript
+	// Write transcript. The pointer targets full.jsonl, which CLI
+	// rewind/resume/explain read by filename. The compact transcript.jsonl is
+	// also written into the tree (so it is pushed) but is not yet pointed at.
 	wroteTranscript, err := s.writeTranscript(ctx, opts, sessionPath, entries)
 	if err != nil {
 		return filePaths, err
@@ -412,9 +416,10 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 		filePaths.ContentHash = "/" + sessionPath + paths.ContentHashFileName
 	}
 
-	// Write prompts
+	// Write prompts via the 7-layer pipeline. OPF runs only in the
+	// pre-push rewrite path (manual_commit_opf_rewrite.go).
 	if len(opts.Prompts) > 0 {
-		promptContent := redact.String(JoinPrompts(opts.Prompts))
+		promptContent := redactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err
@@ -487,12 +492,14 @@ func (s *GitStore) writeCheckpointSummary(opts WriteCommittedOptions, basePath s
 	}
 
 	combinedAttribution := opts.CombinedAttribution
+	checkpointVersion := CheckpointVersionBranchV1
 	hasReview := opts.HasReview
 	hasInvestigation := opts.HasInvestigation
 	rootMetadataPath := basePath + paths.MetadataFileName
 	if entry, exists := entries[rootMetadataPath]; exists {
 		existingSummary, readErr := s.readSummaryFromBlob(entry.Hash)
 		if readErr == nil {
+			checkpointVersion = existingSummary.CheckpointVersion
 			if combinedAttribution == nil {
 				combinedAttribution = existingSummary.CombinedAttribution
 			}
@@ -508,6 +515,7 @@ func (s *GitStore) writeCheckpointSummary(opts WriteCommittedOptions, basePath s
 	summary := CheckpointSummary{
 		CheckpointID:        opts.CheckpointID,
 		CLIVersion:          versioninfo.Version,
+		CheckpointVersion:   checkpointVersion,
 		Strategy:            opts.Strategy,
 		Branch:              opts.Branch,
 		CheckpointsCount:    checkpointsCount,
@@ -689,7 +697,11 @@ func readJSONFromBlob[T any](repo *git.Repository, hash plumbing.Hash) (*T, erro
 
 // readSummaryFromBlob reads CheckpointSummary from a blob hash.
 func (s *GitStore) readSummaryFromBlob(hash plumbing.Hash) (*CheckpointSummary, error) {
-	return readJSONFromBlob[CheckpointSummary](s.repo, hash)
+	summary, err := readJSONFromBlob[CheckpointSummary](s.repo, hash)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeCheckpointSummary(summary), nil
 }
 
 // aggregateTokenUsage sums two TokenUsage structs.
@@ -716,8 +728,11 @@ func aggregateTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 	return result
 }
 
-// writeTranscript writes the transcript and content hash to the checkpoint entries.
-// Returns (true, nil) if files were written, (false, nil) if transcript was empty.
+// writeTranscript writes the transcript, compact transcript, and content hash
+// to the checkpoint entries. The compact transcript.jsonl is written into the
+// tree (so it is pushed alongside full.jsonl) but is not yet referenced by
+// metadata. Returns true when a transcript was written, false when it was
+// empty and nothing was written.
 func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptions, basePath string, entries map[string]object.TreeEntry) (bool, error) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	transcriptBytes := opts.Transcript.Bytes()
@@ -796,6 +811,12 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 	}
 	contentHashSpan.End()
 
+	// Write the compact transcript (transcript.jsonl) into the tree so it is
+	// pushed alongside full.jsonl. The metadata pointer intentionally stays on
+	// full.jsonl for now — pointing it at the compact transcript is deferred to
+	// a later change.
+	s.writeCompactTranscript(logCtx, opts.Agent, opts.CheckpointTranscriptStart, transcriptBytes, basePath, entries)
+
 	logging.Debug(logCtx, "write transcript timings",
 		slog.String("session_id", opts.SessionID),
 		slog.String("checkpoint_id", opts.CheckpointID.String()),
@@ -807,6 +828,70 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 		slog.Int("chunk_count", len(chunks)),
 	)
 	return true, nil
+}
+
+// compactAgentName resolves the agent slug used in compact transcript lines
+// (e.g. "claude-code"). Falls back to the raw agent type string when the
+// agent type is not registered.
+func compactAgentName(agentType types.AgentType) string {
+	if ag, err := agent.GetByAgentType(agentType); err == nil {
+		return string(ag.Name())
+	}
+	return string(agentType)
+}
+
+// writeCompactTranscript converts the pre-redacted full transcript into the
+// compact transcript.jsonl format, scoped to this checkpoint via startLine,
+// and records it at sessionPath in the tree. Best-effort: the compact
+// transcript is derived data, so failures are logged and never fail the
+// checkpoint write. transcriptBytes must already be sanitized for the agent
+// (e.g. Codex portable-transcript sanitization); callers sanitize before
+// calling so the expensive pass runs exactly once.
+func (s *GitStore) writeCompactTranscript(ctx context.Context, agentType types.AgentType, startLine int, transcriptBytes []byte, sessionPath string, entries map[string]object.TreeEntry) {
+	compactCtx, compactSpan := perf.Start(ctx, "write_compact_transcript")
+	defer compactSpan.End()
+
+	compacted, err := transcriptcompact.Compact(redact.AlreadyRedacted(transcriptBytes), transcriptcompact.MetadataFields{
+		Agent:      compactAgentName(agentType),
+		CLIVersion: versioninfo.Version,
+		StartLine:  startLine,
+	})
+	if err != nil {
+		compactSpan.RecordError(err)
+		logging.Warn(compactCtx, "compact transcript generation failed, skipping transcript.jsonl",
+			slog.String("agent", string(agentType)),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if len(bytes.TrimSpace(compacted)) == 0 {
+		logging.Debug(compactCtx, "compact transcript empty, skipping transcript.jsonl",
+			slog.String("agent", string(agentType)),
+		)
+		return
+	}
+	if len(compacted) > agent.MaxChunkSize {
+		logging.Warn(compactCtx, "compact transcript exceeds max blob size, skipping transcript.jsonl",
+			slog.String("agent", string(agentType)),
+			slog.Int("compact_bytes", len(compacted)),
+		)
+		return
+	}
+
+	blobHash, err := CreateBlobFromContent(s.repo, compacted)
+	if err != nil {
+		compactSpan.RecordError(err)
+		logging.Warn(compactCtx, "failed to create compact transcript blob, skipping transcript.jsonl",
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	compactPath := sessionPath + paths.CompactTranscriptFileName
+	entries[compactPath] = object.TreeEntry{
+		Name: compactPath,
+		Mode: filemode.Regular,
+		Hash: blobHash,
+	}
 }
 
 // mergeFilesTouched combines two file lists, removing duplicates.
@@ -946,7 +1031,8 @@ type taskCheckpointData struct {
 //	├── metadata.json      # CheckpointSummary with sessions map
 //	├── 0/                 # First session
 //	│   ├── metadata.json  # Session-specific metadata
-//	│   └── full.jsonl     # Transcript
+//	│   ├── full.jsonl     # Raw agent transcript
+//	│   └── transcript.jsonl  # Compact transcript (referenced by metadata.json)
 //	├── 1/                 # Second session
 //	└── ...
 func (s *GitStore) ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error) {
@@ -981,7 +1067,7 @@ func (s *GitStore) ReadCommitted(ctx context.Context, checkpointID id.Checkpoint
 		return nil, fmt.Errorf("failed to parse metadata.json: %w", err)
 	}
 
-	return &summary, nil
+	return normalizeCheckpointSummary(&summary), nil
 }
 
 // ReadSessionMetadata reads only the metadata.json for a specific session within a checkpoint.
@@ -1326,7 +1412,7 @@ func (s *GitStore) GetSessionLog(ctx context.Context, cpID id.CheckpointID) ([]b
 
 // LookupSessionLog is a convenience function that opens the repository and retrieves
 // a session log by checkpoint ID. This is the primary entry point for callers that
-// don't already have a GitStore instance.
+// do not already have a committed store instance.
 // Returns ErrCheckpointNotFound if the checkpoint doesn't exist.
 // Returns ErrNoTranscript if the checkpoint exists but has no transcript.
 func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string, error) {
@@ -1335,8 +1421,11 @@ func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string
 		return nil, "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 	defer repo.Close()
-	store := NewGitStore(repo, ResolveCommittedRefs(ctx))
-	return store.GetSessionLog(ctx, cpID)
+	stores, err := Open(ctx, repo, OpenOptions{})
+	if err != nil {
+		return nil, "", fmt.Errorf("open checkpoint store: %w", err)
+	}
+	return ReadRawSessionLogForCheckpoint(ctx, stores.Primary, cpID)
 }
 
 // UpdateSummary updates the summary field in the latest session's metadata.
@@ -1474,12 +1563,14 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 
 	// Find session index matching opts.SessionID
 	sessionIndex := -1
+	var sessionMeta *CommittedMetadata
 	for i := range len(checkpointSummary.Sessions) {
 		metaPath := fmt.Sprintf("%s%d/%s", basePath, i, paths.MetadataFileName)
 		if metaEntry, metaExists := entries[metaPath]; metaExists {
 			meta, metaErr := s.readMetadataFromBlob(metaEntry.Hash)
 			if metaErr == nil && meta.SessionID == opts.SessionID {
 				sessionIndex = i
+				sessionMeta = meta
 				break
 			}
 		}
@@ -1492,6 +1583,10 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 			slog.String("checkpoint_id", string(opts.CheckpointID)),
 			slog.Int("fallback_index", sessionIndex),
 		)
+		metaPath := fmt.Sprintf("%s%d/%s", basePath, sessionIndex, paths.MetadataFileName)
+		if metaEntry, metaExists := entries[metaPath]; metaExists {
+			sessionMeta, _ = s.readMetadataFromBlob(metaEntry.Hash) //nolint:errcheck // best-effort; nil meta means start 0
+		}
 	}
 
 	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
@@ -1499,14 +1594,22 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 	// Replace transcript (full replace, not append).
 	// Transcript is pre-redacted by the caller (enforced by RedactedBytes type).
 	if opts.Transcript.Len() > 0 {
-		if err := s.replaceTranscript(ctx, opts.Transcript, opts.Agent, opts.PrecomputedBlobs, sessionPath, entries); err != nil {
+		agentType := opts.Agent
+		startLine := 0
+		if sessionMeta != nil {
+			startLine = sessionMeta.GetTranscriptStart()
+			if agentType == "" {
+				agentType = sessionMeta.Agent
+			}
+		}
+		if err := s.replaceTranscript(ctx, opts.Transcript, agentType, startLine, opts.PrecomputedBlobs, sessionPath, entries); err != nil {
 			return fmt.Errorf("failed to replace transcript: %w", err)
 		}
 	}
 
-	// Replace prompts (apply redaction as safety net)
+	// Replace prompts with 7-layer-redacted content.
 	if len(opts.Prompts) > 0 {
-		promptContent := redact.String(JoinPrompts(opts.Prompts))
+		promptContent := redactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return fmt.Errorf("failed to create prompt blob: %w", err)
@@ -1574,14 +1677,19 @@ func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPat
 	return nil
 }
 
-// replaceTranscript writes the full transcript content, replacing any existing transcript.
-// Also removes any chunk files from a previous write and updates the content hash.
+// replaceTranscript writes the full transcript content, replacing any existing
+// transcript, and regenerates the compact transcript.jsonl scoped at startLine
+// (the checkpoint's transcript start). Also removes any chunk files from a
+// previous write and updates the content hash.
 //
 // Short-circuits when the existing content_hash.txt already matches the new
 // transcript's sha256 — in that case the chunk entries are preserved as-is and
 // no chunking/zlib happens. Use precomputed (non-nil) to reuse blob hashes
-// computed once across multiple checkpoints.
-func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.RedactedBytes, agentType types.AgentType, precomputed *PrecomputedTranscriptBlobs, sessionPath string, entries map[string]object.TreeEntry) error {
+// computed once across multiple checkpoints. The compact transcript cannot
+// reuse precomputed blobs: each checkpoint in a turn shares the full
+// transcript but has its own start offset, so the compact content differs per
+// checkpoint.
+func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.RedactedBytes, agentType types.AgentType, startLine int, precomputed *PrecomputedTranscriptBlobs, sessionPath string, entries map[string]object.TreeEntry) error {
 	// Ignore precompute if invariants are violated — fall back to fresh chunking.
 	if precomputed != nil && !precomputed.isUsable() {
 		precomputed = nil
@@ -1664,6 +1772,18 @@ func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.Reda
 		Mode: filemode.Regular,
 		Hash: hashBlob,
 	}
+
+	// Regenerate the compact transcript from the new content so the pushed
+	// transcript.jsonl stays current. Best-effort: on generation failure the
+	// previous transcript.jsonl entry (if any) is left in place. Codex
+	// transcripts are sanitized first to match the initial-write path
+	// (writeTranscript), which sanitizes before compaction; this finalize path
+	// otherwise passes raw bytes.
+	compactBytes := transcript.Bytes()
+	if agentType == agent.AgentTypeCodex {
+		compactBytes = codex.SanitizePortableTranscript(compactBytes)
+	}
+	s.writeCompactTranscript(ctx, agentType, startLine, compactBytes, sessionPath, entries)
 
 	return nil
 }
@@ -1812,7 +1932,7 @@ func CreateBlobFromContent(repo *git.Repository, content []byte) (plumbing.Hash,
 
 // copyMetadataDir copies all files from a directory to the checkpoint path.
 // Used to include additional metadata files like task checkpoints, subagent transcripts, etc.
-func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[string]object.TreeEntry) error {
+func (s *GitStore) copyMetadataDir(ctx context.Context, metadataDir, basePath string, entries map[string]object.TreeEntry) error {
 	err := filepath.Walk(metadataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -1851,8 +1971,13 @@ func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[str
 			return fmt.Errorf("path traversal detected: %s", relPath)
 		}
 
-		// Create blob from file with secrets redaction
-		blobHash, mode, err := createRedactedBlobFromFile(s.repo, path, relPath)
+		// Create blob from file with 7-layer secrets redaction.
+		// Post-commit emits 7-layer-only blobs; the pre-push rewrite
+		// (strategy/manual_commit_opf_rewrite.go) walks the resulting
+		// tree, re-redacts these blobs with OPF when enabled, and
+		// rewrites entire/checkpoints/v1 into 8-layer commits before
+		// they leave the local machine.
+		blobHash, mode, err := createRedactedBlobFromFile(ctx, s.repo, path, relPath)
 		if err != nil {
 			return fmt.Errorf("failed to create blob for %s: %w", path, err)
 		}
@@ -1873,9 +1998,14 @@ func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[str
 	return nil
 }
 
-// createRedactedBlobFromFile reads a file, applies secrets redaction, and creates a git blob.
-// JSONL files get JSONL-aware redaction; all other files get plain string redaction.
-func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
+// createRedactedBlobFromFile reads a file, applies the 7-layer redaction
+// pipeline, and creates a git blob. Used by committed-checkpoint writes
+// at post-commit time. The OpenAI Privacy Filter is intentionally NOT
+// run here — OPF lives in the pre-push rewrite path
+// (strategy/manual_commit_opf_rewrite.go), which re-redacts the 7-layer
+// blobs into 8-layer commits before they leave the local machine.
+// JSONL files get JSONL-aware redaction; all other files get plain byte redaction.
+func createRedactedBlobFromFile(ctx context.Context, repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to stat file: %w", err)
@@ -1902,22 +2032,51 @@ func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string)
 		return hash, mode, nil
 	}
 
-	if strings.HasSuffix(treePath, ".jsonl") {
-		redacted, jsonlErr := redact.JSONLBytes(content)
-		if jsonlErr != nil {
-			content = redact.Bytes(content)
-		} else {
-			content = redacted.Bytes()
-		}
-	} else {
-		content = redact.Bytes(content)
-	}
+	content = RedactBlobBytes(ctx, content, treePath, false)
 
 	hash, err := CreateBlobFromContent(repo, content)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to create blob: %w", err)
 	}
 	return hash, mode, nil
+}
+
+// RedactBlobBytes redacts a single blob's content given its tree path.
+// JSON-shaped files (.jsonl or .json) get JSON-aware redaction (falling
+// back to plain bytes on parse failure so regex/credential layers
+// still apply); other files get plain byte redaction. When
+// usePrivacyFilter is true the full 8-layer pipeline (including OPF)
+// runs; otherwise the 7-layer pipeline.
+//
+// .json is handled alongside .jsonl because checkpoint metadata files
+// (metadata.json, per-session metadata.json) carry free-form fields
+// like Summary.Intent / Summary.Outcome / ReviewPrompt that can
+// contain PII the regex layers miss. The JSON-aware redactor extracts
+// string leaves and applies OPF only to those, preserving the JSON
+// structure.
+//
+// Post-commit condensation uses false (fast path). The pre-push rewrite
+// (strategy/manual_commit_opf_rewrite.go) uses true.
+func RedactBlobBytes(ctx context.Context, content []byte, treePath string, usePrivacyFilter bool) []byte {
+	if strings.HasSuffix(treePath, ".jsonl") || strings.HasSuffix(treePath, ".json") {
+		var (
+			redacted redact.RedactedBytes
+			err      error
+		)
+		if usePrivacyFilter {
+			redacted, err = redact.JSONLBytesWithPrivacyFilter(ctx, content)
+		} else {
+			redacted, err = redact.JSONLBytes(content)
+		}
+		if err == nil {
+			return redacted.Bytes()
+		}
+		// JSONL parse failed — fall through to plain bytes.
+	}
+	if usePrivacyFilter {
+		return redact.BytesWithPrivacyFilter(ctx, content)
+	}
+	return redact.Bytes(content)
 }
 
 // GetGitAuthorFromRepo retrieves the git user.name and user.email,
