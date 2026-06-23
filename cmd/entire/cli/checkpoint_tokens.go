@@ -180,7 +180,7 @@ func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.Check
 	report.Agents = checkpointAgentLabels(metas)
 	report.Models = checkpointModelLabels(metas)
 
-	if len(metas) == 1 && metas[0] != nil {
+	if report.SessionCount == 1 && len(metas) == 1 && metas[0] != nil {
 		meta := metas[0]
 		report.SessionID = meta.SessionID
 		if len(report.Agents) > 0 {

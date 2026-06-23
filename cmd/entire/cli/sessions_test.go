@@ -1885,6 +1885,8 @@ func TestCheckpointTokensReport_UsesRootSummaryWhenSessionMetadataIncomplete(t *
 		[]*checkpoint.CommittedMetadata{
 			{
 				SessionID: "readable-session",
+				Agent:     "Claude Code",
+				Model:     "claude-opus-4-6",
 				TokenUsage: &agent.TokenUsage{
 					InputTokens: 100,
 				},
@@ -1898,6 +1900,9 @@ func TestCheckpointTokensReport_UsesRootSummaryWhenSessionMetadataIncomplete(t *
 	}
 	if report.Tokens.Total != 1500 || report.Tokens.APICalls != 7 {
 		t.Fatalf("expected root summary tokens, got %+v", report.Tokens)
+	}
+	if report.SessionID != "" || report.Agent != "" || report.Model != "" {
+		t.Fatalf("expected multi-session checkpoint to omit singular session fields, got session_id=%q agent=%q model=%q", report.SessionID, report.Agent, report.Model)
 	}
 	if len(report.Limitations) == 0 || !strings.Contains(report.Limitations[0], "1 checkpoint session metadata file could not be read") {
 		t.Fatalf("expected incomplete metadata limitation, got %+v", report.Limitations)
