@@ -86,6 +86,7 @@ type Author struct {
 type Metadata struct {
 	Number    int        `json:"number,omitempty"`
 	TrailID   ID         `json:"trail_id"`
+	URL       string     `json:"url,omitempty"`
 	Branch    string     `json:"branch"`
 	Base      string     `json:"base"`
 	Title     string     `json:"title"`
