@@ -1889,7 +1889,7 @@ func writeStatusHeadCheckpoint(t *testing.T, hasReview, hasInvestigation bool) {
 	}
 	cpID := id.MustCheckpointID(cpHex)
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := store.Write(context.Background(), checkpoint.WriteSession{
+	if err := store.Write(context.Background(), checkpoint.Session{
 		CheckpointID:     cpID,
 		SessionID:        "status-test-session",
 		Strategy:         "manual-commit",

@@ -474,7 +474,7 @@ func TestShadowStrategy_GetRewindPoints_MultiSessionFallsBackToEarlierPrompt(t *
 
 	// Earlier session carries the only usable prompt.
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	require.NoError(t, store.Write(t.Context(), checkpoint.WriteSession{
+	require.NoError(t, store.Write(t.Context(), checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-earlier",
 		Strategy:     "manual-commit",
@@ -484,7 +484,7 @@ func TestShadowStrategy_GetRewindPoints_MultiSessionFallsBackToEarlierPrompt(t *
 		AuthorEmail:  "test@test.com",
 	}))
 	// Latest session has no prompt at all.
-	require.NoError(t, store.Write(t.Context(), checkpoint.WriteSession{
+	require.NoError(t, store.Write(t.Context(), checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-latest",
 		Strategy:     "manual-commit",

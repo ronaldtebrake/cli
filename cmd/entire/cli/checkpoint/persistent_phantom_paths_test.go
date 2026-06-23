@@ -40,7 +40,7 @@ func TestWriteCommitted_EmptyTranscript_NoPhantomPaths(t *testing.T) {
 	cpID := id.MustCheckpointID("d4e5f6a1b2c3")
 
 	// Write a checkpoint with NO transcript
-	err = store.Write(context.Background(), WriteSession{
+	err = store.Write(context.Background(), Session{
 		CheckpointID: cpID,
 		SessionID:    "session-no-transcript",
 		Strategy:     "manual-commit",
@@ -86,7 +86,7 @@ func TestWriteCommitted_WithTranscript_PathsPopulated(t *testing.T) {
 	cpID := id.MustCheckpointID("e5f6a1b2c3d4")
 
 	// Write a checkpoint WITH a transcript
-	err = store.Write(context.Background(), WriteSession{
+	err = store.Write(context.Background(), Session{
 		CheckpointID: cpID,
 		SessionID:    "session-with-transcript",
 		Strategy:     "manual-commit",

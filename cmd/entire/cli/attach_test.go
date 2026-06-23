@@ -425,7 +425,7 @@ func TestAttach_RefusesWhenCheckpointOnlyInRemoteTrackingRef(t *testing.T) {
 	// Seed the local branch with a checkpoint representing Alice's session.
 	alicesCheckpoint := id.MustCheckpointID("abcdef012345")
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	if writeErr := store.Write(context.Background(), cpkg.WriteSession{
+	if writeErr := store.Write(context.Background(), cpkg.Session{
 		CheckpointID: alicesCheckpoint,
 		SessionID:    "alice-original",
 		Strategy:     "manual-commit",
@@ -1259,7 +1259,7 @@ func TestAttach_ReviewWithExistingMetadataOnlyCheckpointErrorsEvenWithoutSession
 	sessionID := "test-attach-review-metadata-only"
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	if err := store.Write(context.Background(), cpkg.WriteSession{
+	if err := store.Write(context.Background(), cpkg.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		Strategy:     strategy.StrategyNameManualCommit,

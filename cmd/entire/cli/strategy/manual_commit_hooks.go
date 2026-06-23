@@ -1158,7 +1158,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		slog.Float64("agent_percentage", agentPercentage),
 	)
 
-	if err := store.Write(ctx, checkpoint.BackfillAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
+	if err := store.Write(ctx, checkpoint.CheckpointAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
 
@@ -2830,7 +2830,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			PrecomputedBlobs: precomputed,
 		}
 
-		updateErr := store.Write(ctx, checkpoint.BackfillTranscript(updateOpts))
+		updateErr := store.Write(ctx, checkpoint.SessionTranscript(updateOpts))
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),

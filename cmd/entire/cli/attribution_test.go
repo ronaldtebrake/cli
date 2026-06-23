@@ -545,7 +545,7 @@ func writeAttributionCheckpoint(t *testing.T, repoRoot, checkpointID string, opt
 	if opts.SessionID == "" {
 		opts.SessionID = checkpointID
 	}
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.WriteSession(opts)))
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session(opts)))
 
 	// WriteCommitted uses git plumbing only, but keep the worktree file system
 	// anchored for git CLI blame in these tests.

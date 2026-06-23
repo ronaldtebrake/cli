@@ -942,7 +942,7 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store che
 	}
 	elapsed := time.Since(start)
 
-	if err := store.Write(ctx, checkpoint.BackfillSummary{CheckpointID: checkpointID, Summary: summary}); err != nil {
+	if err := store.Write(ctx, checkpoint.SessionSummary{CheckpointID: checkpointID, Summary: summary}); err != nil {
 		return fmt.Errorf("failed to save summary: %w", err)
 	}
 

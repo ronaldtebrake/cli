@@ -699,7 +699,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 		}
 		// Checkpoint metadata comes from the shared entire/checkpoints/v1 branch
 		// and is attacker-influenceable. Reject path separators/absolute IDs before
-		// they reach ResolveSessionFile + WriteSession, which would otherwise let a
+		// they reach ResolveSessionFile + Session, which would otherwise let a
 		// crafted session ID overwrite files outside the agent session directory.
 		if err := validation.ValidateSessionID(sessionID); err != nil {
 			fmt.Fprintf(errW, "  Warning: session %d has unsafe session ID %q, skipping: %v\n", i, sessionID, err)

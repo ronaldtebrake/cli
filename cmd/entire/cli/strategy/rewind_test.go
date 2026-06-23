@@ -616,7 +616,7 @@ func writeCommittedRewindCheckpoint(
 ) {
 	t.Helper()
 
-	err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Write(context.Background(), cpkg.WriteSession{
+	err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Write(context.Background(), cpkg.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		CreatedAt:    createdAt,

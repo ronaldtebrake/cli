@@ -324,7 +324,7 @@ func benchWriteCommitted(messageCount, avgMsgBytes, filesTouched, priorCheckpoin
 				b.Fatalf("generate ID: %v", err)
 			}
 			redactedTranscript := redact.AlreadyRedacted(transcript)
-			err = repo.Store.Write(ctx, checkpoint.WriteSession{
+			err = repo.Store.Write(ctx, checkpoint.Session{
 				CheckpointID:     cpID,
 				SessionID:        fmt.Sprintf("bench-session-%d", i),
 				Strategy:         "manual-commit",

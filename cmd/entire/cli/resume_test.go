@@ -531,7 +531,7 @@ func writeCommittedResumeCheckpointWithTranscript(
 ) {
 	t.Helper()
 
-	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.WriteSession{
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		CreatedAt:    createdAt,
@@ -672,7 +672,7 @@ func TestReadCheckpointInfoFromStoreUsesLatestSessionMetadata(t *testing.T) {
 		},
 	}
 	for _, session := range sessions {
-		if err := store.Write(ctx, checkpoint.WriteSession{
+		if err := store.Write(ctx, checkpoint.Session{
 			CheckpointID: cpID,
 			SessionID:    session.sessionID,
 			CreatedAt:    session.createdAt,
@@ -858,7 +858,7 @@ func TestResumeSingleSession_RejectsPathTraversalSessionID(t *testing.T) {
 	raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"payload"}]}}` + "\n")
 
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.Write(ctx, checkpoint.WriteSession{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "benign-session",
 		Strategy:     "manual-commit",
@@ -925,7 +925,7 @@ func TestResumeSingleSession_UsesV1Transcript(t *testing.T) {
 	raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"resume v1 fallback"}]}}` + "\n")
 
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.Write(ctx, checkpoint.WriteSession{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    sessionID,
 		Strategy:     "manual-commit",
@@ -1147,7 +1147,7 @@ func TestResumeFromCurrentBranch_FastForwardsStaleLocalMetadata(t *testing.T) {
 
 	// Agent must be set so RestoreLogsOnly can resolve a session-write target.
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.Write(ctx, checkpoint.WriteSession{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "2025-01-01-test-session-uuid",
 		Strategy:     "manual-commit",

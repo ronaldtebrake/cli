@@ -135,7 +135,7 @@ func checkpointStepCount(s *SessionState) int {
 // CondenseSession condenses a session's shadow branch to permanent storage.
 // checkpointID is the 12-hex-char value from the Entire-Checkpoint trailer.
 // Metadata is stored at sharded path: <checkpoint_id[:2]>/<checkpoint_id[2:]>/
-// Uses checkpoint.PersistentStore.Write with a checkpoint.WriteSession request for persistent storage.
+// Uses checkpoint.PersistentStore.Write with a checkpoint.Session request for persistent storage.
 //
 // For mid-session commits (no Stop/SaveStep called yet), the shadow branch may not exist.
 // In this case, data is extracted from the live transcript instead.
@@ -290,7 +290,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	writeV1Start := time.Now()
 	writeCtx, writeCommittedSpan := perf.Start(ctx, "write_committed_v1")
-	if err := store.Write(writeCtx, cpkg.WriteSession(writeOpts)); err != nil {
+	if err := store.Write(writeCtx, cpkg.Session(writeOpts)); err != nil {
 		writeCommittedSpan.RecordError(err)
 		writeCommittedSpan.End()
 		return nil, fmt.Errorf("failed to write checkpoint metadata: %w", err)

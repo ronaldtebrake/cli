@@ -21,34 +21,36 @@ type WriteRequest interface {
 	isWriteRequest()
 }
 
-// WriteSession creates or replaces a session document within a checkpoint,
+// Session creates or replaces a session document within a checkpoint,
 // materializing the checkpoint on its first session. This is condensation's
 // write. (Maps to the former writeSession.)
-type WriteSession WriteOptions
+type Session WriteOptions
 
-// BackfillTranscript replaces a session's transcript, prompts, and skill
+// SessionTranscript replaces a session's transcript, prompts, and skill
 // events at stop time without clobbering sibling fields. (Maps to the former
 // backfillTranscript.)
-type BackfillTranscript UpdateOptions
+type SessionTranscript UpdateOptions
 
-// BackfillSummary rewrites only the summary of the checkpoint's latest
+// SessionSummary rewrites only the summary of the checkpoint's latest
 // session. (Maps to the former backfillSummary.)
-type BackfillSummary struct {
+type SessionSummary struct {
 	CheckpointID id.CheckpointID
 	Summary      *Summary
 }
 
-// BackfillAttribution rewrites the checkpoint root's combined attribution.
+// CheckpointAttribution rewrites the checkpoint root's combined attribution.
 // (Maps to the former backfillAttribution.)
-type BackfillAttribution struct {
+//
+//nolint:revive // CheckpointAttribution stutter is accepted — the name makes the checkpoint (vs session) tier explicit alongside the Session* requests.
+type CheckpointAttribution struct {
 	CheckpointID id.CheckpointID
 	Attribution  *Attribution
 }
 
-func (WriteSession) isWriteRequest()        {}
-func (BackfillTranscript) isWriteRequest()  {}
-func (BackfillSummary) isWriteRequest()     {}
-func (BackfillAttribution) isWriteRequest() {}
+func (Session) isWriteRequest()               {}
+func (SessionTranscript) isWriteRequest()     {}
+func (SessionSummary) isWriteRequest()        {}
+func (CheckpointAttribution) isWriteRequest() {}
 
 // Writer is the committed-store write surface: a single Write that accepts any
 // WriteRequest. It is the natural type for mirror fan-out.
@@ -60,13 +62,13 @@ type Writer interface {
 // Unknown request types are a programmer error, surfaced rather than ignored.
 func (s *GitStore) Write(ctx context.Context, req WriteRequest) error {
 	switch r := req.(type) {
-	case WriteSession:
+	case Session:
 		return s.writeSession(ctx, WriteOptions(r))
-	case BackfillTranscript:
+	case SessionTranscript:
 		return s.backfillTranscript(ctx, UpdateOptions(r))
-	case BackfillSummary:
+	case SessionSummary:
 		return s.backfillSummary(ctx, r.CheckpointID, r.Summary)
-	case BackfillAttribution:
+	case CheckpointAttribution:
 		return s.backfillAttribution(ctx, r.CheckpointID, r.Attribution)
 	default:
 		return fmt.Errorf("checkpoint: unsupported write request %T", req)

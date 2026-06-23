@@ -272,7 +272,7 @@ type WriteOptions struct {
 
 	// CombinedAttribution is holistic attribution across all sessions.
 	// Used during migration to preserve v1 root summary attribution.
-	// During normal condensation this is nil (computed post-commit via a BackfillAttribution write).
+	// During normal condensation this is nil (computed post-commit via a CheckpointAttribution write).
 	CombinedAttribution *Attribution
 
 	// Summary is an optional AI-generated summary for this checkpoint.

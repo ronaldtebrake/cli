@@ -414,7 +414,7 @@ func TestRunExplainAuto_CommitRefWithCheckpointTrailer(t *testing.T) {
 	ctx := context.Background()
 
 	cpID := id.MustCheckpointID("deadbeefcafe")
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-auto",
 		Strategy:     "manual-commit",
@@ -675,7 +675,7 @@ func TestRunExplainCheckpoint_AmbiguousCommittedPrefixPrintsToErrWAndReturnsSile
 		id.MustCheckpointID("e7aaaaaaaaaa"),
 		id.MustCheckpointID("e7bbbbbbbbbb"),
 	} {
-		require.NoError(t, store.Write(ctx, checkpoint.WriteSession{
+		require.NoError(t, store.Write(ctx, checkpoint.Session{
 			CheckpointID: cpID,
 			SessionID:    "session-" + cpID.String(),
 			Strategy:     "manual-commit",
@@ -768,7 +768,7 @@ func TestRunExplainAuto_GenerateAmbiguousPrefixRefused(t *testing.T) {
 	commitPrefix := head.Hash().String()[:7]
 	collisionID := id.MustCheckpointID(commitPrefix + "aaaaa")
 
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.Session{
 		CheckpointID: collisionID,
 		SessionID:    "session-collision",
 		Strategy:     "manual-commit",
@@ -1011,7 +1011,7 @@ func TestGenerateCheckpointSummary_AdvancesV1Metadata(t *testing.T) {
 	require.NoError(t, err)
 	store := stores.Persistent
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
-	require.NoError(t, store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-001",
 		Strategy:     "manual-commit",
@@ -1993,7 +1993,7 @@ func TestRunExplainCheckpoint_V1PreservesTranscriptOffset(t *testing.T) {
 		`{"type":"user","message":{"content":[{"type":"text","text":"old prompt before checkpoint"}]}}` + "\n" +
 			`{"type":"user","message":{"content":[{"type":"text","text":"scoped prompt for checkpoint"}]}}` + "\n",
 	)
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.WriteSession{
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session{
 		CheckpointID:              cpID,
 		SessionID:                 "session-v1",
 		Strategy:                  "manual-commit",
@@ -2057,7 +2057,7 @@ func TestRunExplainCheckpoint_GenerateV1OnlyReloadsFromV1(t *testing.T) {
 
 	cpID := id.MustCheckpointID("ab12ab12ab12")
 	ctx := context.Background()
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1-only-generate",
 		Strategy:     "manual-commit",
@@ -2125,7 +2125,7 @@ func TestRunExplainCheckpoint_GenerateV1ModeUsesSelectedStore(t *testing.T) {
 	}
 
 	cpID := id.MustCheckpointID("cd12cd12cd12")
-	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1-mode-generate",
 		Strategy:     "manual-commit",
@@ -2206,7 +2206,7 @@ func TestRunExplainCheckpoint_GenerateWritesV1Store(t *testing.T) {
 	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"generate test"}]}}` + "\n" +
 		`{"type":"assistant","message":{"content":"done"}}` + "\n")
 
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1",
 		Strategy:     "manual-commit",
@@ -2283,7 +2283,7 @@ func TestRunExplainCheckpoint_GenerateReloadsAfterV1Write(t *testing.T) {
 	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"generate v1 test"}]}}` + "\n" +
 		`{"type":"assistant","message":{"content":"done"}}` + "\n")
 
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1",
 		Strategy:     "manual-commit",
@@ -2341,7 +2341,7 @@ func TestRunExplainCheckpoint_DefaultViewUsesV1Transcript(t *testing.T) {
 			`{"type":"assistant","message":{"content":"raw reply"}}` + "\n",
 	)
 
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1-transcript",
 		Strategy:     "manual-commit",
@@ -2390,7 +2390,7 @@ func TestRunExplainCheckpoint_FullUsesV1Transcript(t *testing.T) {
 	rawTranscript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"v1 raw fallback prompt"}]}}` + "\n" +
 		`{"type":"assistant","message":{"content":"v1 raw reply"}}` + "\n")
 
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1-fallback",
 		Strategy:     "manual-commit",
@@ -2560,7 +2560,7 @@ func TestRunExplainCheckpoint_FullCompactsExternalNativeTranscript(t *testing.T)
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 
 	nativeTranscript := []byte("EXTERNAL_NATIVE_TRANSCRIPT\nuser=external native prompt\nassistant=external native reply\n")
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-external-display",
 		Strategy:     "manual-commit",
@@ -2602,7 +2602,7 @@ func TestRunExplainCheckpoint_VerboseCompactsScopedExternalNativeTranscript(t *t
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 
 	nativeTranscript := []byte("EXTERNAL_NATIVE_BEFORE\nEXTERNAL_NATIVE_SCOPE\nuser=scoped external prompt\nassistant=scoped external reply\n")
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID:              cpID,
 		SessionID:                 "session-external-verbose",
 		Strategy:                  "manual-commit",
@@ -2731,7 +2731,7 @@ func TestRunExplainCheckpoint_FullFallsBackWhenExternalCompactionFails(t *testin
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 
 	nativeTranscript := []byte("EXTERNAL_NATIVE_TRANSCRIPT\nuser=unparseable native prompt\nassistant=unparseable native reply\n")
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-external-fallback",
 		Strategy:     "manual-commit",
@@ -2775,7 +2775,7 @@ func TestListCommittedForExplain_ReturnsV1Only(t *testing.T) {
 	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n")
 
 	v1ID := id.MustCheckpointID("ccc777888999")
-	require.NoError(t, v1Store.Write(ctx, checkpoint.WriteSession{
+	require.NoError(t, v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: v1ID,
 		SessionID:    "session-v1",
 		Strategy:     "manual-commit",
@@ -5981,7 +5981,7 @@ func TestGetBranchCheckpoints_DefaultBranchFindsMergedCheckpoints(t *testing.T) 
 
 	// Write committed checkpoint metadata so getBranchCheckpoints can find it
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := store.Write(context.Background(), checkpoint.WriteSession{
+	if err := store.Write(context.Background(), checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "test-session",
 		Strategy:     "manual-commit",
@@ -6049,7 +6049,7 @@ func TestGetBranchCheckpoints_ReadsPromptFromCommittedCheckpoint(t *testing.T) {
 
 	expectedPrompt := "Refactor the authentication module to use JWT tokens"
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := store.Write(context.Background(), checkpoint.WriteSession{
+	if err := store.Write(context.Background(), checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "2026-02-27-test-session",
 		Strategy:     "manual-commit",
@@ -6122,7 +6122,7 @@ func TestGetBranchCheckpoints_PopulatesCommittedSessionIDs(t *testing.T) {
 	cpID := id.MustCheckpointID("bbcc33445566")
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	for _, sessionID := range []string{"older-session-aaaa", "latest-session-bbbb"} {
-		require.NoError(t, store.Write(context.Background(), checkpoint.WriteSession{
+		require.NoError(t, store.Write(context.Background(), checkpoint.Session{
 			CheckpointID: cpID,
 			SessionID:    sessionID,
 			Strategy:     "manual-commit",

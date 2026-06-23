@@ -75,7 +75,7 @@ func writeCheckpointForExport(t *testing.T, repo *git.Repository, cpID id.Checkp
 		opts.AuthorEmail = exportTestAuthorEmail
 	}
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	require.NoError(t, store.Write(context.Background(), checkpoint.WriteSession(opts)))
+	require.NoError(t, store.Write(context.Background(), checkpoint.Session(opts)))
 }
 
 func TestRunExplainExport_JSONSingleCheckpoint(t *testing.T) {
@@ -166,7 +166,7 @@ func TestRunExplainExport_JSONUsesMetadataOnlyReader(t *testing.T) {
 
 	cpID := id.MustCheckpointID("777711112222")
 	v1 := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	require.NoError(t, v1.Write(context.Background(), checkpoint.WriteSession{
+	require.NoError(t, v1.Write(context.Background(), checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "session-v1-only",
 		Strategy:     "manual-commit",
