@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -17,11 +16,9 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/internal/flock"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
-	"github.com/entireio/cli/cmd/entire/cli/validation"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/spf13/cobra"
 )
@@ -142,7 +139,7 @@ func adoptFromExternalSessionStore(
 
 	var adopted *session.State
 	var filesTouched []string
-	err := withAdoptSessionLocks(ctx, sessionID, []string{sourceCommonDir, targetCommonDir}, func() error {
+	err := strategy.WithSessionStateLocks(ctx, sessionID, []string{sourceCommonDir, targetCommonDir}, func() error {
 		sourceState, err := sourceStore.Load(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("load source session state: %w", err)
@@ -180,7 +177,7 @@ func adoptFromExternalSessionStore(
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("adopt external session state: %w", err)
 	}
 	return adopted, filesTouched, nil
 }
@@ -243,60 +240,6 @@ func validateAdoptSourceTranscript(source *session.State, sourceWorktree string)
 			source.SessionID, source.TranscriptPath, owner.Type(), source.AgentType)
 	}
 	return nil
-}
-
-func withAdoptSessionLocks(ctx context.Context, sessionID string, commonDirs []string, fn func() error) error {
-	lockPaths := make([]string, 0, len(commonDirs))
-	seen := make(map[string]struct{}, len(commonDirs))
-	for _, commonDir := range commonDirs {
-		lockPath, err := adoptSessionLockPath(commonDir, sessionID)
-		if err != nil {
-			return err
-		}
-		if _, ok := seen[lockPath]; ok {
-			continue
-		}
-		seen[lockPath] = struct{}{}
-		lockPaths = append(lockPaths, lockPath)
-	}
-	sort.Strings(lockPaths)
-
-	releases := make([]func(), 0, len(lockPaths))
-	for _, lockPath := range lockPaths {
-		if err := ctx.Err(); err != nil {
-			releaseAdoptSessionLocks(releases)
-			return fmt.Errorf("adopt session lock canceled: %w", err)
-		}
-		release, err := flock.Acquire(lockPath)
-		if err != nil {
-			releaseAdoptSessionLocks(releases)
-			return fmt.Errorf("acquire session state lock: %w", err)
-		}
-		releases = append(releases, release)
-	}
-	defer releaseAdoptSessionLocks(releases)
-
-	return fn()
-}
-
-func releaseAdoptSessionLocks(releases []func()) {
-	for i := len(releases) - 1; i >= 0; i-- {
-		releases[i]()
-	}
-}
-
-func adoptSessionLockPath(commonDir, sessionID string) (string, error) {
-	if strings.TrimSpace(commonDir) == "" {
-		return "", errors.New("resolve session state lock: empty git common dir")
-	}
-	if err := validation.ValidateSessionID(sessionID); err != nil {
-		return "", fmt.Errorf("invalid session ID: %w", err)
-	}
-	lockDir := filepath.Join(commonDir, "entire-session-locks")
-	if err := os.MkdirAll(lockDir, 0o750); err != nil {
-		return "", fmt.Errorf("create session lock directory: %w", err)
-	}
-	return filepath.Join(lockDir, sessionID+".lock"), nil
 }
 
 func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.StateStore, string, string, error) {

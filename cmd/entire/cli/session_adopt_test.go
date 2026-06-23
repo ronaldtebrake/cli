@@ -264,8 +264,8 @@ func TestSessionAdopt_ExternalStoreChecksTargetStateAfterLockWait(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	lockPath, err := adoptSessionLockPath(targetCommonDir, sessionID)
-	if err != nil {
+	lockPath := filepath.Join(targetCommonDir, "entire-session-locks", sessionID+".lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	release, err := flock.Acquire(lockPath)
