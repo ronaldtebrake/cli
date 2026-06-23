@@ -15,6 +15,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -214,6 +215,9 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 
 	metadata, err := readCheckpointInfoFromStore(ctx, store, checkpointID)
 	if err != nil {
+		if checkpointpolicy.IsUnsupportedVersion(err) {
+			return err
+		}
 		logging.Debug(ctx, "resume by checkpoint: metadata read failed, checking remote",
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("error", err.Error()),
@@ -283,12 +287,14 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 
 	// Multiple checkpoints (squash merge): resolve latest by CreatedAt timestamp.
 	if len(result.checkpointIDs) > 1 {
-		latestMetadata, err := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
+		latestMetadata, found, err := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
 		if err != nil {
+			return err
+		}
+		if !found {
 			// No metadata available — nothing to resume from
 			logging.Warn(logCtx, "resolveLatestCheckpoint failed",
 				slog.Int("checkpoint_count", len(result.checkpointIDs)),
-				slog.String("error", err.Error()),
 			)
 			fmt.Fprintf(w, "Found %d checkpoints for commit %s but metadata is not available\n",
 				len(result.checkpointIDs), result.commitHash[:7])
@@ -306,6 +312,9 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 		if storeErr == nil {
 			metadata = storeInfo
 		} else {
+			if checkpointpolicy.IsUnsupportedVersion(storeErr) {
+				return storeErr
+			}
 			logging.Debug(ctx, "checkpoint store metadata read failed",
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("error", storeErr.Error()),
@@ -329,11 +338,18 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 
 // resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
 // the checkpoint with the latest CreatedAt.
-func resolveLatestCheckpoint(ctx context.Context, store checkpointInfoReader, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, error) {
+func resolveLatestCheckpoint(ctx context.Context, store checkpointInfoReader, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, bool, error) {
 	infoMap := make(map[id.CheckpointID]strategy.CheckpointInfo, len(checkpointIDs))
+	var unsupportedErr error
 	for _, cpID := range checkpointIDs {
 		metadata, readErr := readCheckpointInfoFromStore(ctx, store, cpID)
 		if readErr != nil {
+			if checkpointpolicy.IsUnsupportedVersion(readErr) {
+				if unsupportedErr == nil {
+					unsupportedErr = readErr
+				}
+				continue
+			}
 			logging.Debug(ctx, "resolveLatestCheckpoint: checkpoint metadata read failed",
 				slog.String("checkpoint_id", cpID.String()),
 				slog.String("error", readErr.Error()),
@@ -344,9 +360,12 @@ func resolveLatestCheckpoint(ctx context.Context, store checkpointInfoReader, ch
 	}
 	latest, found := strategy.ResolveLatestCheckpointFromMap(checkpointIDs, infoMap)
 	if !found {
-		return nil, errors.New("no checkpoint metadata found")
+		if unsupportedErr != nil {
+			return nil, false, unsupportedErr
+		}
+		return nil, false, nil
 	}
-	return &latest, nil
+	return &latest, true, nil
 }
 
 type checkpointInfoReader interface {
@@ -358,6 +377,9 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader
 	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, checkpointID)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
+	}
+	if err := checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion); err != nil {
+		return nil, fmt.Errorf("check checkpoint version: %w", err)
 	}
 	info := &strategy.CheckpointInfo{
 		CheckpointID:     checkpointID,
@@ -942,7 +964,14 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	logContent, _, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Primary, checkpointID)
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, stores.Primary, checkpointID)
+	if err == nil {
+		err = checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion)
+	}
+	var content *checkpoint.SessionContent
+	if err == nil {
+		content, err = checkpoint.ReadLatestSessionContent(ctx, stores.Primary, checkpointID, summary)
+	}
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
 			logging.Debug(ctx, "resume session completed (no metadata)",
@@ -961,6 +990,7 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 		)
 		return fmt.Errorf("failed to get session log: %w", err)
 	}
+	logContent := content.Transcript
 
 	// By default, never overwrite a session log that already exists locally: the
 	// on-disk transcript is the live session the user is resuming, so we keep it
