@@ -293,7 +293,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 		}
 		if !found {
 			// No metadata available — nothing to resume from
-			logging.Warn(logCtx, "resolveLatestCheckpoint failed",
+			logging.Warn(logCtx, "no checkpoint metadata resolved",
 				slog.Int("checkpoint_count", len(result.checkpointIDs)),
 			)
 			fmt.Fprintf(w, "Found %d checkpoints for commit %s but metadata is not available\n",
@@ -369,7 +369,7 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion); err != nil {
-		return nil, fmt.Errorf("check checkpoint version: %w", err)
+		return nil, fmt.Errorf("%w", err)
 	}
 	info := &strategy.CheckpointInfo{
 		CheckpointID:     checkpointID,

@@ -734,7 +734,7 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 		return "", fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(cpID.String(), summary.CheckpointVersion); err != nil {
-		return "", fmt.Errorf("check checkpoint version: %w", err)
+		return "", fmt.Errorf("%w", err)
 	}
 
 	content, err := checkpoint.ReadLatestSessionContent(ctx, stores.Primary, cpID, summary)

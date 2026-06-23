@@ -267,7 +267,7 @@ func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts exp
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(cpID.String(), summary.CheckpointVersion); err != nil {
-		return fmt.Errorf("check checkpoint version: %w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	idx, err := resolveSessionIndex(summary, opts.sessionIndex)
@@ -364,7 +364,7 @@ func runExplainCheckpointJSON(ctx context.Context, w, errW io.Writer, opts expla
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(cpID.String(), summary.CheckpointVersion); err != nil {
-		return fmt.Errorf("check checkpoint version: %w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	envelope, failedSessions := buildCheckpointJSONEnvelope(ctx, store, summary, cpID)

@@ -756,7 +756,7 @@ func loadCheckpointForExplain(ctx context.Context, lookup *explainCheckpointLook
 		return nil, nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(cpID.String(), summary.CheckpointVersion); err != nil {
-		return nil, nil, fmt.Errorf("check checkpoint version: %w", err)
+		return nil, nil, fmt.Errorf("%w", err)
 	}
 
 	content, contentErr := checkpoint.ReadLatestSessionContent(ctx, store, cpID, summary)
