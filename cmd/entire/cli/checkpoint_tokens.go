@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -37,7 +38,10 @@ type checkpointTokensComparison struct {
 	TargetCheckpointID   string                       `json:"target_checkpoint_id"`
 	Status               string                       `json:"status"`
 	Total                *checkpointTokensMetricDelta `json:"total,omitempty"`
+	Input                *checkpointTokensMetricDelta `json:"input,omitempty"`
 	CacheRead            *checkpointTokensMetricDelta `json:"cache_read,omitempty"`
+	CacheWrite           *checkpointTokensMetricDelta `json:"cache_write,omitempty"`
+	Output               *checkpointTokensMetricDelta `json:"output,omitempty"`
 	APICalls             *checkpointTokensMetricDelta `json:"api_calls,omitempty"`
 	CacheReadCaveat      string                       `json:"cache_read_caveat,omitempty"`
 	Qualification        string                       `json:"qualification"`
@@ -66,6 +70,7 @@ const (
 func newCheckpointTokensCmd() *cobra.Command {
 	var jsonFlag bool
 	var compareFlag string
+	var agentBriefFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "tokens <checkpoint-id>",
@@ -82,16 +87,20 @@ Use --compare <checkpoint-id> to compare this checkpoint against a previous
 checkpoint and qualify observed token reduction or increase.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCheckpointTokens(cmd.Context(), cmd, args[0], jsonFlag, compareFlag)
+			if jsonFlag && agentBriefFlag {
+				return errors.New("--json and --agent-brief are mutually exclusive")
+			}
+			return runCheckpointTokens(cmd.Context(), cmd, args[0], jsonFlag, compareFlag, agentBriefFlag)
 		},
 	}
 
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "Output as JSON")
 	cmd.Flags().StringVar(&compareFlag, "compare", "", "Compare against a baseline checkpoint ID")
+	cmd.Flags().BoolVar(&agentBriefFlag, "agent-brief", false, "Output compact next-step guidance for agents")
 	return cmd
 }
 
-func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPrefix string, jsonOutput bool, comparePrefix string) error {
+func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPrefix string, jsonOutput bool, comparePrefix string, agentBrief bool) error {
 	report, lookup, err := loadCheckpointTokensReport(ctx, cmd, checkpointIDPrefix)
 	if lookup != nil {
 		defer lookup.Close()
@@ -108,11 +117,19 @@ func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPr
 		if err != nil {
 			return tokenCommandError(err)
 		}
+		if baselineReport.CheckpointID == report.CheckpointID {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("cannot compare checkpoint %s to itself", report.CheckpointID)
+		}
 		report.Comparison = buildCheckpointTokensComparison(report, baselineReport)
 	}
 
 	if jsonOutput {
 		return writeCheckpointTokensJSON(cmd.OutOrStdout(), report)
+	}
+	if agentBrief {
+		writeCheckpointTokensAgentBrief(cmd.OutOrStdout(), report)
+		return nil
 	}
 	writeCheckpointTokensText(cmd.OutOrStdout(), report)
 	return nil
@@ -196,10 +213,7 @@ func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.Check
 		report.Branch = firstCheckpointBranch(metas)
 	}
 
-	usage := aggregateCheckpointTokenUsage(metas)
-	if summary != nil && summary.TokenUsage != nil && (usage == nil || metadataWarnings > 0) {
-		usage = summary.TokenUsage
-	}
+	usage := checkpointTokenUsage(summary, metas, metadataWarnings > 0)
 	if tokens := buildSessionTokensUsage(usage); tokens != nil {
 		report.Tokens = tokens
 		if tokens.SubagentTotal > 0 {
@@ -332,6 +346,17 @@ func aggregateCheckpointTokenUsage(metas []*checkpoint.CommittedMetadata) *agent
 	return total
 }
 
+func checkpointTokenUsage(summary *checkpoint.CheckpointSummary, metas []*checkpoint.CommittedMetadata, metadataReadWarning bool) *agent.TokenUsage {
+	sessionUsage := aggregateCheckpointTokenUsage(metas)
+	if !metadataReadWarning && sessionUsage != nil {
+		return sessionUsage
+	}
+	if summary != nil && summary.TokenUsage != nil {
+		return summary.TokenUsage
+	}
+	return sessionUsage
+}
+
 func addCheckpointTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 	if a == nil && b == nil {
 		return nil
@@ -394,12 +419,45 @@ func buildCheckpointTokensComparison(target, baseline checkpointTokensReport) *c
 	}
 
 	comparison.Total = buildCheckpointMetricDelta(baseline.Tokens.Total, target.Tokens.Total)
+	comparison.Input = buildCheckpointMetricDelta(baseline.Tokens.Input, target.Tokens.Input)
 	comparison.CacheRead = buildCheckpointMetricDelta(baseline.Tokens.CacheRead, target.Tokens.CacheRead)
+	comparison.CacheWrite = buildCheckpointMetricDelta(baseline.Tokens.CacheWrite, target.Tokens.CacheWrite)
+	comparison.Output = buildCheckpointMetricDelta(baseline.Tokens.Output, target.Tokens.Output)
 	comparison.APICalls = buildCheckpointMetricDelta(baseline.Tokens.APICalls, target.Tokens.APICalls)
 	comparison.CacheReadCaveat = checkpointComparisonCacheReadCaveat(comparison.CacheRead)
 	comparison.Status = checkpointComparisonStatus(comparison.Total)
 	comparison.Qualification = checkpointComparisonQualification(comparison.Status)
+	if classes := checkpointCostProxyPressureIncreased(comparison); len(classes) > 0 {
+		comparison.Qualification += fmt.Sprintf(" Cost-proxy pressure increased for %s even though total tokens decreased.", formatTokenClassList(classes))
+	}
 	return comparison
+}
+
+func checkpointCostProxyPressureIncreased(comparison *checkpointTokensComparison) []string {
+	if comparison == nil || comparison.Total == nil || comparison.Total.Change >= 0 {
+		return nil
+	}
+	var classes []string
+	if comparison.CacheWrite != nil && comparison.CacheWrite.Change > 0 {
+		classes = append(classes, "cache write")
+	}
+	if comparison.Output != nil && comparison.Output.Change > 0 {
+		classes = append(classes, "output")
+	}
+	return classes
+}
+
+func formatTokenClassList(classes []string) string {
+	switch len(classes) {
+	case 0:
+		return ""
+	case 1:
+		return classes[0]
+	case 2:
+		return classes[0] + " and " + classes[1]
+	default:
+		return strings.Join(classes[:len(classes)-1], ", ") + ", and " + classes[len(classes)-1]
+	}
 }
 
 func buildCheckpointMetricDelta(baseline, current int) *checkpointTokensMetricDelta {
@@ -534,6 +592,45 @@ func writeCheckpointTokensText(w io.Writer, report checkpointTokensReport) {
 	writeTokenLimitations(w, report.Limitations)
 }
 
+func writeCheckpointTokensAgentBrief(w io.Writer, report checkpointTokensReport) {
+	fmt.Fprintln(w, "Checkpoint token brief")
+	fmt.Fprintf(w, "Checkpoint: %s\n", report.CheckpointID)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, agentBriefUsageLine(report.Tokens))
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Next best action:")
+	fmt.Fprintln(w, checkpointAgentBriefNextAction(report))
+
+	signals := agentBriefSignals(checkpointAgentBriefSessionReport(report))
+	if len(signals) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Signals:")
+		for _, signal := range signals {
+			fmt.Fprintf(w, "- %s\n", signal)
+		}
+	}
+}
+
+func checkpointAgentBriefNextAction(report checkpointTokensReport) string {
+	sessionReport := checkpointAgentBriefSessionReport(report)
+	if hasTokenRecommendation(sessionReport, "no-token-data") {
+		return "Do not spend extra commands on token optimization for this checkpoint. Continue with the task and capture a newer checkpoint before rechecking tokens."
+	}
+	if action, ok := agentBriefOptimizationAction(sessionReport); ok {
+		return action
+	}
+	return "Continue normally; no high-signal token optimization is available from this checkpoint."
+}
+
+func checkpointAgentBriefSessionReport(report checkpointTokensReport) sessionTokensReport {
+	return sessionTokensReport{
+		Tokens:          report.Tokens,
+		Context:         report.Context,
+		Recommendations: report.Recommendations,
+		Limitations:     report.Limitations,
+	}
+}
+
 func writeCheckpointTokenComparison(w io.Writer, comparison *checkpointTokensComparison) {
 	if comparison == nil {
 		return
@@ -547,7 +644,10 @@ func writeCheckpointTokenComparison(w io.Writer, comparison *checkpointTokensCom
 	}
 	if comparison.Status != checkpointComparisonStatusUnavailable {
 		fmt.Fprintf(w, "Total tokens: %s\n", formatCheckpointMetricDelta(comparison.Total, formatTokenCount))
+		fmt.Fprintf(w, "Input: %s\n", formatCheckpointMetricDelta(comparison.Input, formatTokenCount))
 		fmt.Fprintf(w, "Cache/context replay: %s\n", formatCheckpointMetricDelta(comparison.CacheRead, formatTokenCount))
+		fmt.Fprintf(w, "Cache write: %s\n", formatCheckpointMetricDelta(comparison.CacheWrite, formatTokenCount))
+		fmt.Fprintf(w, "Output: %s\n", formatCheckpointMetricDelta(comparison.Output, formatTokenCount))
 		fmt.Fprintf(w, "API calls: %s\n", formatCheckpointMetricDelta(comparison.APICalls, formatPlainCount))
 	}
 	fmt.Fprintln(w)
