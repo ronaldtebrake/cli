@@ -12,8 +12,8 @@ import (
 // the unexported isWriteRequest marker. A store dispatches on the concrete type;
 // a mirror/fan-out store forwards the same value to each backend's Write.
 //
-// This replaces the four separate writer methods (WriteCommitted /
-// UpdateCommitted / UpdateSummary / UpdateCheckpointSummary) with one
+// This replaces the four separate writer methods (writeSession /
+// backfillTranscript / backfillSummary / backfillAttribution) with one
 // Store.Write(ctx, req) entry point, so adding a write operation is a new
 // request type plus one dispatch case — the Store interface stays unchanged
 // and existing backends keep compiling.
@@ -21,34 +21,36 @@ type WriteRequest interface {
 	isWriteRequest()
 }
 
-// WriteSession creates or replaces a session document within a checkpoint,
+// Session creates or replaces a session document within a checkpoint,
 // materializing the checkpoint on its first session. This is condensation's
-// write. (Maps to the former WriteCommitted.)
-type WriteSession WriteCommittedOptions
+// write. (Maps to the former writeSession.)
+type Session WriteOptions
 
-// BackfillTranscript replaces a session's transcript, prompts, and skill
+// SessionTranscript replaces a session's transcript, prompts, and skill
 // events at stop time without clobbering sibling fields. (Maps to the former
-// UpdateCommitted.)
-type BackfillTranscript UpdateCommittedOptions
+// backfillTranscript.)
+type SessionTranscript UpdateOptions
 
-// BackfillSummary rewrites only the summary of the checkpoint's latest
-// session. (Maps to the former UpdateSummary.)
-type BackfillSummary struct {
+// SessionSummary rewrites only the summary of the checkpoint's latest
+// session. (Maps to the former backfillSummary.)
+type SessionSummary struct {
 	CheckpointID id.CheckpointID
 	Summary      *Summary
 }
 
-// BackfillAttribution rewrites the checkpoint root's combined attribution.
-// (Maps to the former UpdateCheckpointSummary.)
-type BackfillAttribution struct {
+// CheckpointAttribution rewrites the checkpoint root's combined attribution.
+// (Maps to the former backfillAttribution.)
+//
+//nolint:revive // CheckpointAttribution stutter is accepted — the name makes the checkpoint (vs session) tier explicit alongside the Session* requests.
+type CheckpointAttribution struct {
 	CheckpointID id.CheckpointID
-	Attribution  *InitialAttribution
+	Attribution  *Attribution
 }
 
-func (WriteSession) isWriteRequest()        {}
-func (BackfillTranscript) isWriteRequest()  {}
-func (BackfillSummary) isWriteRequest()     {}
-func (BackfillAttribution) isWriteRequest() {}
+func (Session) isWriteRequest()               {}
+func (SessionTranscript) isWriteRequest()     {}
+func (SessionSummary) isWriteRequest()        {}
+func (CheckpointAttribution) isWriteRequest() {}
 
 // Writer is the committed-store write surface: a single Write that accepts any
 // WriteRequest. It is the natural type for mirror fan-out.
@@ -60,14 +62,14 @@ type Writer interface {
 // Unknown request types are a programmer error, surfaced rather than ignored.
 func (s *GitStore) Write(ctx context.Context, req WriteRequest) error {
 	switch r := req.(type) {
-	case WriteSession:
-		return s.WriteCommitted(ctx, WriteCommittedOptions(r))
-	case BackfillTranscript:
-		return s.UpdateCommitted(ctx, UpdateCommittedOptions(r))
-	case BackfillSummary:
-		return s.UpdateSummary(ctx, r.CheckpointID, r.Summary)
-	case BackfillAttribution:
-		return s.UpdateCheckpointSummary(ctx, r.CheckpointID, r.Attribution)
+	case Session:
+		return s.writeSession(ctx, WriteOptions(r))
+	case SessionTranscript:
+		return s.backfillTranscript(ctx, UpdateOptions(r))
+	case SessionSummary:
+		return s.backfillSummary(ctx, r.CheckpointID, r.Summary)
+	case CheckpointAttribution:
+		return s.backfillAttribution(ctx, r.CheckpointID, r.Attribution)
 	default:
 		return fmt.Errorf("checkpoint: unsupported write request %T", req)
 	}

@@ -115,7 +115,7 @@ type attributionSummary struct {
 }
 
 type attributionCheckpointReader interface {
-	ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*checkpoint.CheckpointSummary, error)
+	Read(ctx context.Context, checkpointID id.CheckpointID) (*checkpoint.CheckpointSummary, error)
 	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
 }
 
@@ -325,7 +325,7 @@ func newAttributionResolver(ctx context.Context, fetchOnMiss bool) (*attribution
 	return &attributionResolver{
 		ctx:             ctx,
 		repo:            repo,
-		store:           stores.Primary,
+		store:           stores.Persistent,
 		fetchOnMiss:     fetchOnMiss,
 		commitCache:     make(map[string]*object.Commit),
 		checkpointCache: make(map[string]attributionCheckpointContext),
@@ -493,7 +493,7 @@ func readAttributionCheckpointSummary(ctx context.Context, reader attributionChe
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
-	summary, err := reader.ReadCommitted(ctx, cpID)
+	summary, err := reader.Read(ctx, cpID)
 	if err != nil {
 		return nil, fmt.Errorf("read committed checkpoint: %w", err)
 	}
@@ -564,7 +564,7 @@ type checkpointSessionForFile struct {
 	Prompt       string
 	Intent       string
 	FilesTouched []string
-	Attribution  *checkpoint.InitialAttribution
+	Attribution  *checkpoint.Attribution
 }
 
 func (r *attributionResolver) readSessionForCheckpoint(cpID id.CheckpointID, index int) (checkpointSessionForFile, error) {
@@ -591,7 +591,7 @@ func (r *attributionResolver) readSessionForCheckpoint(cpID id.CheckpointID, ind
 		Prompt:       prompt,
 		Intent:       intent,
 		FilesTouched: normalizePathSlice(meta.FilesTouched),
-		Attribution:  meta.InitialAttribution,
+		Attribution:  meta.Attribution,
 	}, nil
 }
 
@@ -1202,7 +1202,7 @@ func normalizeGitPath(path string) string {
 	return filepath.ToSlash(path)
 }
 
-func attributionIsMixed(attr *checkpoint.InitialAttribution) bool {
+func attributionIsMixed(attr *checkpoint.Attribution) bool {
 	if attr == nil {
 		return false
 	}

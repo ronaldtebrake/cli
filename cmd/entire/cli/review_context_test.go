@@ -121,7 +121,7 @@ func TestReviewCheckpointDetail_ReadsSessionMetadataOnceForPromptFallback(t *tes
 
 	cpID := checkpointid.MustCheckpointID("d1b2c3d4e5f6")
 	reader := &countingReviewContextReader{
-		metadata: checkpoint.CommittedMetadata{
+		metadata: checkpoint.Metadata{
 			CheckpointID: cpID,
 			SessionID:    "session-1",
 		},
@@ -396,7 +396,7 @@ func writeReviewContextCheckpoint(t *testing.T, repoRoot string, checkpointID st
 		t.Fatalf("open repo: %v", err)
 	}
 	cpID := checkpointid.MustCheckpointID(checkpointID)
-	err = checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+	err = checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session{
 		CheckpointID:     cpID,
 		SessionID:        checkpointID,
 		Strategy:         "manual-commit",
@@ -452,7 +452,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"usage":{"i
 }
 
 type countingReviewContextReader struct {
-	metadata      checkpoint.CommittedMetadata
+	metadata      checkpoint.Metadata
 	prompts       string
 	metadataErr   error
 	promptErr     error
@@ -460,11 +460,19 @@ type countingReviewContextReader struct {
 	promptCalls   int
 }
 
-func (r *countingReviewContextReader) ReadCommitted(
+func (r *countingReviewContextReader) Read(
 	context.Context,
 	checkpointid.CheckpointID,
 ) (*checkpoint.CheckpointSummary, error) {
 	return nil, checkpoint.ErrCheckpointNotFound
+}
+
+func (r *countingReviewContextReader) ReadSessionPrompts(
+	context.Context,
+	checkpointid.CheckpointID,
+	int,
+) (string, error) {
+	return "", checkpoint.ErrCheckpointNotFound
 }
 
 func (r *countingReviewContextReader) ReadSessionContent(
@@ -482,7 +490,7 @@ func (r *countingReviewContextReader) ReadSessionMetadata(
 	context.Context,
 	checkpointid.CheckpointID,
 	int,
-) (*checkpoint.CommittedMetadata, error) {
+) (*checkpoint.Metadata, error) {
 	r.metadataCalls++
 	return &r.metadata, r.metadataErr
 }
