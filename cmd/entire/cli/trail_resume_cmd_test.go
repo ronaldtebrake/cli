@@ -82,6 +82,32 @@ func TestValidateTrailResumeOptions(t *testing.T) {
 	}
 }
 
+func TestValidateTrailResumeExpectedBranch(t *testing.T) {
+	t.Parallel()
+
+	trail := &api.TrailResource{
+		Number: 575,
+		Title:  "Add trail resume",
+		Branch: "feature/trail-resume",
+	}
+	if err := validateTrailResumeExpectedBranch(trail, " feature/trail-resume "); err != nil {
+		t.Fatalf("validateTrailResumeExpectedBranch() matching branch = %v, want nil", err)
+	}
+	if err := validateTrailResumeExpectedBranch(trail, ""); err != nil {
+		t.Fatalf("validateTrailResumeExpectedBranch() empty expected branch = %v, want nil", err)
+	}
+
+	err := validateTrailResumeExpectedBranch(trail, "feature/other")
+	if err == nil {
+		t.Fatal("validateTrailResumeExpectedBranch() mismatch = nil, want error")
+	}
+	for _, want := range []string{"trail #575", "feature/trail-resume", "feature/other"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err, want)
+		}
+	}
+}
+
 func TestKnownTrailResumeSessionsForContextTreatsDiscoveryErrorAsUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +163,21 @@ func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
 	}
 	if ctx.DefaultResume == nil || ctx.DefaultResume.SessionID != "new-session" {
 		t.Fatalf("DefaultResume = %#v, want new-session", ctx.DefaultResume)
+	}
+	wantCommands := []string{
+		"entire trail finding 575 --json",
+		"entire trail resume 575 --branch feature/trail-resume",
+		"entire trail resume 575 --branch feature/trail-resume --checkpoint aaaaaaaaaaaa",
+		"entire trail resume 575 --branch feature/trail-resume --session new-session",
+		"entire trail resume 575 --branch feature/trail-resume --session old-session",
+	}
+	if len(ctx.Commands) != len(wantCommands) {
+		t.Fatalf("commands len = %d, want %d: %#v", len(ctx.Commands), len(wantCommands), ctx.Commands)
+	}
+	for i, want := range wantCommands {
+		if ctx.Commands[i] != want {
+			t.Fatalf("commands[%d] = %q, want %q", i, ctx.Commands[i], want)
+		}
 	}
 }
 
@@ -277,7 +318,7 @@ func TestPrintTrailResumeContextIncludesSessionsFindingsAndCommands(t *testing.T
 		},
 		Commands: []string{
 			"entire trail finding 575 --json",
-			"entire trail resume 575 --session session-1",
+			"entire trail resume 575 --branch feature/trail-resume --session session-1",
 		},
 	}
 
@@ -298,7 +339,7 @@ func TestPrintTrailResumeContextIncludesSessionsFindingsAndCommands(t *testing.T
 		"Resume output should show context",
 		"Commands:",
 		"entire trail finding 575 --json",
-		"entire trail resume 575 --session session-1",
+		"entire trail resume 575 --branch feature/trail-resume --session session-1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("context output missing %q:\n%s", want, text)
@@ -354,7 +395,7 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 			}},
 		},
 		DefaultResume: &trailResumeDefaultContext{SessionID: "session-1", CheckpointID: "aaaaaaaaaaaa", Branch: "feature/trail-resume"},
-		Commands:      []string{"entire trail resume 575 --session session-1"},
+		Commands:      []string{"entire trail resume 575 --branch feature/trail-resume --session session-1"},
 	}
 
 	var out bytes.Buffer

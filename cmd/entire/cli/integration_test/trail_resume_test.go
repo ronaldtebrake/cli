@@ -87,8 +87,8 @@ func TestTrailResume_UsesCheckpointSessionsWhenLocalStateIsMissing(t *testing.T)
 		checkpointID,
 		"Create hello method",
 		"Create goodbye method",
-		"entire trail resume 321 --session " + firstSession.ID,
-		"entire trail resume 321 --session " + secondSession.ID,
+		"entire trail resume 321 --branch feature/test-branch --session " + firstSession.ID,
+		"entire trail resume 321 --branch feature/test-branch --session " + secondSession.ID,
 	} {
 		if !strings.Contains(contextOutput, want) {
 			t.Fatalf("trail resume --no-resume output missing %q:\n%s", want, contextOutput)

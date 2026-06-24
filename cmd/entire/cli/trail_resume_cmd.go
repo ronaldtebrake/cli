@@ -31,12 +31,13 @@ const (
 )
 
 type trailResumeOptions struct {
-	Selector     string
-	SessionID    string
-	CheckpointID string
-	Force        bool
-	JSON         bool
-	NoResume     bool
+	Selector       string
+	ExpectedBranch string
+	SessionID      string
+	CheckpointID   string
+	Force          bool
+	JSON           bool
+	NoResume       bool
 }
 
 type trailResumeContext struct {
@@ -105,7 +106,11 @@ By default, interactive terminals show the trail context and let you choose
 between checkpoint sessions on the trail branch when there are multiple.
 Non-interactive runs show the same context and resume the latest checkpoint on
 the trail branch. Use --session or --checkpoint to resume an exact session or
-checkpoint.`,
+checkpoint.
+
+Use --branch with a trail number or id to assert the branch you expect the trail
+to be attached to. If the trail is attached to a different branch, resume stops
+before checking anything out.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selector, err := parseOptionalTrailSelector(args, opts.Selector)
@@ -122,6 +127,7 @@ checkpoint.`,
 	}
 
 	cmd.Flags().StringVar(&opts.Selector, "trail", "", "Trail to resume (number, id, or branch; defaults to the current branch's trail)")
+	cmd.Flags().StringVar(&opts.ExpectedBranch, "branch", "", "Expected trail branch; fails if the trail is attached to a different branch")
 	cmd.Flags().StringVar(&opts.SessionID, "session", "", "Resume a specific known local session on the trail branch")
 	cmd.Flags().StringVar(&opts.CheckpointID, "checkpoint", "", "Resume a specific checkpoint on the trail branch")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Skip prompts and overwrite existing session logs from checkpoints")
@@ -164,6 +170,9 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 		if branch == "" {
 			return fmt.Errorf("%s has no branch to resume", describeTrailRef(found))
 		}
+		if err := validateTrailResumeExpectedBranch(found, opts.ExpectedBranch); err != nil {
+			return err
+		}
 
 		sessions, sessionErr := resolveTrailResumeSessionContexts(ctx, branch)
 		sessions, sessionsUnavailable := knownTrailResumeSessionsForContext(sessions, sessionErr)
@@ -205,6 +214,18 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 
 		return resumeTrailLatest(ctx, cmd, branch, opts.Force, "")
 	})
+}
+
+func validateTrailResumeExpectedBranch(found *api.TrailResource, expectedBranch string) error {
+	expectedBranch = strings.TrimSpace(expectedBranch)
+	if expectedBranch == "" {
+		return nil
+	}
+	actualBranch := strings.TrimSpace(found.Branch)
+	if actualBranch == expectedBranch {
+		return nil
+	}
+	return fmt.Errorf("%s is attached to branch %q, not expected branch %q", describeTrailRef(found), actualBranch, expectedBranch)
 }
 
 func knownTrailResumeSessionsForContext(sessions []trailResumeSessionContext, sessionErr error) ([]trailResumeSessionContext, string) {
@@ -596,15 +617,19 @@ func buildTrailResumeCommands(ctx trailResumeContext) []string {
 		return nil
 	}
 	arg := shellArg(selector)
+	resumeCommand := "entire trail resume " + arg
+	if branch := strings.TrimSpace(ctx.Trail.Branch); branch != "" {
+		resumeCommand += " --branch " + shellArg(branch)
+	}
 	commands := []string{
 		"entire trail finding " + arg + " --json",
-		"entire trail resume " + arg,
+		resumeCommand,
 	}
 	if ctx.DefaultResume != nil && ctx.DefaultResume.CheckpointID != "" {
-		commands = append(commands, "entire trail resume "+arg+" --checkpoint "+shellArg(ctx.DefaultResume.CheckpointID))
+		commands = append(commands, resumeCommand+" --checkpoint "+shellArg(ctx.DefaultResume.CheckpointID))
 	}
 	for _, session := range ctx.Sessions {
-		commands = append(commands, "entire trail resume "+arg+" --session "+shellArg(session.SessionID))
+		commands = append(commands, resumeCommand+" --session "+shellArg(session.SessionID))
 	}
 	return commands
 }
