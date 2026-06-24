@@ -495,7 +495,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - **Worktree-specific branches** - each git worktree gets its own shadow branch namespace, preventing conflicts
 - **Supports multiple concurrent sessions** - checkpoints from different sessions in the same directory interleave on the same shadow branch
 - Condenses session logs to permanent `entire/checkpoints/v1` branch on user commits
-- Each committed session stores the raw transcript (`full.jsonl`, read by CLI rewind/resume/explain) plus a best-effort compact transcript (`transcript.jsonl`, generated via `transcript/compact` and pre-sliced to the checkpoint's `checkpoint_transcript_start`). Both are pushed with the v1 branch. The root `metadata.json` `sessions[].transcript` pointer still targets `full.jsonl`; pointing it at `transcript.jsonl` is deferred to a later change.
+- Each committed session stores the raw transcript (`full.jsonl`, read by CLI rewind/resume/explain) plus a best-effort compact transcript (`transcript.jsonl`, generated via `transcript/compact` and pre-sliced to the checkpoint's `checkpoint_transcript_start`). Both are pushed with the v1 branch. The root `metadata.json` `sessions[].transcript` pointer keeps targeting `full.jsonl`; when the compact transcript was generated the session entry also carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted otherwise) so external readers can locate it next to `full.jsonl`.
 - Uses the `post-rewrite` Git hook to keep local session linkage aligned after amend/rebase rewrites
 - Builds git trees in-memory using go-git plumbing APIs
 - Rewind restores files from shadow branch commit tree (does not use `git reset`)
