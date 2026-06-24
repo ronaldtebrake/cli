@@ -17,6 +17,7 @@ import (
 type trailTuneOptions struct {
 	runner       string // optional: limit to one runner (id, with or without "trail-")
 	run          bool   // headless apply vs. print prompt
+	assumeYes    bool   // skip the create-defaults confirmation
 	sources      []string
 	limit        int
 	insecureHTTP bool
@@ -24,9 +25,10 @@ type trailTuneOptions struct {
 
 func newTrailTuneCmd() *cobra.Command {
 	var (
-		run     bool
-		sources []string
-		limit   int
+		run       bool
+		assumeYes bool
+		sources   []string
+		limit     int
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +46,9 @@ By default it prints that prompt to stdout, ready to paste into your agent.
 With --run it executes the prompt headlessly through your configured summary
 provider and rewrites the runner files in place (review with git diff).
 
+If the repo has no runners yet, tune offers to create the default set first
+(use --yes to skip the confirmation), then tailors them.
+
 If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,6 +59,7 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 			return runTrailTune(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), trailTuneOptions{
 				runner:       runner,
 				run:          run,
+				assumeYes:    assumeYes,
 				sources:      sources,
 				limit:        limit,
 				insecureHTTP: trailInsecureHTTP(cmd),
@@ -66,6 +72,8 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 	cmd.Flags().StringSliceVar(&sources, "sources", nil,
 		"Comma-separated data sources to gather: repo, prs, checkpoints, trails, all (default: all)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "How many recent PRs/issues/trails to sample")
+	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false,
+		"Skip the confirmation when creating the default runner set in a repo that has none")
 
 	return cmd
 }
@@ -79,6 +87,12 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
+	}
+
+	// Onboarding: a repo with no runners yet gets the default set scaffolded
+	// (on confirmation), which tune then tailors below.
+	if _, err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes); err != nil {
+		return err
 	}
 
 	runners, err := loadTuneRunners(repoRoot, opts.runner)
