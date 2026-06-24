@@ -437,6 +437,7 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.CheckpointTranscriptSize = 0
 	adopted.TranscriptIdentifierAtStart = ""
 	adopted.ClearLegacyTranscriptOffsets()
+	adopted.TurnID = ""
 	adopted.TurnCheckpointIDs = nil
 	adopted.LastCheckpointID = id.EmptyCheckpointID
 	adopted.LastCheckpointCommitHash = ""

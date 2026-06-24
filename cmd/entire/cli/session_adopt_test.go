@@ -620,6 +620,7 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 		CondensedTranscriptLines:    2,
 		TranscriptLinesAtStart:      2,
 		TranscriptIdentifierAtStart: "source-assistant",
+		TurnID:                      "source-turn",
 		TurnCheckpointIDs:           []string{"abc123def456"},
 		LastCheckpointID:            id.MustCheckpointID("abc123def456"),
 		LastCheckpointCommitHash:    "source-commit",
@@ -685,6 +686,9 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	}
 	if len(adopted.TurnCheckpointIDs) != 0 {
 		t.Fatalf("TurnCheckpointIDs = %v, want empty", adopted.TurnCheckpointIDs)
+	}
+	if adopted.TurnID != "" {
+		t.Fatalf("TurnID = %q, want empty target-local turn ID", adopted.TurnID)
 	}
 	if !adopted.LastCheckpointID.IsEmpty() {
 		t.Fatalf("LastCheckpointID = %s, want empty", adopted.LastCheckpointID.String())
