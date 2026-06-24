@@ -224,7 +224,7 @@ func restoreByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID 
 	metadata, err := readCheckpointInfoFromStore(ctx, store, checkpointID)
 	if err != nil {
 		if checkpointpolicy.IsUnsupportedVersion(err) {
-			return err
+			return nil, err
 		}
 		logging.Debug(ctx, "resume by checkpoint: metadata read failed, checking remote",
 			slog.String("checkpoint_id", checkpointID.String()),
@@ -305,7 +305,7 @@ func restoreFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName
 	if len(result.checkpointIDs) > 1 {
 		latestMetadata, found, err := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !found {
 			// No metadata available — nothing to resume from
@@ -329,7 +329,7 @@ func restoreFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName
 			metadata = storeInfo
 		} else {
 			if checkpointpolicy.IsUnsupportedVersion(storeErr) {
-				return storeErr
+				return nil, storeErr
 			}
 			logging.Debug(ctx, "checkpoint store metadata read failed",
 				slog.String("checkpoint_id", checkpointID.String()),
@@ -854,7 +854,7 @@ func checkRemoteMetadata(
 		)
 	}
 	if unsupportedVersionErr != nil {
-		return unsupportedVersionErr
+		return nil, unsupportedVersionErr
 	}
 
 	// Nothing worked — print helpful error message

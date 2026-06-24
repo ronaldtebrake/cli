@@ -1210,7 +1210,7 @@ func TestCheckRemoteMetadata_ReturnsUnsupportedVersionFromRemote(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err = checkRemoteMetadata(context.Background(), &stdout, &stderr, checkpointID, checkpoint.DefaultV1Refs())
+	_, err = checkRemoteMetadata(context.Background(), &stdout, &stderr, checkpointID, checkpoint.DefaultV1Refs())
 	if err == nil {
 		t.Fatal("checkRemoteMetadata() error = nil, want unsupported checkpoint version")
 	}

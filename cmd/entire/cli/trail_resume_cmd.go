@@ -454,9 +454,12 @@ func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trail
 
 	checkpointID := result.checkpointIDs[0]
 	if len(result.checkpointIDs) > 1 {
-		latestMetadata, latestErr := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
+		latestMetadata, found, latestErr := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
 		if latestErr != nil {
 			return nil, fmt.Errorf("resolve latest checkpoint: %w", latestErr)
+		}
+		if !found {
+			return nil, errors.New("resolve latest checkpoint: no checkpoint metadata found")
 		}
 		checkpointID = latestMetadata.CheckpointID
 	}
