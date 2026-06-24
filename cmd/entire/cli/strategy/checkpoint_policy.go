@@ -9,6 +9,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/versioncheck"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/go-git/go-git/v6"
@@ -31,7 +32,7 @@ func checkCommittedCheckpointWritePolicy(ctx context.Context, repo *git.Reposito
 	return errCommittedCheckpointWriteBlocked
 }
 
-func syncCheckpointPolicyForPrePush(ctx context.Context) bool {
+func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint policy pre-push: failed to open repository; allowing checkpoint push",
@@ -41,13 +42,14 @@ func syncCheckpointPolicyForPrePush(ctx context.Context) bool {
 	}
 	defer repo.Close()
 
-	target, err := checkpointpolicy.ResolveTarget(ctx)
+	dir, err := paths.WorktreeRoot(ctx)
 	if err != nil {
-		logging.Warn(ctx, "checkpoint policy pre-push: failed to resolve policy remote; allowing checkpoint push",
+		logging.Warn(ctx, "checkpoint policy pre-push: failed to resolve worktree root; allowing checkpoint push",
 			slog.String("error", err.Error()),
 		)
 		return true
 	}
+	target := checkpointpolicy.Target{Remote: ps.pushTarget(), Dir: dir}
 	state, err := checkpointpolicy.Sync(ctx, repo, target)
 	if err != nil {
 		warnOrLogCheckpointPolicySyncFailure(ctx, err)

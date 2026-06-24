@@ -147,7 +147,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	}
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	condenseStart := time.Now()
-	if err := checkCommittedCheckpointWritePolicy(ctx, repo); err != nil {
+	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
 		return nil, err
 	}
 

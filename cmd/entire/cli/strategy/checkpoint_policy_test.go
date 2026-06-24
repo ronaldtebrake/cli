@@ -185,6 +185,47 @@ func TestPrePushSkipsCheckpointPushWhenPolicyDiverged(t *testing.T) {
 	require.Empty(t, strings.TrimSpace(out))
 }
 
+func TestSyncCheckpointPolicyForPrePushUsesPushTarget(t *testing.T) {
+	workDir := setupGitRepo(t)
+	originBareDir := filepath.Join(t.TempDir(), "origin.git")
+	_, err := git.PlainInit(originBareDir, true)
+	require.NoError(t, err)
+	runCheckpointPolicyGit(t, workDir, "remote", "add", "origin", originBareDir)
+
+	pushTargetDir := filepath.Join(t.TempDir(), "push-target.git")
+	_, err = git.PlainInit(pushTargetDir, true)
+	require.NoError(t, err)
+
+	repo, err := git.PlainOpen(workDir)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	_, err = checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
+		CheckpointVersion:    "refs-v1",
+		CheckpointMinVersion: "branch-v1",
+	})
+	require.NoError(t, err)
+	runCheckpointPolicyGit(t, workDir, "push", originBareDir, checkpointpolicy.RefName.String()+":"+checkpointpolicy.RefName.String())
+
+	targetHash, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
+	require.NoError(t, err)
+	runCheckpointPolicyGit(t, workDir, "push", pushTargetDir, checkpointpolicy.RefName.String()+":"+checkpointpolicy.RefName.String())
+	require.NoError(t, repo.Storer.RemoveReference(checkpointpolicy.RefName))
+
+	t.Chdir(workDir)
+	paths.ClearWorktreeRootCache()
+
+	require.True(t, syncCheckpointPolicyForPrePush(context.Background(), pushSettings{
+		remote:        "origin",
+		checkpointURL: pushTargetDir,
+	}))
+	state, err := checkpointpolicy.ReadLocal(t.Context(), repo)
+	require.NoError(t, err)
+	require.Equal(t, targetHash, state.Hash)
+}
+
 func writeUnsupportedCheckpointPolicy(t *testing.T, repo *git.Repository) {
 	t.Helper()
 	_, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
