@@ -93,7 +93,7 @@ func runControlPlaneDelete(
 			// Idempotent delete: a resource that's already gone (a 404 from the
 			// delete call — e.g. a ULID passed straight through, or a concurrent
 			// delete) is the desired end state, not an error.
-			if isNotFound(err) {
+			if isCoreNotFound(err) {
 				cmd.Printf("%s not found; nothing to delete\n", label)
 				return nil
 			}
