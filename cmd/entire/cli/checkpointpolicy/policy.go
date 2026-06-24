@@ -36,7 +36,7 @@ func ValidatePolicy(policy Policy) error {
 		return fmt.Errorf("checkpoint_version: %w", err)
 	}
 	if !CanWrite(version) {
-		return fmt.Errorf("checkpoint_version %q is not write-supported by this Entire CLI", policy.CheckpointVersion)
+		return fmt.Errorf("checkpoint_version %q is not supported by this Entire CLI", policy.CheckpointVersion)
 	}
 
 	minVersion, err := ParseFormat(policy.CheckpointMinVersion)
@@ -44,7 +44,7 @@ func ValidatePolicy(policy Policy) error {
 		return fmt.Errorf("checkpoint_min_version: %w", err)
 	}
 	if !CanRead(minVersion) {
-		return fmt.Errorf("checkpoint_min_version %q is not read-supported by this Entire CLI", policy.CheckpointMinVersion)
+		return fmt.Errorf("checkpoint_min_version %q is not supported by this Entire CLI", policy.CheckpointMinVersion)
 	}
 	if Compare(minVersion, version) > 0 {
 		return fmt.Errorf("checkpoint_min_version %q is newer than checkpoint_version %q", policy.CheckpointMinVersion, policy.CheckpointVersion)

@@ -33,8 +33,8 @@ func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "checkpoint version", args: []string{"--checkpoint-version", "refs-v1"}, wantErr: "not write-supported"},
-		{name: "minimum version", args: []string{"--checkpoint-min-version", "refs-v1"}, wantErr: "not read-supported"},
+		{name: "checkpoint version", args: []string{"--checkpoint-version", "branch-v2342"}, wantErr: `checkpoint_version "branch-v2342" is not supported by this Entire CLI`},
+		{name: "minimum version", args: []string{"--checkpoint-min-version", "refs-v1"}, wantErr: `checkpoint_min_version "refs-v1" is not supported by this Entire CLI`},
 	}
 
 	for _, tt := range tests {

@@ -24,8 +24,8 @@ func TestValidatePolicy(t *testing.T) {
 	}{
 		{name: "default", policy: checkpointpolicy.DefaultPolicy()},
 		{name: "unknown current", policy: checkpointpolicy.Policy{CheckpointVersion: "future-v1", CheckpointMinVersion: "branch-v1"}, wantErr: "unknown checkpoint family"},
-		{name: "unsupported current", policy: checkpointpolicy.Policy{CheckpointVersion: "refs-v1", CheckpointMinVersion: "branch-v1"}, wantErr: "not write-supported"},
-		{name: "unsupported minimum", policy: checkpointpolicy.Policy{CheckpointVersion: "branch-v1", CheckpointMinVersion: "refs-v1"}, wantErr: "not read-supported"},
+		{name: "unsupported current", policy: checkpointpolicy.Policy{CheckpointVersion: "branch-v2342", CheckpointMinVersion: "branch-v1"}, wantErr: `checkpoint_version "branch-v2342" is not supported by this Entire CLI`},
+		{name: "unsupported minimum", policy: checkpointpolicy.Policy{CheckpointVersion: "branch-v1", CheckpointMinVersion: "refs-v1"}, wantErr: `checkpoint_min_version "refs-v1" is not supported by this Entire CLI`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
