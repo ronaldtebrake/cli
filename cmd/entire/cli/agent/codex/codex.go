@@ -240,14 +240,6 @@ func (c *CodexAgent) LaunchCmd(ctx context.Context, initialPrompt string) (*exec
 	return cmd, nil
 }
 
-func (c *CodexAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	cmd, err := agent.NewForegroundCommand(ctx, "codex", "resume", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build codex resume command: %w", err)
-	}
-	return cmd, nil
-}
-
 func findRolloutBySessionID(codexHome, agentSessionID string) string {
 	if codexHome == "" || validation.ValidateAgentSessionID(agentSessionID) != nil {
 		return ""

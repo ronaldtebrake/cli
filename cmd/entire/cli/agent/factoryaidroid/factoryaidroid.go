@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -185,12 +184,4 @@ func (f *FactoryAIDroidAgent) WriteSession(_ context.Context, session *agent.Age
 // FormatResumeCommand returns the command to resume a Factory AI Droid session.
 func (f *FactoryAIDroidAgent) FormatResumeCommand(sessionID string) string {
 	return "droid --session-id " + sessionID
-}
-
-func (f *FactoryAIDroidAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	cmd, err := agent.NewForegroundCommand(ctx, "droid", "--session-id", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build droid resume command: %w", err)
-	}
-	return cmd, nil
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -268,21 +267,6 @@ func (a *OpenCodeAgent) FormatResumeCommand(sessionID string) string {
 		return "opencode"
 	}
 	return "opencode -s " + sessionID
-}
-
-func (a *OpenCodeAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	if strings.TrimSpace(sessionID) == "" {
-		cmd, err := agent.NewForegroundCommand(ctx, "opencode")
-		if err != nil {
-			return nil, fmt.Errorf("build opencode resume command: %w", err)
-		}
-		return cmd, nil
-	}
-	cmd, err := agent.NewForegroundCommand(ctx, "opencode", "-s", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build opencode resume command: %w", err)
-	}
-	return cmd, nil
 }
 
 // nonAlphanumericRegex matches any non-alphanumeric character.

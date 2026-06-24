@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -144,14 +143,6 @@ func (c *CopilotCLIAgent) WriteSession(_ context.Context, session *agent.AgentSe
 // FormatResumeCommand returns a command to resume a Copilot CLI session.
 func (c *CopilotCLIAgent) FormatResumeCommand(sessionID string) string {
 	return "copilot --resume " + sessionID
-}
-
-func (c *CopilotCLIAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	cmd, err := agent.NewForegroundCommand(ctx, "copilot", "--resume", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build copilot resume command: %w", err)
-	}
-	return cmd, nil
 }
 
 // ReadTranscript reads the raw JSONL transcript bytes for a session.

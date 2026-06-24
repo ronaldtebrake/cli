@@ -292,15 +292,6 @@ type Launcher interface {
 	LaunchCmd(ctx context.Context, initialPrompt string) (*exec.Cmd, error)
 }
 
-// ResumeLauncher is implemented by agents that `entire` can subprocess-spawn
-// to continue an existing session.
-//
-// Contract matches Launcher: the returned command is foreground-ready with
-// stdio wired to the caller's terminal, and callers run it directly.
-type ResumeLauncher interface {
-	LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error)
-}
-
 // DiscoveredSkill describes one review-adjacent skill found on disk by a
 // SkillDiscoverer. Name is the agent-native invocation form (e.g. a
 // slash-prefixed command); Description is scraped from on-disk metadata

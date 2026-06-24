@@ -493,32 +493,6 @@ func TestLauncherFor(t *testing.T) {
 	}
 }
 
-func TestResumeLauncherFor(t *testing.T) {
-	Register(types.AgentName("resume-launcher-test-agent"), func() Agent {
-		return &mockResumeLauncherAgent{}
-	})
-	t.Cleanup(func() {
-		registryMu.Lock()
-		delete(registry, types.AgentName("resume-launcher-test-agent"))
-		registryMu.Unlock()
-	})
-
-	l, ok := ResumeLauncherFor(types.AgentName("resume-launcher-test-agent"))
-	if !ok {
-		t.Fatal("expected resume-launcher-test-agent to implement ResumeLauncher")
-	}
-	if l == nil {
-		t.Fatal("expected non-nil ResumeLauncher")
-	}
-	l2, ok2 := ResumeLauncherFor(types.AgentName("does-not-exist"))
-	if ok2 {
-		t.Error("expected ok=false for unknown agent")
-	}
-	if l2 != nil {
-		t.Error("expected nil ResumeLauncher for unknown agent")
-	}
-}
-
 // mockLauncherAgent implements Agent and Launcher for testing.
 type mockLauncherAgent struct {
 	mockAgent
@@ -526,14 +500,5 @@ type mockLauncherAgent struct {
 
 //nolint:unparam // error is always nil in this mock; satisfies the Launcher interface.
 func (m *mockLauncherAgent) LaunchCmd(ctx context.Context, _ string) (*exec.Cmd, error) {
-	return exec.CommandContext(ctx, "true"), nil
-}
-
-type mockResumeLauncherAgent struct {
-	mockAgent
-}
-
-//nolint:unparam // error is always nil in this mock; satisfies the ResumeLauncher interface.
-func (m *mockResumeLauncherAgent) LaunchResumeCmd(ctx context.Context, _ string) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, "true"), nil
 }

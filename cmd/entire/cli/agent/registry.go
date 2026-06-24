@@ -279,17 +279,6 @@ func LauncherFor(name types.AgentName) (Launcher, bool) {
 	return l, ok
 }
 
-// ResumeLauncherFor returns the ResumeLauncher implementation for the given
-// agent name, or ok=false if the agent cannot be subprocess-launched for resume.
-func ResumeLauncherFor(name types.AgentName) (ResumeLauncher, bool) {
-	a, err := Get(name)
-	if err != nil {
-		return nil, false
-	}
-	l, ok := a.(ResumeLauncher)
-	return l, ok
-}
-
 // Default returns the default agent.
 // Returns nil if the default agent is not registered.
 //

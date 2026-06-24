@@ -388,11 +388,3 @@ func (c *ClaudeCodeAgent) LaunchCmd(ctx context.Context, initialPrompt string) (
 	cmd.Env = os.Environ()
 	return cmd, nil
 }
-
-func (c *ClaudeCodeAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	cmd, err := agent.NewForegroundCommand(ctx, "claude", "-r", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build claude resume command: %w", err)
-	}
-	return cmd, nil
-}

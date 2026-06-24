@@ -194,26 +194,3 @@ func TestCodexAgent_LaunchCmd(t *testing.T) {
 		t.Errorf("args missing prompt: %v", cmd.Args)
 	}
 }
-
-func TestCodexAgent_LaunchResumeCmd(t *testing.T) {
-	t.Parallel()
-	a := NewCodexAgent()
-	launcher, ok := a.(agent.ResumeLauncher)
-	if !ok {
-		t.Fatal("CodexAgent does not implement agent.ResumeLauncher")
-	}
-	cmd, err := launcher.LaunchResumeCmd(context.Background(), "019ef36b-a485-7ca2-992b-b4f164266e7f")
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			t.Skip("codex binary not on PATH; skipping cmd shape check")
-		}
-		t.Fatalf("LaunchResumeCmd: %v", err)
-	}
-	if cmd == nil {
-		t.Fatal("nil cmd")
-	}
-	joined := strings.Join(cmd.Args, " ")
-	if !strings.Contains(joined, "resume 019ef36b-a485-7ca2-992b-b4f164266e7f") {
-		t.Errorf("args missing resume session: %v", cmd.Args)
-	}
-}

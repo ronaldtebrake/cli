@@ -396,14 +396,6 @@ func (g *GeminiCLIAgent) LaunchCmd(ctx context.Context, initialPrompt string) (*
 	return cmd, nil
 }
 
-func (g *GeminiCLIAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
-	cmd, err := agent.NewForegroundCommand(ctx, "gemini", "--resume", sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("build gemini resume command: %w", err)
-	}
-	return cmd, nil
-}
-
 // ReassembleTranscript merges Gemini JSON chunks by combining their message arrays.
 func (g *GeminiCLIAgent) ReassembleTranscript(chunks [][]byte) ([]byte, error) {
 	var allMessages []GeminiMessage

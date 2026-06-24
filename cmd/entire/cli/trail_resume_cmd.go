@@ -980,13 +980,12 @@ func launchTrailRestoredSession(ctx context.Context, w io.Writer, session strate
 		return fmt.Errorf("failed to resolve agent for session %s: %w", session.SessionID, err)
 	}
 	resumeCmd := resumeAgent.FormatResumeCommand(session.SessionID)
-	launcher, ok := agent.ResumeLauncherFor(resumeAgent.Name())
+	cmd, ok, err := agent.NewResumeForegroundCommand(ctx, resumeAgent.Name(), session.SessionID)
 	if !ok {
 		fmt.Fprintf(w, "\nTo continue this session:\n")
 		printSessionCommand(w, resumeCmd, session.Prompt, false, true)
 		return nil
 	}
-	cmd, err := launcher.LaunchResumeCmd(ctx, session.SessionID)
 	if err != nil {
 		fmt.Fprintf(w, "\nCould not launch %s: %v\n", resumeCmd, err)
 		fmt.Fprintf(w, "\nTo continue this session:\n")
