@@ -165,9 +165,7 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 		}
 
 		sessions, sessionErr := resolveTrailResumeSessionContexts(ctx, branch)
-		if sessionErr != nil && strings.TrimSpace(opts.SessionID) != "" {
-			return sessionErr
-		}
+		sessions = knownTrailResumeSessionsForContext(sessions, sessionErr)
 
 		findings, findingsErr := loadTrailResumeFindingsContext(ctx, client, found.ID)
 		if findingsErr != nil {
@@ -203,6 +201,13 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 
 		return resumeTrailLatest(ctx, cmd, branch, opts.Force, "")
 	})
+}
+
+func knownTrailResumeSessionsForContext(sessions []trailResumeSessionContext, sessionErr error) []trailResumeSessionContext {
+	if sessionErr != nil {
+		return nil
+	}
+	return sessions
 }
 
 func resumeTrailLatest(ctx context.Context, cmd *cobra.Command, branch string, force bool, preferredSessionID string) error {
@@ -368,7 +373,7 @@ func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trail
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
 		promoteRemoteTrackingPrimary(ctx, repo, refs)
@@ -387,7 +392,7 @@ func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trail
 }
 
 func readTrailCheckpointSessionContexts(ctx context.Context, store checkpointInfoReader, checkpointID id.CheckpointID) ([]trailResumeSessionContext, error) {
-	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, checkpointID)
+	summary, err := checkpoint.ReadCheckpoint(ctx, store, checkpointID)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint %s: %w", checkpointID, err)
 	}
@@ -440,13 +445,23 @@ func readTrailCheckpointSessionContent(
 	sessionIndex int,
 ) (*checkpoint.SessionContent, error) {
 	if reader, ok := store.(interface {
-		ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
+		ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, string, error)
 	}); ok {
-		return reader.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex) //nolint:wrapcheck // Contextualized by caller.
+		metadata, prompts, err := reader.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // Contextualized by caller.
+		}
+		if metadata == nil {
+			return nil, errors.New("checkpoint session metadata missing")
+		}
+		return &checkpoint.SessionContent{Metadata: *metadata, Prompts: prompts}, nil
 	}
 	metadata, err := store.ReadSessionMetadata(ctx, checkpointID, sessionIndex)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // Contextualized by caller.
+	}
+	if metadata == nil {
+		return nil, errors.New("checkpoint session metadata missing")
 	}
 	return &checkpoint.SessionContent{Metadata: *metadata}, nil
 }

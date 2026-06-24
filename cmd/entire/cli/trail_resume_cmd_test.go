@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,19 @@ func TestValidateTrailResumeOptions(t *testing.T) {
 				t.Fatalf("validateTrailResumeOptions() = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestKnownTrailResumeSessionsForContextTreatsDiscoveryErrorAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	sessions := []trailResumeSessionContext{{
+		SessionID:    "known-session",
+		CheckpointID: "abc123def456",
+	}}
+	got := knownTrailResumeSessionsForContext(sessions, errors.New("branch not found locally or on origin"))
+	if len(got) != 0 {
+		t.Fatalf("knownTrailResumeSessionsForContext() len = %d, want 0: %#v", len(got), got)
 	}
 }
 
@@ -205,7 +219,7 @@ func writeTrailResumeCheckpointSession(
 ) {
 	t.Helper()
 
-	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		CreatedAt:    createdAt,
@@ -217,7 +231,7 @@ func writeTrailResumeCheckpointSession(
 		AuthorName:   "Test",
 		AuthorEmail:  "test@example.com",
 	}); err != nil {
-		t.Fatalf("WriteCommitted(%s): %v", sessionID, err)
+		t.Fatalf("Write(%s): %v", sessionID, err)
 	}
 }
 

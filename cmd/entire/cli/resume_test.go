@@ -531,7 +531,7 @@ func writeCommittedResumeCheckpointWithTranscript(
 ) {
 	t.Helper()
 
-	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).Write(context.Background(), checkpoint.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		CreatedAt:    createdAt,
@@ -602,7 +602,7 @@ func TestResolveLatestCheckpointUsesCheckpointInfoReader(t *testing.T) {
 			oldID: {Sessions: []checkpoint.SessionFilePaths{{Metadata: "old"}}},
 			newID: {Sessions: []checkpoint.SessionFilePaths{{Metadata: "new"}}},
 		},
-		metadata: map[id.CheckpointID][]checkpoint.CommittedMetadata{
+		metadata: map[id.CheckpointID][]checkpoint.Metadata{
 			oldID: {{
 				SessionID: "old-session",
 				CreatedAt: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC),
@@ -625,18 +625,22 @@ func TestResolveLatestCheckpointUsesCheckpointInfoReader(t *testing.T) {
 
 type resumeCheckpointInfoReaderStub struct {
 	summaries map[id.CheckpointID]*checkpoint.CheckpointSummary
-	metadata  map[id.CheckpointID][]checkpoint.CommittedMetadata
+	metadata  map[id.CheckpointID][]checkpoint.Metadata
 }
 
-func (r *resumeCheckpointInfoReaderStub) ReadCommitted(_ context.Context, checkpointID id.CheckpointID) (*checkpoint.CheckpointSummary, error) {
+func (r *resumeCheckpointInfoReaderStub) Read(_ context.Context, checkpointID id.CheckpointID) (*checkpoint.CheckpointSummary, error) {
 	return r.summaries[checkpointID], nil
+}
+
+func (r *resumeCheckpointInfoReaderStub) List(context.Context) ([]checkpoint.CheckpointInfo, error) {
+	return nil, nil
 }
 
 func (r *resumeCheckpointInfoReaderStub) ReadSessionContent(_ context.Context, _ id.CheckpointID, _ int) (*checkpoint.SessionContent, error) {
 	return nil, checkpoint.ErrCheckpointNotFound
 }
 
-func (r *resumeCheckpointInfoReaderStub) ReadSessionMetadata(_ context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.CommittedMetadata, error) {
+func (r *resumeCheckpointInfoReaderStub) ReadSessionMetadata(_ context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, error) {
 	sessions := r.metadata[checkpointID]
 	if sessionIndex < 0 || sessionIndex >= len(sessions) {
 		return nil, checkpoint.ErrCheckpointNotFound
@@ -672,7 +676,7 @@ func TestReadCheckpointInfoFromStoreUsesLatestSessionMetadata(t *testing.T) {
 		},
 	}
 	for _, session := range sessions {
-		if err := store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		if err := store.Write(ctx, checkpoint.Session{
 			CheckpointID: cpID,
 			SessionID:    session.sessionID,
 			CreatedAt:    session.createdAt,
@@ -858,7 +862,7 @@ func TestResumeSingleSession_RejectsPathTraversalSessionID(t *testing.T) {
 	raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"payload"}]}}` + "\n")
 
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "benign-session",
 		Strategy:     "manual-commit",
@@ -925,7 +929,7 @@ func TestRestoreSingleSession_UsesV1TranscriptAndReturnsRestoredSession(t *testi
 	raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"resume v1 fallback"}]}}` + "\n")
 
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    sessionID,
 		Strategy:     "manual-commit",
@@ -960,6 +964,33 @@ func TestRestoreSingleSession_UsesV1TranscriptAndReturnsRestoredSession(t *testi
 	}
 	if strings.Contains(stdout.String(), "session log not available") {
 		t.Fatalf("restoreSingleSession() reported missing log: %q", stdout.String())
+	}
+}
+
+func TestRestoreSingleSession_NoTranscriptDoesNotReportRestored(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	setupResumeTestRepo(t, tmpDir, false)
+
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("abc123abc123")
+	sessionID := "resume-missing-transcript-session"
+
+	ag := &recordingResumeAgent{sessionDir: filepath.Join(tmpDir, "sessions")}
+	var stdout bytes.Buffer
+	_, ok, err := restoreSingleSession(ctx, &stdout, ag, sessionID, cpID, tmpDir, false)
+	if err != nil {
+		t.Fatalf("restoreSingleSession() error = %v", err)
+	}
+	if ok {
+		t.Fatal("restoreSingleSession() ok = true, want false")
+	}
+	if ag.writtenSession != nil {
+		t.Fatalf("restoreSingleSession() wrote a session despite missing transcript: %#v", ag.writtenSession)
+	}
+	if !strings.Contains(stdout.String(), "session log not available") {
+		t.Fatalf("restoreSingleSession() output = %q, want missing log message", stdout.String())
 	}
 }
 
@@ -1157,7 +1188,7 @@ func TestResumeFromCurrentBranch_FastForwardsStaleLocalMetadata(t *testing.T) {
 
 	// Agent must be set so RestoreLogsOnly can resolve a session-write target.
 	v1Store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	if err := v1Store.Write(ctx, checkpoint.Session{
 		CheckpointID: cpID,
 		SessionID:    "2025-01-01-test-session-uuid",
 		Strategy:     "manual-commit",
