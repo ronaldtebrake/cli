@@ -394,8 +394,11 @@ func (s *attributionCheckpointReaderStub) Read(context.Context, checkpointid.Che
 	return s.summary, nil
 }
 
-func (s *attributionCheckpointReaderStub) ReadSessionMetadataAndPrompts(context.Context, checkpointid.CheckpointID, int) (*checkpoint.SessionContent, error) {
-	return s.content, nil
+func (s *attributionCheckpointReaderStub) ReadSessionMetadataAndPrompts(context.Context, checkpointid.CheckpointID, int) (*checkpoint.Metadata, string, error) {
+	if s.content == nil {
+		return nil, "", nil
+	}
+	return &s.content.Metadata, s.content.Prompts, nil
 }
 
 func TestAttributionBlameScopesMixedToSessionNotCheckpoint(t *testing.T) {

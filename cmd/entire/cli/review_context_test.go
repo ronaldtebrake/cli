@@ -472,7 +472,8 @@ func (r *countingReviewContextReader) ReadSessionPrompts(
 	checkpointid.CheckpointID,
 	int,
 ) (string, error) {
-	return "", checkpoint.ErrCheckpointNotFound
+	r.promptCalls++
+	return r.prompts, r.promptErr
 }
 
 func (r *countingReviewContextReader) ReadSessionContent(
@@ -499,12 +500,8 @@ func (r *countingReviewContextReader) ReadSessionMetadataAndPrompts(
 	context.Context,
 	checkpointid.CheckpointID,
 	int,
-) (*checkpoint.SessionContent, error) {
-	r.promptCalls++
-	return &checkpoint.SessionContent{
-		Metadata: r.metadata,
-		Prompts:  r.prompts,
-	}, r.promptErr
+) (*checkpoint.Metadata, string, error) {
+	return &r.metadata, r.prompts, r.promptErr
 }
 
 // TestReviewSessionContext_IncludesActiveSessionWithLatestPrompt verifies

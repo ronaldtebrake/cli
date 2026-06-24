@@ -32,10 +32,6 @@ type reviewContextSessionMetadataReader interface {
 	ReadSessionMetadata(ctx context.Context, checkpointID checkpointid.CheckpointID, sessionIndex int) (*checkpoint.Metadata, error)
 }
 
-type reviewContextSessionMetadataPromptsReader interface {
-	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID checkpointid.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
-}
-
 func reviewCheckpointContext(ctx context.Context, worktreeRoot string, scopeBaseRef string) string {
 	committed := reviewCommittedCheckpointContext(ctx, worktreeRoot, scopeBaseRef)
 	inProgress := reviewSessionContextForCurrentHead(ctx, worktreeRoot)
@@ -330,26 +326,11 @@ func readReviewContextSessionPrompts(
 	cpID checkpointid.CheckpointID,
 	sessionIndex int,
 ) (string, error) {
-	if r, ok := reader.(reviewContextSessionMetadataPromptsReader); ok {
-		content, err := r.ReadSessionMetadataAndPrompts(ctx, cpID, sessionIndex)
-		if err == nil {
-			if content == nil {
-				return "", errors.New("session content is nil")
-			}
-			return content.Prompts, nil
-		}
-		if !errors.Is(err, checkpoint.ErrCheckpointNotFound) {
-			return "", err //nolint:wrapcheck // Best-effort prompt context.
-		}
-	}
-	content, err := reader.ReadSessionContent(ctx, cpID, sessionIndex)
+	prompts, err := reader.ReadSessionPrompts(ctx, cpID, sessionIndex)
 	if err != nil {
 		return "", err //nolint:wrapcheck // Best-effort prompt context.
 	}
-	if content == nil {
-		return "", errors.New("session content is nil")
-	}
-	return content.Prompts, nil
+	return prompts, nil
 }
 
 func reviewSummaryText(summary *checkpoint.Summary) string {

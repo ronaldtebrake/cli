@@ -518,8 +518,8 @@ func (s *stubCommittedReader) ReadSessionPrompts(_ context.Context, _ id.Checkpo
 	return "", errors.New("stub: ReadSessionPrompts not configured")
 }
 
-func (s *stubCommittedReader) ReadSessionMetadataAndPrompts(_ context.Context, _ id.CheckpointID, _ int) (*checkpoint.SessionContent, error) {
-	return nil, errors.New("stub: ReadSessionMetadataAndPrompts not configured")
+func (s *stubCommittedReader) ReadSessionMetadataAndPrompts(_ context.Context, _ id.CheckpointID, _ int) (*checkpoint.Metadata, string, error) {
+	return nil, "", errors.New("stub: ReadSessionMetadataAndPrompts not configured")
 }
 
 func (s *stubCommittedReader) ReadSessionContent(_ context.Context, _ id.CheckpointID, idx int) (*checkpoint.SessionContent, error) {

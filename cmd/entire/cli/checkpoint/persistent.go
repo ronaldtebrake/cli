@@ -1070,10 +1070,10 @@ func (s *GitStore) Read(ctx context.Context, checkpointID id.CheckpointID) (*Che
 	return normalizeCheckpointSummary(&summary), nil
 }
 
-// ReadSessionMetadata reads only the metadata.json for a specific session within a checkpoint.
-// This is a lightweight read that avoids fetching transcript/prompt blobs.
-// sessionIndex is 0-based.
-func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*Metadata, error) {
+// getSessionTree resolves the FetchingTree for a single session within a
+// checkpoint. It returns ErrCheckpointNotFound when the checkpoint or session
+// is missing; all session-level reads share this navigation.
+func (s *GitStore) getSessionTree(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*FetchingTree, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -1083,11 +1083,25 @@ func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Chec
 		return nil, ErrCheckpointNotFound
 	}
 
-	checkpointPath := checkpointID.Path()
-	sessionPath := fmt.Sprintf("%s/%d", checkpointPath, sessionIndex)
-	sessionTree, err := ft.Tree(sessionPath)
+	checkpointTree, err := ft.Tree(checkpointID.Path())
+	if err != nil {
+		return nil, ErrCheckpointNotFound
+	}
+
+	sessionTree, err := checkpointTree.Tree(strconv.Itoa(sessionIndex))
 	if err != nil {
 		return nil, fmt.Errorf("%w: session %d not found: %w", ErrCheckpointNotFound, sessionIndex, err)
+	}
+	return sessionTree, nil
+}
+
+// ReadSessionMetadata reads only the metadata.json for a specific session within a checkpoint.
+// This is a lightweight read that avoids fetching transcript/prompt blobs.
+// sessionIndex is 0-based.
+func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*Metadata, error) {
+	sessionTree, err := s.getSessionTree(ctx, checkpointID, sessionIndex)
+	if err != nil {
+		return nil, err
 	}
 
 	metadataFile, err := sessionTree.File(paths.MetadataFileName)
@@ -1110,66 +1124,39 @@ func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Chec
 
 // ReadSessionMetadataAndPrompts reads session metadata and prompt text without
 // requiring the raw transcript blob.
-func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Propagating context cancellation
-	}
-
-	ft, err := s.getFetchingTree(ctx)
+func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*Metadata, string, error) {
+	sessionTree, err := s.getSessionTree(ctx, checkpointID, sessionIndex)
 	if err != nil {
-		return nil, ErrCheckpointNotFound
+		return nil, "", err
 	}
 
-	checkpointTree, err := ft.Tree(checkpointID.Path())
-	if err != nil {
-		return nil, ErrCheckpointNotFound
-	}
-
-	sessionTree, err := checkpointTree.Tree(strconv.Itoa(sessionIndex))
-	if err != nil {
-		return nil, fmt.Errorf("%w: session %d not found: %w", ErrCheckpointNotFound, sessionIndex, err)
-	}
-
-	result := &SessionContent{}
 	metadataFile, err := sessionTree.File(paths.MetadataFileName)
 	if err != nil {
-		return nil, fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
+		return nil, "", fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
 	}
 	metadataContent, err := metadataFile.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read session metadata: %w", err)
+		return nil, "", fmt.Errorf("failed to read session metadata: %w", err)
 	}
-	if err := json.Unmarshal([]byte(metadataContent), &result.Metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse session metadata: %w", err)
+	var metadata Metadata
+	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
+		return nil, "", fmt.Errorf("failed to parse session metadata: %w", err)
 	}
 
+	var prompts string
 	if file, fileErr := sessionTree.File(paths.PromptFileName); fileErr == nil {
 		if content, contentErr := file.Contents(); contentErr == nil {
-			result.Prompts = content
+			prompts = content
 		}
 	}
 
-	return result, nil
+	return &metadata, prompts, nil
 }
 
 func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err //nolint:wrapcheck // Propagating context cancellation
-	}
-
-	ft, err := s.getFetchingTree(ctx)
+	sessionTree, err := s.getSessionTree(ctx, checkpointID, sessionIndex)
 	if err != nil {
-		return "", ErrCheckpointNotFound
-	}
-
-	checkpointTree, err := ft.Tree(checkpointID.Path())
-	if err != nil {
-		return "", ErrCheckpointNotFound
-	}
-
-	sessionTree, err := checkpointTree.Tree(strconv.Itoa(sessionIndex))
-	if err != nil {
-		return "", fmt.Errorf("%w: session %d not found: %w", ErrCheckpointNotFound, sessionIndex, err)
+		return "", err
 	}
 
 	file, err := sessionTree.File(paths.PromptFileName)
@@ -1189,26 +1176,9 @@ func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.Check
 // Returns ErrCheckpointNotFound if the checkpoint or session doesn't exist.
 // Returns ErrNoTranscript if the session exists but has no transcript.
 func (s *GitStore) ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Propagating context cancellation
-	}
-
-	ft, err := s.getFetchingTree(ctx)
+	sessionTree, err := s.getSessionTree(ctx, checkpointID, sessionIndex)
 	if err != nil {
-		return nil, ErrCheckpointNotFound
-	}
-
-	checkpointPath := checkpointID.Path()
-	checkpointTree, err := ft.Tree(checkpointPath)
-	if err != nil {
-		return nil, ErrCheckpointNotFound
-	}
-
-	// Get the session subdirectory
-	sessionDir := strconv.Itoa(sessionIndex)
-	sessionTree, err := checkpointTree.Tree(sessionDir)
-	if err != nil {
-		return nil, fmt.Errorf("%w: session %d not found: %w", ErrCheckpointNotFound, sessionIndex, err)
+		return nil, err
 	}
 
 	result := &SessionContent{}
@@ -1691,7 +1661,7 @@ func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPat
 // checkpoint.
 func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.RedactedBytes, agentType types.AgentType, startLine int, precomputed *PrecomputedTranscriptBlobs, sessionPath string, entries map[string]object.TreeEntry) error {
 	// Ignore precompute if invariants are violated — fall back to fresh chunking.
-	if precomputed != nil && !precomputed.isUsable() {
+	if precomputed != nil && !precomputed.IsUsable() {
 		precomputed = nil
 	}
 
