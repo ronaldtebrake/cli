@@ -1124,32 +1124,33 @@ func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Chec
 
 // ReadSessionMetadataAndPrompts reads session metadata and prompt text without
 // requiring the raw transcript blob.
-func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
+func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*Metadata, string, error) {
 	sessionTree, err := s.getSessionTree(ctx, checkpointID, sessionIndex)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	result := &SessionContent{}
 	metadataFile, err := sessionTree.File(paths.MetadataFileName)
 	if err != nil {
-		return nil, fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
+		return nil, "", fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
 	}
 	metadataContent, err := metadataFile.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read session metadata: %w", err)
+		return nil, "", fmt.Errorf("failed to read session metadata: %w", err)
 	}
-	if err := json.Unmarshal([]byte(metadataContent), &result.Metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse session metadata: %w", err)
+	var metadata Metadata
+	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
+		return nil, "", fmt.Errorf("failed to parse session metadata: %w", err)
 	}
 
+	var prompts string
 	if file, fileErr := sessionTree.File(paths.PromptFileName); fileErr == nil {
 		if content, contentErr := file.Contents(); contentErr == nil {
-			result.Prompts = content
+			prompts = content
 		}
 	}
 
-	return result, nil
+	return &metadata, prompts, nil
 }
 
 func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {

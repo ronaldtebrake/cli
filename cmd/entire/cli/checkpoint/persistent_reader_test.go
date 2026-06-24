@@ -107,6 +107,6 @@ func (s *committedReaderStub) ReadSessionPrompts(context.Context, id.CheckpointI
 	return "", ErrCheckpointNotFound
 }
 
-func (s *committedReaderStub) ReadSessionMetadataAndPrompts(context.Context, id.CheckpointID, int) (*SessionContent, error) {
-	return nil, ErrCheckpointNotFound
+func (s *committedReaderStub) ReadSessionMetadataAndPrompts(context.Context, id.CheckpointID, int) (*Metadata, string, error) {
+	return nil, "", ErrCheckpointNotFound
 }

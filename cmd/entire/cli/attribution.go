@@ -116,7 +116,7 @@ type attributionSummary struct {
 
 type attributionCheckpointReader interface {
 	Read(ctx context.Context, checkpointID id.CheckpointID) (*checkpoint.CheckpointSummary, error)
-	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
+	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, string, error)
 }
 
 type attributionResolver struct {
@@ -568,16 +568,15 @@ type checkpointSessionForFile struct {
 }
 
 func (r *attributionResolver) readSessionForCheckpoint(cpID id.CheckpointID, index int) (checkpointSessionForFile, error) {
-	content, err := r.store.ReadSessionMetadataAndPrompts(r.ctx, cpID, index)
+	meta, prompts, err := r.store.ReadSessionMetadataAndPrompts(r.ctx, cpID, index)
 	if err != nil {
 		return checkpointSessionForFile{}, err //nolint:wrapcheck // caller skips partial metadata
 	}
-	meta := content.Metadata
 	intent := ""
 	if meta.Summary != nil {
 		intent = strings.TrimSpace(meta.Summary.Intent)
 	}
-	prompt := strings.TrimSpace(content.Prompts)
+	prompt := strings.TrimSpace(prompts)
 	if prompt == "" {
 		prompt = strings.TrimSpace(meta.ReviewPrompt)
 	}
