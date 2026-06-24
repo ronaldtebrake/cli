@@ -419,12 +419,17 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.CLIVersion = versioninfo.Version
 	adopted.TranscriptPath = source.TranscriptPath
 	adopted.BaseCommit = head.Hash().String()
-	adopted.AttributionBaseCommit = head.Hash().String()
+	adopted.RealignAttributionBase(head.Hash().String())
 	adopted.WorktreePath = worktreeRoot
 	adopted.WorktreeID = worktreeID
 	adopted.Branch = branch
 	adopted.LastInteractionTime = &now
 	adopted.Phase = session.PhaseActive
+	adopted.Kind = ""
+	adopted.ReviewSkills = nil
+	adopted.ReviewPrompt = ""
+	adopted.InvestigateRunID = ""
+	adopted.InvestigateTopic = ""
 	adopted.EndedAt = nil
 	adopted.FilesTouched = filesTouched
 
@@ -442,7 +447,6 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.LastCheckpointCommitHash = ""
 
 	adopted.FullyCondensed = false
-	adopted.DivergenceNoticeShown = false
 	adopted.UntrackedFilesAtStart = nil
 	adopted.PromptAttributions = nil
 	adopted.PendingPromptAttribution = nil

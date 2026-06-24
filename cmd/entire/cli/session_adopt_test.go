@@ -744,6 +744,60 @@ func TestSessionAdopt_ClearsLegacyTranscriptOffsets(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_ClearsReviewAndInvestigateMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind session.Kind
+	}{
+		{name: "review", kind: session.KindAgentReview},
+		{name: "investigate", kind: session.KindAgentInvestigate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targetRepo := setupAdoptRepo(t)
+			testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+			t.Chdir(targetRepo)
+
+			adopted, _, err := buildAdoptedSessionState(context.Background(), &session.State{
+				SessionID:         "test-adopt-kind-" + tc.name,
+				AgentType:         agent.AgentTypeClaudeCode,
+				StartedAt:         time.Now().Add(-5 * time.Minute),
+				Phase:             session.PhaseActive,
+				Kind:              tc.kind,
+				ReviewSkills:      []string{"/review"},
+				ReviewPrompt:      "review this branch",
+				InvestigateRunID:  "abcdef012345",
+				InvestigateTopic:  "Why is adoption misclassified?",
+				BaseCommit:        "source-head",
+				WorktreePath:      "/source/repo",
+				LastCheckpointID:  id.MustCheckpointID("abc123def456"),
+				TurnCheckpointIDs: []string{"abc123def456"},
+				PromptWindowBase:  3,
+				SessionTurnCount:  7,
+				AttachedManually:  true,
+			})
+			if err != nil {
+				t.Fatalf("buildAdoptedSessionState failed: %v", err)
+			}
+
+			if adopted.Kind != "" {
+				t.Fatalf("Kind = %q, want empty normal session kind", adopted.Kind)
+			}
+			if len(adopted.ReviewSkills) != 0 {
+				t.Fatalf("ReviewSkills = %v, want empty", adopted.ReviewSkills)
+			}
+			if adopted.ReviewPrompt != "" {
+				t.Fatalf("ReviewPrompt = %q, want empty", adopted.ReviewPrompt)
+			}
+			if adopted.InvestigateRunID != "" {
+				t.Fatalf("InvestigateRunID = %q, want empty", adopted.InvestigateRunID)
+			}
+			if adopted.InvestigateTopic != "" {
+				t.Fatalf("InvestigateTopic = %q, want empty", adopted.InvestigateTopic)
+			}
+		})
+	}
+}
+
 func TestSessionAdopt_CloneSourceStateDoesNotShareMutableFields(t *testing.T) {
 	lastInteraction := time.Now().Add(-1 * time.Minute)
 	endedAt := time.Now()
