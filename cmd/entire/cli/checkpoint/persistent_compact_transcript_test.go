@@ -81,7 +81,7 @@ func TestWriteCommitted_WritesCompactTranscript(t *testing.T) {
 	}
 
 	// Root metadata.json still points at full.jsonl; the compact transcript is
-	// written into the tree (and pushed) but not yet referenced by metadata.
+	// written into the tree (and pushed) and flagged via has_compact_transcript.
 	summary := readSummaryFromBranch(t, repo, cpID)
 	if len(summary.Sessions) != 1 {
 		t.Fatalf("session count = %d, want 1", len(summary.Sessions))
@@ -93,6 +93,9 @@ func TestWriteCommitted_WritesCompactTranscript(t *testing.T) {
 	wantHash := "/" + sessionPath + paths.ContentHashFileName
 	if summary.Sessions[0].ContentHash != wantHash {
 		t.Errorf("sessions[0].content_hash = %q, want %q", summary.Sessions[0].ContentHash, wantHash)
+	}
+	if !summary.Sessions[0].HasCompactTranscript {
+		t.Error("sessions[0].has_compact_transcript = false, want true")
 	}
 }
 
@@ -156,6 +159,9 @@ func TestWriteCommitted_NonCompactableTranscriptPointsAtFull(t *testing.T) {
 	wantTranscript := "/" + sessionPath + paths.TranscriptFileName
 	if summary.Sessions[0].Transcript != wantTranscript {
 		t.Errorf("sessions[0].transcript = %q, want %q", summary.Sessions[0].Transcript, wantTranscript)
+	}
+	if summary.Sessions[0].HasCompactTranscript {
+		t.Error("sessions[0].has_compact_transcript = true for non-compactable transcript, want false")
 	}
 }
 

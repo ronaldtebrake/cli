@@ -406,7 +406,8 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteOpt
 
 	// Write transcript. The pointer targets full.jsonl, which CLI
 	// rewind/resume/explain read by filename. The compact transcript.jsonl is
-	// also written into the tree (so it is pushed) but is not yet pointed at.
+	// also written into the tree (so it is pushed) and signalled to external
+	// readers via the HasCompactTranscript flag below.
 	wroteTranscript, err := s.writeTranscript(ctx, opts, sessionPath, entries)
 	if err != nil {
 		return filePaths, err
@@ -414,6 +415,11 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteOpt
 	if wroteTranscript {
 		filePaths.Transcript = "/" + sessionPath + paths.TranscriptFileName
 		filePaths.ContentHash = "/" + sessionPath + paths.ContentHashFileName
+		// Signal the compact transcript.jsonl when writeTranscript wrote one
+		// into the tree (best-effort; skipped for non-compactable, empty, or
+		// oversized transcripts). Derived from the actual tree entry so the
+		// flag can never drift from what was written.
+		_, filePaths.HasCompactTranscript = entries[sessionPath+paths.CompactTranscriptFileName]
 	}
 
 	// Write prompts via the 7-layer pipeline. OPF runs only in the
