@@ -227,10 +227,13 @@ func runMirrorCreateWizard(cmd *cobra.Command, noWait bool, waitTimeout time.Dur
 	}
 
 	// --- pick repos ---------------------------------------------------------
+	stopRepos := startSpinner(errW, "Fetching available repos")
 	avail, err := client.ListAvailableMirrors(ctx, coreapi.ListAvailableMirrorsParams{})
 	if err != nil {
+		stopRepos(false)
 		return renderCoreError(err)
 	}
+	stopRepos(true)
 	repos := selectableAvailableRepos(avail.Available)
 	if len(repos) == 0 {
 		fmt.Fprintln(errW, "No GitHub repos available to mirror (you need write access to a repo that isn't mirrored yet).")
@@ -243,10 +246,13 @@ func runMirrorCreateWizard(cmd *cobra.Command, noWait bool, waitTimeout time.Dur
 	}
 
 	// --- pick regions -------------------------------------------------------
+	stopRegions := startSpinner(errW, "Fetching regions")
 	regions, err := availableRegions(ctx, client)
 	if err != nil {
+		stopRegions(false)
 		return fmt.Errorf("list regions: %w", err)
 	}
+	stopRegions(true)
 	if len(regions) == 0 {
 		return errors.New("no regions available to mirror into")
 	}
