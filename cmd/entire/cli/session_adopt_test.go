@@ -744,7 +744,7 @@ func TestSessionAdopt_ClearsLegacyTranscriptOffsets(t *testing.T) {
 	}
 }
 
-func TestSessionAdopt_ClearsReviewAndInvestigateMetadata(t *testing.T) {
+func TestSessionAdopt_PreservesReviewAndInvestigateMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		kind session.Kind
@@ -779,20 +779,20 @@ func TestSessionAdopt_ClearsReviewAndInvestigateMetadata(t *testing.T) {
 				t.Fatalf("buildAdoptedSessionState failed: %v", err)
 			}
 
-			if adopted.Kind != "" {
-				t.Fatalf("Kind = %q, want empty normal session kind", adopted.Kind)
+			if adopted.Kind != tc.kind {
+				t.Fatalf("Kind = %q, want %q", adopted.Kind, tc.kind)
 			}
-			if len(adopted.ReviewSkills) != 0 {
-				t.Fatalf("ReviewSkills = %v, want empty", adopted.ReviewSkills)
+			if len(adopted.ReviewSkills) != 1 || adopted.ReviewSkills[0] != "/review" {
+				t.Fatalf("ReviewSkills = %v, want [/review]", adopted.ReviewSkills)
 			}
-			if adopted.ReviewPrompt != "" {
-				t.Fatalf("ReviewPrompt = %q, want empty", adopted.ReviewPrompt)
+			if adopted.ReviewPrompt != "review this branch" {
+				t.Fatalf("ReviewPrompt = %q, want review prompt", adopted.ReviewPrompt)
 			}
-			if adopted.InvestigateRunID != "" {
-				t.Fatalf("InvestigateRunID = %q, want empty", adopted.InvestigateRunID)
+			if adopted.InvestigateRunID != "abcdef012345" {
+				t.Fatalf("InvestigateRunID = %q, want source run ID", adopted.InvestigateRunID)
 			}
-			if adopted.InvestigateTopic != "" {
-				t.Fatalf("InvestigateTopic = %q, want empty", adopted.InvestigateTopic)
+			if adopted.InvestigateTopic != "Why is adoption misclassified?" {
+				t.Fatalf("InvestigateTopic = %q, want source topic", adopted.InvestigateTopic)
 			}
 		})
 	}

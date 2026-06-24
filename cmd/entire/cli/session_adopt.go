@@ -425,11 +425,6 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.Branch = branch
 	adopted.LastInteractionTime = &now
 	adopted.Phase = session.PhaseActive
-	adopted.Kind = ""
-	adopted.ReviewSkills = nil
-	adopted.ReviewPrompt = ""
-	adopted.InvestigateRunID = ""
-	adopted.InvestigateTopic = ""
 	adopted.EndedAt = nil
 	adopted.FilesTouched = filesTouched
 
