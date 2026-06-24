@@ -163,6 +163,9 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 			skipped++
 			continue
 		}
+		if dropped := droppedPlaceholders(r.Template, tmpl); len(dropped) > 0 {
+			fmt.Fprintf(errW, "note: %s no longer references %v\n", r.ID, dropped)
+		}
 		newRaw, err := replaceRunnerTemplate(r.Raw, tmpl)
 		if err != nil {
 			fmt.Fprintf(errW, "skip %s: %v\n", r.ID, err)

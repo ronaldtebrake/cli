@@ -29,39 +29,43 @@ func parseTuneOutput(text string) (map[string]string, error) {
 
 var placeholderRe = regexp.MustCompile(`{{[^{}]+}}`)
 
-// validateNewTemplate rejects a rewritten template that is empty or whose set
-// of {{placeholder}} tokens differs from the original. The backend substitutes
-// those placeholders at run time, so a dropped one silently breaks the runner
-// and an invented one leaves unresolved template text in later runs — and the
-// model is only *asked* to preserve them exactly, not forced to.
+// validateNewTemplate rejects a rewritten template that is empty or that
+// introduces a {{placeholder}} not present in the original. An invented
+// placeholder is unsafe: the backend only substitutes the known set, so a new
+// token renders as literal "{{junk}}" in the prompt. Dropping a placeholder is
+// safe — it just leaves a substitution slot unused (e.g. the model commonly
+// drops the cosmetic {{branch}} since the diff is taken against HEAD) — so
+// drops are allowed here and surfaced as a note by the caller instead.
 func validateNewTemplate(oldTemplate, newTemplate string) error {
 	if strings.TrimSpace(newTemplate) == "" {
 		return errors.New("rewritten template is empty")
 	}
 	oldSet := placeholderSet(oldTemplate)
-	newSet := placeholderSet(newTemplate)
-
-	var missing, added []string
-	for ph := range oldSet {
-		if !newSet[ph] {
-			missing = append(missing, ph)
-		}
-	}
-	for ph := range newSet {
+	var added []string
+	for ph := range placeholderSet(newTemplate) {
 		if !oldSet[ph] {
 			added = append(added, ph)
 		}
 	}
-	sort.Strings(missing)
 	sort.Strings(added)
-
-	if len(missing) > 0 {
-		return fmt.Errorf("rewritten template dropped placeholder(s): %s", strings.Join(missing, ", "))
-	}
 	if len(added) > 0 {
 		return fmt.Errorf("rewritten template added unknown placeholder(s): %s", strings.Join(added, ", "))
 	}
 	return nil
+}
+
+// droppedPlaceholders returns the placeholders present in oldTemplate but not in
+// newTemplate, sorted. Used to inform the user when a rewrite stops using one.
+func droppedPlaceholders(oldTemplate, newTemplate string) []string {
+	newSet := placeholderSet(newTemplate)
+	var dropped []string
+	for ph := range placeholderSet(oldTemplate) {
+		if !newSet[ph] {
+			dropped = append(dropped, ph)
+		}
+	}
+	sort.Strings(dropped)
+	return dropped
 }
 
 func placeholderSet(s string) map[string]bool {

@@ -108,7 +108,7 @@ func TestValidateNewTemplate(t *testing.T) {
 	}{
 		{name: "all placeholders preserved", newTemplate: "New text {{branch}} {{base_branch}} {{previous_findings}} done", wantErr: false},
 		{name: "empty", newTemplate: "   ", wantErr: true},
-		{name: "dropped placeholder", newTemplate: "New text {{branch}} done", wantErr: true},
+		{name: "dropped placeholder is allowed", newTemplate: "New text {{base_branch}} {{previous_findings}} done", wantErr: false},
 		{name: "invented placeholder", newTemplate: "New {{branch}} {{base_branch}} {{previous_findings}} {{secrets}}", wantErr: true},
 	}
 	for _, tc := range tests {
@@ -119,6 +119,19 @@ func TestValidateNewTemplate(t *testing.T) {
 				t.Errorf("validateNewTemplate err=%v, wantErr=%v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestDroppedPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	const old = "Analyze {{branch}} vs {{base_branch}}. Use {{previous_findings}}."
+	got := droppedPlaceholders(old, "Analyze HEAD vs {{base_branch}}. Use {{previous_findings}}.")
+	if len(got) != 1 || got[0] != "{{branch}}" {
+		t.Errorf("dropped = %v, want [{{branch}}]", got)
+	}
+	if d := droppedPlaceholders(old, old); len(d) != 0 {
+		t.Errorf("expected no drops for identical template, got %v", d)
 	}
 }
 
