@@ -105,10 +105,10 @@ func TestWriteCommittedWritesBranchCheckpointVersion(t *testing.T) {
 
 	summary, err := store.Read(ctx, cpID)
 	if err != nil {
-		t.Fatalf("ReadCommitted() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 	if summary == nil {
-		t.Fatal("ReadCommitted() returned nil summary")
+		t.Fatal("Read() returned nil summary")
 	}
 	if summary.CheckpointVersion != CheckpointVersionBranchV1 {
 		t.Fatalf("CheckpointVersion = %q, want %q", summary.CheckpointVersion, CheckpointVersionBranchV1)
