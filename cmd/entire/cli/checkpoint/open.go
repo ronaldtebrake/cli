@@ -31,17 +31,18 @@ type Stores struct {
 }
 
 // Open resolves the checkpoint storage topology and constructs the backing
-// store. It keeps ref resolution and blob-fetcher wiring in one place.
-//
-//nolint:unparam // Callers treat store construction as fallible at this boundary; the git backend has no fallible setup today.
+// store(s). It keeps ref resolution, backend selection, and blob-fetcher wiring
+// in one place. The primary is built through the backend registry; today it
+// always resolves to the git backend, so default behavior is unchanged.
 func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores, error) {
 	refs := resolveOpenRefs(ctx, opts)
-	store := NewGitStore(repo, refs)
-	if opts.BlobFetcher != nil {
-		store.SetBlobFetcher(opts.BlobFetcher)
+	env := OpenEnv{Repo: repo, BlobFetcher: opts.BlobFetcher, Refs: refs}
+	primary, err := build(ctx, env, BackendTypeGit, nil)
+	if err != nil {
+		return nil, err
 	}
 	return &Stores{
-		Persistent: store,
+		Persistent: primary,
 		ephemeral:  newEphemeralStore(repo, refs),
 		refs:       refs,
 	}, nil
