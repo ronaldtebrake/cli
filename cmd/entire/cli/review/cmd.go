@@ -1497,9 +1497,12 @@ func composeSingleAgentSinks(in singleAgentSinkInputs) []reviewtypes.Sink {
 		fmt.Fprintf(in.out, "Running review with %s...\n", in.agentName)
 		return []reviewtypes.Sink{DumpSink{W: in.out}}
 	}
+	tui := NewTUISink([]string{in.agentName}, in.cancelRun, in.out, os.Stdin)
+	postRunOut := &bytes.Buffer{}
 	return []reviewtypes.Sink{
-		NewTUISink([]string{in.agentName}, in.cancelRun, in.out, os.Stdin),
-		DumpSink{W: in.out},
+		tui,
+		DumpSink{W: postRunOut},
+		tuiPostRunCompleteSink{tui: tui, buf: postRunOut, out: in.out},
 	}
 }
 

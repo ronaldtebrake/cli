@@ -63,3 +63,9 @@ func ExposedComposeSingleAgentSinks(in SingleAgentSinkComposeInputs) []reviewtyp
 func ExposedFindTUISink(sinks []reviewtypes.Sink) (*TUISink, bool) {
 	return findTUISink(sinks)
 }
+
+// ExposedIsTUIPostRunCompleteSink reports whether s is the TUI finalizer sink.
+func ExposedIsTUIPostRunCompleteSink(s reviewtypes.Sink) bool {
+	_, ok := s.(tuiPostRunCompleteSink)
+	return ok
+}

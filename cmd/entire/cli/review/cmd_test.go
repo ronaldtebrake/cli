@@ -928,12 +928,12 @@ func TestComposeSingleAgentSinks(t *testing.T) {
 			wantOutput: "Running review with agent-a...",
 		},
 		{
-			name:      "tty uses tui and dump",
+			name:      "tty uses tui buffered dump and post-run finalizer",
 			isTTY:     true,
 			canPrompt: true,
 			wantTUI:   true,
 			wantDump:  true,
-			wantTotal: 2,
+			wantTotal: 3,
 		},
 		{
 			name:       "tty without prompt falls back to running line",
@@ -1020,14 +1020,17 @@ func TestComposeSinks_TUIWritersRunBeforePostRunWriters(t *testing.T) {
 		AgentName: "a",
 		CancelRun: func() {},
 	})
-	if len(single) != 2 {
-		t.Fatalf("single sinks len = %d, want 2", len(single))
+	if len(single) != 3 {
+		t.Fatalf("single sinks len = %d, want 3", len(single))
 	}
 	if _, ok := single[0].(*review.TUISink); !ok {
 		t.Fatalf("single sink[0] = %T, want *TUISink", single[0])
 	}
 	if _, ok := single[1].(review.DumpSink); !ok {
-		t.Fatalf("single sink[1] = %T, want DumpSink", single[1])
+		t.Fatalf("single sink[1] = %T, want buffered DumpSink", single[1])
+	}
+	if !review.ExposedIsTUIPostRunCompleteSink(single[2]) {
+		t.Fatalf("single sink[2] = %T, want TUI post-run finalizer", single[2])
 	}
 }
 
