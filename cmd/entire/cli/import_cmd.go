@@ -8,6 +8,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agentimport"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
 )
 
 func newImportCmd() *cobra.Command {
@@ -50,6 +51,12 @@ not rewindable.`, imp.AgentType()),
 				return fmt.Errorf("open repository: %w", err)
 			}
 			defer repo.Close()
+
+			// Load repo/user-configured redaction (opt-in PII, custom_redactions,
+			// redactor packs) before any checkpoint write. Imported transcripts
+			// are redacted with redact.JSONLBytes, which honors this config; without
+			// it only always-on secret scanning would run on imported history.
+			strategy.EnsureRedactionConfigured()
 
 			res, err := agentimport.Run(ctx, repo, imp, agentimport.Options{
 				RepoRoot: repoRoot, OverridePath: pathFlag, SessionFilter: sessions,

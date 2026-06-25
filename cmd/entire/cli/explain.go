@@ -1667,6 +1667,11 @@ func formatCheckpointOutput(ctx context.Context, summary *checkpoint.CheckpointS
 		}
 
 		hint := fmt.Sprintf("Not generated yet. Run `entire explain --generate %s` to create an AI summary.", checkpointID)
+		if summary != nil && summary.Imported {
+			// Imported history is read-only; --generate is refused for it, so
+			// don't point users at a command that will error out.
+			hint = "No summary. Imported history is read-only, so summaries cannot be generated."
+		}
 		md := buildNoSummaryMarkdown(intent, files, hint)
 		sb.WriteString(renderExplainBody(w, md))
 	}

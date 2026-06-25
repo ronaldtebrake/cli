@@ -1,8 +1,6 @@
 package agentimport
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -116,19 +114,15 @@ func (claudeImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 			ts = time.Time{}
 		}
 
-		slice := joinLines(rawLines[start:end])
-		sum := sha256.Sum256(slice)
-
 		turns = append(turns, Turn{
-			LineStart:   start,
-			LineEnd:     end,
-			UUID:        rec.UUID,
-			ParentUUID:  rec.ParentUUID,
-			Prompt:      transcript.ExtractUserContent(rec.Message),
-			Model:       modelInRange(rawLines, start, end),
-			CreatedAt:   ts,
-			Tokens:      tokens,
-			ContentHash: "sha256:" + hex.EncodeToString(sum[:]),
+			LineStart:  start,
+			LineEnd:    end,
+			UUID:       rec.UUID,
+			ParentUUID: rec.ParentUUID,
+			Prompt:     transcript.ExtractUserContent(rec.Message),
+			Model:      modelInRange(rawLines, start, end),
+			CreatedAt:  ts,
+			Tokens:     tokens,
 		})
 	}
 	return turns, nil

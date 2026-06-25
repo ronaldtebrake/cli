@@ -16,13 +16,13 @@ import (
 // Only set for imported (Kind == "imported") checkpoints.
 type Provenance struct {
 	Source         string `json:"source"`                // e.g. "claude-code"
-	TranscriptPath string `json:"transcript_path"`       // absolute path at import time
+	TranscriptFile string `json:"transcript_file"`       // basename of the source transcript (no absolute path: avoid leaking local usernames/repo layout)
 	SessionID      string `json:"session_id"`            // agent session id
 	TurnUUID       string `json:"turn_uuid"`             // uuid of the user-prompt line that starts this turn
 	ParentUUID     string `json:"parent_uuid,omitempty"` // parent uuid of that line
 	LineStart      int    `json:"line_start"`            // 0-indexed start line of this turn in the source
 	LineEnd        int    `json:"line_end"`              // exclusive end line (next turn start or EOF)
-	ContentHash    string `json:"content_hash"`          // hash of the turn slice
+	ContentHash    string `json:"content_hash"`          // hash of the redacted turn slice (never raw content)
 	ImportVersion  int    `json:"import_version"`        // importer schema version
 }
 

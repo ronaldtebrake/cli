@@ -13,6 +13,7 @@ import (
 
 	cp "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/entireio/cli/redact"
 )
 
 func TestDeriveCheckpointID_StableAndDistinct(t *testing.T) {
@@ -121,6 +122,57 @@ func TestRun_ImportsAndIsIdempotent(t *testing.T) {
 		if !in.Imported {
 			t.Fatalf("checkpoint %s missing Imported flag: %+v", in.CheckpointID, in)
 		}
+	}
+}
+
+// TestRun_AppliesConfiguredCustomRedaction proves imported transcripts honor
+// repo/user-configured custom_redactions (loaded at the command via
+// strategy.EnsureRedactionConfigured), not just always-on secret scanning.
+// It mutates process-global redaction config, so it cannot run in parallel.
+func TestRun_AppliesConfiguredCustomRedaction(t *testing.T) {
+	// A benign marker word that always-on secret scanning would never flag, so
+	// redacting it can only be the configured custom rule's doing.
+	const secret = "bananaphone-marker-word"
+	redact.ConfigureCustomRules(redact.CustomRulesConfig{
+		Inline: map[string]string{"acme-token": secret},
+	})
+	t.Cleanup(func() { redact.ConfigureCustomRules(redact.CustomRulesConfig{}) })
+
+	repo, repoDir := initRepoWithCommit(t)
+	claudeDir := t.TempDir()
+	content := strings.Join([]string{
+		`{"type":"user","uuid":"u1","timestamp":"2026-06-20T00:00:00Z","message":{"role":"user","content":"use ` + secret + ` please"}}`,
+		`{"type":"assistant","uuid":"a1","message":{"id":"m1","model":"claude-x","content":[{"type":"text","text":"ok"}],"usage":{"output_tokens":5}}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(claudeDir, "sess1.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Run(context.Background(), repo, claudeImporter{}, Options{
+		RepoRoot: repoDir, OverridePath: claudeDir,
+		Now: time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TurnsImported != 1 {
+		t.Fatalf("want 1 imported, got %+v", res)
+	}
+
+	stores, err := cp.Open(context.Background(), repo, cp.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cid := DeriveCheckpointID("sess1", "u1")
+	sc, err := stores.Persistent.ReadSessionContent(context.Background(), cid, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sc.Transcript), secret) {
+		t.Fatalf("custom-configured secret was not redacted from imported transcript")
+	}
+	if !strings.Contains(string(sc.Transcript), redact.RedactedPlaceholder) {
+		t.Fatalf("expected %q in redacted transcript, got: %s", redact.RedactedPlaceholder, sc.Transcript)
 	}
 }
 

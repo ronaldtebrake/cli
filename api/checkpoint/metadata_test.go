@@ -9,7 +9,7 @@ func TestProvenanceRoundTrips(t *testing.T) {
 	t.Parallel()
 	p := &Provenance{
 		Source:         "claude-code",
-		TranscriptPath: "/home/u/.claude/projects/x/abc.jsonl",
+		TranscriptFile: "abc.jsonl",
 		SessionID:      "abc",
 		TurnUUID:       "uuid-1",
 		ParentUUID:     "uuid-0",
