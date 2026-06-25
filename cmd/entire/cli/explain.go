@@ -682,6 +682,10 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	}
 	// Handle summary generation — uses raw transcript.
 	if generate {
+		if summary != nil && summary.Imported {
+			stopLoad(false)
+			return fmt.Errorf("cannot generate a summary for imported checkpoint %s: imported history is read-only", fullCheckpointID)
+		}
 		stopLoad(false) // generation prints its own progress to w/errW
 		writeStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
 		if openErr != nil {
@@ -2166,11 +2170,12 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	return points, nil
 }
 
-// getImportedRewindPoints returns read-only imported checkpoints from
-// entire/imports/v1 as RewindPoint entries (flagged Imported, not rewindable).
-// Best-effort: returns nil when the imports ref is absent or unreadable.
+// getImportedRewindPoints returns read-only imported checkpoints (Kind
+// "imported", flagged Imported) as RewindPoint entries. They live on the v1
+// metadata branch but carry no commit trailer, so the commit-driven branch
+// walk never surfaces them. Best-effort: returns nil on read failure.
 func getImportedRewindPoints(ctx context.Context, repo *git.Repository) []strategy.RewindPoint {
-	stores, err := checkpoint.OpenImports(ctx, repo)
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
 	if err != nil {
 		return nil
 	}
@@ -2178,8 +2183,14 @@ func getImportedRewindPoints(ctx context.Context, repo *git.Repository) []strate
 	if err != nil {
 		return nil
 	}
-	points := make([]strategy.RewindPoint, 0, len(infos))
+	points := make([]strategy.RewindPoint, 0)
 	for _, info := range infos {
+		// Imported checkpoints live on v1 alongside normal ones but have no
+		// commit trailer, so the commit-driven walk above never surfaces them.
+		// Add only the imported ones here.
+		if !info.Imported {
+			continue
+		}
 		point := strategy.RewindPoint{
 			ID:           info.CheckpointID.String(),
 			Message:      readLatestCommittedSessionPrompt(ctx, stores.Persistent, info.CheckpointID, info.SessionCount),

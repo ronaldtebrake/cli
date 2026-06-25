@@ -41,10 +41,6 @@ const (
 // MetadataBranchName is the orphan branch used by manual-commit strategy to store metadata
 const MetadataBranchName = "entire/checkpoints/v1"
 
-// ImportsBranchName is the local-only orphan branch holding imported
-// (commit-less, read-only) checkpoints. It is intentionally never pushed.
-const ImportsBranchName = "entire/imports/v1"
-
 // TrailsBranchName is the orphan branch used to store trail metadata.
 // Trails are branch-centric work tracking abstractions that link to checkpoints by branch name.
 const TrailsBranchName = "entire/trails/v1"

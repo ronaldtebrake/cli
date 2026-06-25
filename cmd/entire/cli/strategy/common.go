@@ -339,40 +339,6 @@ func checkpointInfosFromCommitted(committed []checkpoint.CheckpointInfo) []Check
 	return result
 }
 
-// ListCheckpointsWithImports returns committed v1 checkpoints plus imported
-// (local-only) checkpoints from entire/imports/v1, the latter flagged
-// Imported=true. Use this in read/inspect commands that should surface imported
-// history; lifecycle/cleanup paths keep using ListCheckpoints (v1 only).
-func ListCheckpointsWithImports(ctx context.Context) ([]CheckpointInfo, error) {
-	base, err := ListCheckpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open git repository: %w", err)
-	}
-	defer repo.Close()
-
-	imports, err := checkpoint.OpenImports(ctx, repo)
-	if err != nil {
-		return base, nil
-	}
-	committed, err := imports.Persistent.List(ctx)
-	if err != nil {
-		return base, nil
-	}
-	imp := checkpointInfosFromCommitted(committed)
-	for i := range imp {
-		imp[i].Imported = true
-	}
-	all := make([]CheckpointInfo, 0, len(base)+len(imp))
-	all = append(all, base...)
-	all = append(all, imp...)
-	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all, nil
-}
-
 const (
 	entireGitignore    = ".entire/.gitignore"
 	entireDir          = ".entire"

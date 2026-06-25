@@ -32,6 +32,8 @@ type Stores struct {
 
 // Open resolves the checkpoint storage topology and constructs the backing
 // store. It keeps ref resolution and blob-fetcher wiring in one place.
+//
+//nolint:unparam // Callers treat store construction as fallible at this boundary; the git backend has no fallible setup today.
 func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores, error) {
 	refs := resolveOpenRefs(ctx, opts)
 	store := NewGitStore(repo, refs)
@@ -43,14 +45,6 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 		ephemeral:  newEphemeralStore(repo, refs),
 		refs:       refs,
 	}, nil
-}
-
-// OpenImports opens the local-only imports store (entire/imports/v1) used for
-// read-only imported checkpoints. It is a thin convenience over Open with the
-// imports ref topology, shared by every reader/writer of imported history.
-func OpenImports(ctx context.Context, repo *git.Repository) (*Stores, error) {
-	refs := ImportsRefs()
-	return Open(ctx, repo, OpenOptions{Refs: &refs})
 }
 
 func resolveOpenRefs(ctx context.Context, opts OpenOptions) PersistentRefs {

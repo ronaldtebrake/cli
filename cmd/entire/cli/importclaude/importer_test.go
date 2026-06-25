@@ -75,7 +75,7 @@ func TestRun_ImportsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("re-run not idempotent: %+v", res2)
 	}
 
-	stores, err := cp.OpenImports(context.Background(), repo)
+	stores, err := cp.Open(context.Background(), repo, cp.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,20 +83,13 @@ func TestRun_ImportsAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(infos) != 2 || !infos[0].Imported {
-		t.Fatalf("expected 2 imported on imports ref, got %+v", infos)
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 imported checkpoints on v1, got %+v", infos)
 	}
-
-	v1, err := cp.Open(context.Background(), repo, cp.OpenOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	v1infos, err := v1.Persistent.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(v1infos) != 0 {
-		t.Fatalf("imports leaked onto v1: %+v", v1infos)
+	for _, in := range infos {
+		if !in.Imported {
+			t.Fatalf("checkpoint %s missing Imported flag: %+v", in.CheckpointID, in)
+		}
 	}
 }
 
@@ -117,7 +110,7 @@ func TestRun_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry-run should count 2 turns, got %+v", res)
 	}
 
-	stores, err := cp.OpenImports(context.Background(), repo)
+	stores, err := cp.Open(context.Background(), repo, cp.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

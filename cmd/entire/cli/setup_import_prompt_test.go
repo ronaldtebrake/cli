@@ -56,7 +56,7 @@ func TestPromptImportClaudeContext_NonInteractiveDoesNotImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	stores, err := checkpoint.OpenImports(context.Background(), repo)
+	stores, err := checkpoint.Open(context.Background(), repo, checkpoint.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

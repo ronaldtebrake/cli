@@ -8,12 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/cmd/entire/cli/importclaude"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
 func TestImportClaudeCode_EndToEnd(t *testing.T) {
@@ -29,34 +26,33 @@ func TestImportClaudeCode_EndToEnd(t *testing.T) {
 	}, "\n") + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(env.ClaudeProjectDir, sessionID+".jsonl"), []byte(content), 0o644))
 
-	importsRef := plumbing.NewBranchReferenceName(paths.ImportsBranchName)
-
 	// 1. Dry-run reports counts and writes nothing.
 	out := env.RunCLI("import", "claude-code", "--dry-run")
 	require.Contains(t, out, "Would import 2", "dry-run should count 2 turns; got: %s", out)
-	repo, err := git.PlainOpen(env.RepoDir)
-	require.NoError(t, err)
-	if _, err := repo.Reference(importsRef, false); err == nil {
-		t.Fatal("dry-run must not create the imports ref")
-	}
+	require.NotContains(t, env.RunCLI("checkpoint", "list"), "[imported]", "dry-run must not write checkpoints")
 
-	// 2. Real import creates the imports ref.
+	// 2. Real import writes the imported checkpoints (onto the v1 metadata branch).
 	out = env.RunCLI("import", "claude-code")
 	require.Contains(t, out, "Imported 2", "got: %s", out)
-	ref, err := repo.Reference(importsRef, false)
-	require.NoError(t, err, "imports ref should exist after import")
-	require.False(t, ref.Hash().IsZero())
 
-	// 3. checkpoint list surfaces imported entries labeled [imported].
+	// 3. checkpoint list surfaces imported entries labeled [imported], and does
+	//    NOT duplicate them as [temporary] (regression: the imports were once
+	//    mis-read by the shadow-branch scanner).
 	listOut := env.RunCLI("checkpoint", "list")
 	require.Contains(t, listOut, "[imported]", "checkpoint list should label imported checkpoints; got: %s", listOut)
+	require.NotContains(t, listOut, "[temporary]", "imported checkpoints must not appear as temporary; got: %s", listOut)
 
-	// 4. Re-running import is idempotent.
+	// 4. explain resolves an imported checkpoint by ID (regression: explain once
+	//    only consulted the committed/shadow paths and missed imports).
+	importedID := importclaude.DeriveCheckpointID(sessionID, "u1").String()
+	explainOut := env.RunCLI("checkpoint", "explain", importedID)
+	require.Contains(t, explainOut, "first", "explain should show the imported turn's prompt; got: %s", explainOut)
+
+	// 5. Re-running import is idempotent.
 	out = env.RunCLI("import", "claude-code")
 	require.Contains(t, out, "(2 already imported)", "re-run should skip already-imported turns; got: %s", out)
 
-	// 5. Rewinding to an imported checkpoint is refused with a clear message.
-	importedID := importclaude.DeriveCheckpointID(sessionID, "u1").String()
+	// 6. Rewinding to an imported checkpoint is refused with a clear message.
 	rewindOut, rewindErr := env.RunCLIWithError("checkpoint", "rewind", "--to", importedID)
 	require.Error(t, rewindErr, "rewind to imported checkpoint should fail")
 	require.Contains(t, rewindOut, "read-only and not rewindable", "got: %s", rewindOut)

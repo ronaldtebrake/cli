@@ -6,18 +6,7 @@ import (
 
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
-
-func TestImportsRefs_NeverPushed(t *testing.T) {
-	t.Parallel()
-	refs := ImportsRefs()
-	want := plumbing.NewBranchReferenceName(paths.ImportsBranchName)
-	assert.Equal(t, want, refs.Primary, "Primary should target the imports branch")
-	assert.Equal(t, want, refs.Read, "Read should target the imports branch")
-	assert.Empty(t, refs.Push, "imports are local-only and must never be pushed")
-}
 
 // Not parallel: uses t.Chdir() to exercise on-disk settings being ignored.
 func TestResolveCommittedRefs(t *testing.T) {

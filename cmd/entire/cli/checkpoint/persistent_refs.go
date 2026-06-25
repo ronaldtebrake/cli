@@ -26,18 +26,6 @@ func DefaultV1Refs() PersistentRefs {
 	}
 }
 
-// ImportsRefs returns the local-only topology for imported checkpoints.
-// Primary and Read target entire/imports/v1; Push is empty so imports are
-// never sent to a remote in this pass. A future opt-in adds the ref to Push.
-func ImportsRefs() PersistentRefs {
-	importsBranch := plumbing.NewBranchReferenceName(paths.ImportsBranchName)
-	return PersistentRefs{
-		Primary: importsBranch,
-		Read:    importsBranch,
-		Push:    nil,
-	}
-}
-
 // PrimaryFetchableFromOrigin reports whether Primary has an origin-tracking shadow.
 func (r PersistentRefs) PrimaryFetchableFromOrigin() bool {
 	return r.Primary.IsBranch() && slices.Contains(r.Push, r.Primary)

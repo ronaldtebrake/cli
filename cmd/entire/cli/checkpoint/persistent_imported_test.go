@@ -36,7 +36,7 @@ func TestWrite_ImportedSurfacesOnList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := NewGitStore(repo, ImportsRefs())
+	store := NewGitStore(repo, DefaultV1Refs())
 	red, err := redact.JSONLBytes([]byte(`{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}` + "\n"))
 	if err != nil {
 		t.Fatal(err)

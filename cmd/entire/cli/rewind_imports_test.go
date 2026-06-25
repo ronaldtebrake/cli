@@ -39,7 +39,7 @@ func TestRefuseIfImportedCheckpoint(t *testing.T) {
 	t.Chdir(repoDir)
 
 	cid := id.MustCheckpointID("aabbccddeeff")
-	store := checkpoint.NewGitStore(repo, checkpoint.ImportsRefs())
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	red, err := redact.JSONLBytes([]byte(`{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}` + "\n"))
 	if err != nil {
 		t.Fatal(err)

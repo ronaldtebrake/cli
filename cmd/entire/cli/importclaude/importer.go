@@ -45,9 +45,9 @@ func Run(ctx context.Context, repo *git.Repository, opts Options) (Result, error
 		return res, err
 	}
 
-	stores, err := cp.OpenImports(ctx, repo)
+	stores, err := cp.Open(ctx, repo, cp.OpenOptions{})
 	if err != nil {
-		return res, fmt.Errorf("open imports store: %w", err)
+		return res, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	existing := make(map[string]bool)
 	if infos, listErr := stores.Persistent.List(ctx); listErr == nil {

@@ -413,9 +413,10 @@ func runRewindToWithOptions(ctx context.Context, w, errW io.Writer, commitID str
 }
 
 // refuseIfImportedCheckpoint blocks rewinding to imported (read-only,
-// commit-less) checkpoints on entire/imports/v1. It matches commitID against
-// imported checkpoint IDs (full or >=7-char prefix). Best-effort: when the
-// imports ref is absent or unreadable it returns nil so normal rewind proceeds.
+// commit-less) checkpoints. Imported checkpoints live on the v1 metadata
+// branch tagged Imported; this matches commitID against those IDs (full or
+// >=7-char prefix). Best-effort: on read failure it returns nil so normal
+// rewind proceeds.
 func refuseIfImportedCheckpoint(ctx context.Context, errW io.Writer, commitID string) error {
 	repo, err := strategy.OpenRepository(ctx)
 	if err != nil {
@@ -423,7 +424,7 @@ func refuseIfImportedCheckpoint(ctx context.Context, errW io.Writer, commitID st
 	}
 	defer repo.Close()
 
-	stores, err := checkpoint.OpenImports(ctx, repo)
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
 	if err != nil {
 		return nil
 	}
@@ -432,6 +433,9 @@ func refuseIfImportedCheckpoint(ctx context.Context, errW io.Writer, commitID st
 		return nil
 	}
 	for _, in := range infos {
+		if !in.Imported {
+			continue
+		}
 		idStr := in.CheckpointID.String()
 		if idStr == commitID || (len(commitID) >= 7 && strings.HasPrefix(idStr, commitID)) {
 			fmt.Fprintln(errW, "This checkpoint was imported from existing agent history. Imported history is read-only and not rewindable.")
