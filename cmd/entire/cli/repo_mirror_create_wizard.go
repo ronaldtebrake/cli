@@ -136,6 +136,18 @@ func selectableAvailableRepos(avail []coreapi.AvailableMirror) []coreapi.Availab
 	return out
 }
 
+// multiSelectHeight returns an explicit huh multi-select Height that keeps every
+// option visible. huh auto-sizes an unset height to (rendered option lines −
+// title/description rows), which collapses to ~1 visible row for short lists
+// (e.g. 3 regions vs. a long repo list) — the cause of the region picker
+// appearing clamped to one option. We set it to the option count plus slack for
+// the title + (possibly wrapped) description so the whole list shows; huh still
+// scrolls if the list outgrows the terminal.
+func multiSelectHeight(n int) int {
+	const headerSlack = 3 // title (1) + description (1–2 when wrapped)
+	return n + headerSlack
+}
+
 // clusterChoices maps regions to multi-select options (value = bare host),
 // listing every cluster, and returns the host(s) that should start checked:
 // the default cluster for the caller's jurisdiction. is_default is
@@ -339,6 +351,7 @@ func pickRepos(w io.Writer, repos []coreapi.AvailableMirror) ([]coreapi.Availabl
 				Title("Select repos to mirror").
 				Description("Space to select, enter to confirm.").
 				Options(options...).
+				Height(multiSelectHeight(len(options))).
 				Validate(func(s []string) error {
 					if len(s) == 0 {
 						return errors.New("select at least one repo")
@@ -378,6 +391,7 @@ func pickRegions(w io.Writer, regions []regionChoice, jurisdiction string) ([]re
 				Title("Select regions to mirror into").
 				Description("Each repo is mirrored into every selected region.").
 				Options(opts...).
+				Height(multiSelectHeight(len(opts))).
 				Validate(func(s []string) error {
 					if len(s) == 0 {
 						return errors.New("select at least one region")
