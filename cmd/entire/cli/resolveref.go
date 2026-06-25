@@ -129,12 +129,57 @@ func resolveProjectRef(ctx context.Context, c *coreapi.Client, ref string) (stri
 	return project.ID, nil
 }
 
+// resolveRepoRef turns a repo reference into its ULID. A ULID passes through.
+// A name requires a project scope (projectRef, itself a name or ULID) because
+// repo names are unique only within a project: the repo is resolved via the
+// server's case-insensitive by-name lookup, scoped to that project. Unlike the
+// org/project endpoints, the repo list response has no singular field, so a
+// name-filtered query returns the single match (or none) under `repos`.
+func resolveRepoRef(ctx context.Context, c *coreapi.Client, ref, projectRef string) (string, error) {
+	if looksLikeULID(ref) {
+		return ref, nil
+	}
+	if projectRef == "" {
+		return "", fmt.Errorf("repo %q is a name; pass --project <name|ULID> to resolve it, or use a repo ULID", ref)
+	}
+	projID, err := resolveProjectRef(ctx, c, projectRef)
+	if err != nil {
+		return "", err
+	}
+	out, err := c.ListProjectRepos(ctx, coreapi.ListProjectReposParams{ProjectId: projID, Name: coreapi.NewOptString(ref)})
+	if err != nil {
+		if isCoreNotFound(err) {
+			return "", noRepoNamedErr(ref)
+		}
+		return "", err
+	}
+	if len(out.Repos) == 0 {
+		return "", noRepoNamedErr(ref)
+	}
+	return out.Repos[0].ID, nil
+}
+
 func noOrgNamedErr(name string) error {
 	return fmt.Errorf("no org named %q (run `entire org list` to see names, or pass a ULID)", name)
 }
 
 func noProjectNamedErr(name string) error {
 	return fmt.Errorf("no project named %q (run `entire project list` to see names, or pass a ULID)", name)
+}
+
+func noRepoNamedErr(name string) error {
+	return fmt.Errorf("no repo named %q in that project (run `entire repo list <project>` to see names, or pass a ULID)", name)
+}
+
+// resolvedRefLabel formats a reference for a success message so it always
+// names the resolved ULID. When the user passed a ULID (ref == id) it returns
+// the id alone; when they passed a name it returns "name (id)" so the message
+// is unambiguous in environments where names can be reused across orgs/projects.
+func resolvedRefLabel(ref, id string) string {
+	if ref == id {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", ref, id)
 }
 
 // toProjectList adapts a name-filtered project response — which returns the

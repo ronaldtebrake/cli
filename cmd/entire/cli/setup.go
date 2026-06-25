@@ -962,7 +962,7 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 		// Persist the negative locally even if auth is unavailable so a stale true
 		// cache from a previous origin does not inject on the prompt path. No API
 		// report is useful for non-forge remotes.
-		if err := saveTrailsEnabledForRepo(ctx, false); err != nil {
+		if err := saveTrailsEnabledForRemote(ctx, info.Forge, info.Owner, info.Repo, false); err != nil {
 			logging.Debug(ctx, "failed to cache trails enablement", "error", err)
 		}
 		return
@@ -993,7 +993,7 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 		logging.Debug(ctx, "trails enablement probe failed", "error", err)
 		return
 	}
-	if err := saveTrailsEnabledForRepo(ctx, enabled); err != nil {
+	if err := saveTrailsEnabledForRemote(ctx, info.Forge, info.Owner, info.Repo, enabled); err != nil {
 		logging.Debug(ctx, "failed to cache trails enablement", "error", err)
 	}
 }

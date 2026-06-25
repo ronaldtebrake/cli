@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,6 +162,83 @@ func TestResolveProjectRef(t *testing.T) {
 	})
 }
 
+func TestResolveRepoRef(t *testing.T) {
+	t.Parallel()
+	const ulidRepoWeb = "0123456789ABCDEFGHJKMNPQR5"
+
+	t.Run("ULID passes through without a network call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call for a ULID ref")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		got, err := resolveRepoRef(context.Background(), c, ulidRepoWeb, "")
+		if err != nil {
+			t.Fatalf("resolveRepoRef: %v", err)
+		}
+		if got != ulidRepoWeb {
+			t.Errorf("resolveRepoRef = %q, want the ULID unchanged", got)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("ULID ref made %d HTTP calls, want 0", n)
+		}
+	})
+
+	t.Run("name without --project is rejected before any call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call when project scope is missing")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		_, err := resolveRepoRef(context.Background(), c, "web", "")
+		if err == nil || !strings.Contains(err.Error(), "pass --project") {
+			t.Errorf("resolveRepoRef without project: err = %v, want a \"pass --project\" error", err)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("missing-scope made %d HTTP calls, want 0", n)
+		}
+	})
+
+	t.Run("name is resolved server-side, scoped to the project", func(t *testing.T) {
+		t.Parallel()
+		var gotName string
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			gotName = r.URL.Query().Get("name")
+			if err := writeJSON(w, &coreapi.ListProjectReposOutputBody{Repos: []coreapi.Repo{{ID: ulidRepoWeb, Name: "web"}}}); err != nil {
+				t.Errorf("encode repos: %v", err)
+			}
+		})
+		// Project passed as a ULID so resolveProjectRef short-circuits (no call);
+		// only the repo by-name lookup hits the server — one O(1) call.
+		got, err := resolveRepoRef(context.Background(), c, "web", ulidProjectWidgets)
+		if err != nil {
+			t.Fatalf("resolveRepoRef: %v", err)
+		}
+		if got != ulidRepoWeb {
+			t.Errorf("resolveRepoRef = %q, want web id", got)
+		}
+		if gotName != "web" {
+			t.Errorf("server received name=%q, want %q (filtering must be server-side)", gotName, "web")
+		}
+		if n := calls.Load(); n != 1 {
+			t.Errorf("name ref made %d HTTP calls, want 1", n)
+		}
+	})
+
+	t.Run("unknown name is a friendly error", func(t *testing.T) {
+		t.Parallel()
+		c, _ := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			if err := writeJSON(w, &coreapi.ListProjectReposOutputBody{}); err != nil {
+				t.Errorf("encode empty: %v", err)
+			}
+		})
+		_, err := resolveRepoRef(context.Background(), c, "nope", ulidProjectWidgets)
+		if err == nil || !strings.Contains(err.Error(), "no repo named") {
+			t.Errorf("resolveRepoRef unknown name: err = %v, want a \"no repo named\" error", err)
+		}
+	})
+}
+
 func TestResolveAccountRef(t *testing.T) {
 	t.Parallel()
 
@@ -306,6 +384,27 @@ func TestToProjectList(t *testing.T) {
 		t.Parallel()
 		if got := toProjectList(coreapi.OptProject{}); len(got) != 0 {
 			t.Errorf("toProjectList(unset) = %+v, want empty", got)
+		}
+	})
+}
+
+func TestResolvedRefLabel(t *testing.T) {
+	t.Parallel()
+
+	const id = "01J0REPO000000000000000001"
+
+	t.Run("ulid passes through", func(t *testing.T) {
+		t.Parallel()
+		if got := resolvedRefLabel(id, id); got != id {
+			t.Errorf("got %q, want %q", got, id)
+		}
+	})
+
+	t.Run("name includes resolved id", func(t *testing.T) {
+		t.Parallel()
+		want := fmt.Sprintf("acme (%s)", id)
+		if got := resolvedRefLabel("acme", id); got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 }

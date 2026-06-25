@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1138,6 +1139,78 @@ func TestHandleLifecycleTurnStart_WritesPromptContent(t *testing.T) {
 	if string(data) != "create a file called hello.txt" {
 		t.Errorf("expected prompt content 'create a file called hello.txt', got %q", string(data))
 	}
+}
+
+type mockContextInjectorAgent struct {
+	mockLifecycleAgent
+}
+
+var _ agent.ContextInjector = (*mockContextInjectorAgent)(nil)
+
+func (m *mockContextInjectorAgent) InjectionEvent() agent.EventType { return agent.TurnStart }
+
+func (m *mockContextInjectorAgent) RenderContextInjection(agent.ContextInjection) ([]byte, error) {
+	return nil, nil
+}
+
+func addGitHubOriginForLifecycleTest(t *testing.T, repoDir string) {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", "remote", "add", "origin", "git@github.com:acme/repo.git")
+	cmd.Dir = repoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, cmd.Run())
+}
+
+func TestHandleLifecycleTurnStart_ContextInjectionUnknownCacheDoesNotMarkDecided(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir().
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "init.txt", "init")
+	testutil.GitAdd(t, tmpDir, "init.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+	addGitHubOriginForLifecycleTest(t, tmpDir)
+	t.Chdir(tmpDir)
+	paths.ClearWorktreeRootCache()
+	session.ClearGitCommonDirCache()
+
+	ag := &mockContextInjectorAgent{mockLifecycleAgent: *newMockAgent()}
+	sessionID := "test-trail-inject-unknown"
+	event := &agent.Event{Type: agent.TurnStart, SessionID: sessionID, Prompt: "hello", Timestamp: time.Now()}
+
+	require.NoError(t, handleLifecycleTurnStart(context.Background(), ag, event))
+
+	state, err := strategy.LoadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.False(t, state.ContextInjectionDecided, "unknown/missing cache should not permanently suppress later injection")
+}
+
+func TestHandleLifecycleTurnStart_ContextInjectionFreshTrueMarksDecided(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir().
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "init.txt", "init")
+	testutil.GitAdd(t, tmpDir, "init.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+	addGitHubOriginForLifecycleTest(t, tmpDir)
+	t.Chdir(tmpDir)
+	paths.ClearWorktreeRootCache()
+	session.ClearGitCommonDirCache()
+	require.NoError(t, saveTrailsEnabledForRepo(context.Background(), true))
+
+	ag := &mockContextInjectorAgent{mockLifecycleAgent: *newMockAgent()}
+	sessionID := "test-trail-inject-true"
+	scope, err := currentTrailEnablementScope(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, saveTrailEnablementScopeHint(context.Background(), sessionID, scope))
+	event := &agent.Event{Type: agent.TurnStart, SessionID: sessionID, Prompt: "hello", Timestamp: time.Now()}
+
+	require.NoError(t, handleLifecycleTurnStart(context.Background(), ag, event))
+
+	state, err := strategy.LoadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.True(t, state.ContextInjectionDecided, "fresh true cache should make a final injection decision")
 }
 
 func TestHandleLifecycleTurnStart_RecordsGenericSkillSlashEvent(t *testing.T) {
