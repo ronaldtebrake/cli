@@ -419,18 +419,18 @@ func runRewindToWithOptions(ctx context.Context, w, errW io.Writer, commitID str
 func refuseIfImportedCheckpoint(ctx context.Context, errW io.Writer, commitID string) error {
 	repo, err := strategy.OpenRepository(ctx)
 	if err != nil {
-		return nil //nolint:nilerr // fall through to normal rewind resolution
+		return nil
 	}
 	defer repo.Close()
 
 	importsRefs := checkpoint.ImportsRefs()
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &importsRefs})
 	if err != nil {
-		return nil //nolint:nilerr
+		return nil
 	}
 	infos, err := stores.Persistent.List(ctx)
 	if err != nil {
-		return nil //nolint:nilerr
+		return nil
 	}
 	for _, in := range infos {
 		idStr := in.CheckpointID.String()

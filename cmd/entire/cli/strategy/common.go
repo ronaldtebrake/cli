@@ -357,17 +357,19 @@ func ListCheckpointsWithImports(ctx context.Context) ([]CheckpointInfo, error) {
 	importsRefs := checkpoint.ImportsRefs()
 	imports, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &importsRefs})
 	if err != nil {
-		return base, nil //nolint:nilerr // imports are best-effort; v1 results stay valid
+		return base, nil
 	}
 	committed, err := imports.Persistent.List(ctx)
 	if err != nil {
-		return base, nil //nolint:nilerr // imports are best-effort
+		return base, nil
 	}
 	imp := checkpointInfosFromCommitted(committed)
 	for i := range imp {
 		imp[i].Imported = true
 	}
-	all := append(base, imp...)
+	all := make([]CheckpointInfo, 0, len(base)+len(imp))
+	all = append(all, base...)
+	all = append(all, imp...)
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
 	return all, nil
 }

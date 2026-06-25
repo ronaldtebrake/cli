@@ -52,7 +52,7 @@ explainable but is never pushed and not rewindable.`,
 				Now: time.Now(), DryRun: dryRun,
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("import claude-code: %w", err)
 			}
 			verb := "Imported"
 			if dryRun {

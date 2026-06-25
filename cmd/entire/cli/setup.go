@@ -1879,16 +1879,16 @@ func promptImportClaudeContext(ctx context.Context, w io.Writer, opts EnableOpti
 	}
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
-		return nil //nolint:nilerr // not a git repo / nothing to import
+		return nil
 	}
 	now := time.Now()
 	files, err := importclaude.DiscoverSessions(repoRoot, "", now, nil)
 	if err != nil || len(files) == 0 {
-		return nil //nolint:nilerr // best-effort discovery
+		return nil
 	}
 	turnCount := 0
 	for _, f := range files {
-		data, rerr := os.ReadFile(f)
+		data, rerr := os.ReadFile(f) //nolint:gosec // G304: f is a discovered .jsonl in the user's own Claude transcript dir
 		if rerr != nil {
 			continue
 		}
@@ -1926,7 +1926,7 @@ func promptImportClaudeContext(ctx context.Context, w io.Writer, opts EnableOpti
 	defer repo.Close()
 	res, err := importclaude.Run(ctx, repo, importclaude.Options{RepoRoot: repoRoot, Now: now})
 	if err != nil {
-		return err
+		return fmt.Errorf("import claude history: %w", err)
 	}
 	fmt.Fprintf(w, "  ✓ Imported %d turn(s) of Claude history (local, read-only)\n", res.TurnsImported)
 	return nil

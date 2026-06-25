@@ -65,11 +65,21 @@ func SplitTurns(full []byte, subagentsDir string) ([]Turn, error) {
 			return nil, fmt.Errorf("token usage for turn %d: %w", k, err)
 		}
 
-		var line transcript.Line
-		_ = json.Unmarshal(rawLines[start], &line)
-		var ex extraFields
-		_ = json.Unmarshal(rawLines[start], &ex)
-		ts, _ := time.Parse(time.RFC3339, ex.Timestamp)
+		var rec struct {
+			UUID       string          `json:"uuid"`
+			Message    json.RawMessage `json:"message"`
+			ParentUUID string          `json:"parentUuid"`
+			Timestamp  string          `json:"timestamp"`
+		}
+		if err := json.Unmarshal(rawLines[start], &rec); err != nil {
+			// Already validated as a user-prompt line in isUserPromptLine; skip
+			// defensively if it somehow fails to parse here.
+			continue
+		}
+		ts, parseErr := time.Parse(time.RFC3339, rec.Timestamp)
+		if parseErr != nil {
+			ts = time.Time{}
+		}
 
 		slice := joinLines(rawLines[start:end])
 		sum := sha256.Sum256(slice)
@@ -77,9 +87,9 @@ func SplitTurns(full []byte, subagentsDir string) ([]Turn, error) {
 		turns = append(turns, Turn{
 			LineStart:   start,
 			LineEnd:     end,
-			UUID:        line.UUID,
-			ParentUUID:  ex.ParentUUID,
-			Prompt:      transcript.ExtractUserContent(line.Message),
+			UUID:        rec.UUID,
+			ParentUUID:  rec.ParentUUID,
+			Prompt:      transcript.ExtractUserContent(rec.Message),
 			Model:       modelInRange(rawLines, start, end),
 			CreatedAt:   ts,
 			Tokens:      tokens,

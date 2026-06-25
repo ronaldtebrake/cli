@@ -59,7 +59,7 @@ func Run(ctx context.Context, repo *git.Repository, opts Options) (Result, error
 	for _, path := range files {
 		res.SessionsScanned++
 		sessionID := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-		full, readErr := os.ReadFile(path)
+		full, readErr := os.ReadFile(path) //nolint:gosec // G304: path is a discovered .jsonl in the user's own Claude transcript dir
 		if readErr != nil {
 			return res, fmt.Errorf("read %s: %w", path, readErr)
 		}
@@ -99,7 +99,7 @@ func writeTurn(ctx context.Context, stores *cp.Stores, cid id.CheckpointID, sess
 		LineStart: turn.LineStart, LineEnd: turn.LineEnd,
 		ContentHash: turn.ContentHash, ImportVersion: importVersion,
 	}
-	return stores.Persistent.Write(ctx, cp.Session(cp.WriteOptions{
+	if err := stores.Persistent.Write(ctx, cp.Session(cp.WriteOptions{
 		CheckpointID:              cid,
 		SessionID:                 sessionID,
 		CreatedAt:                 turn.CreatedAt,
@@ -113,7 +113,10 @@ func writeTurn(ctx context.Context, stores *cp.Stores, cid id.CheckpointID, sess
 		CheckpointTranscriptStart: turn.LineStart,
 		TokenUsage:                turn.Tokens,
 		Provenance:                prov,
-	}))
+	})); err != nil {
+		return fmt.Errorf("write imported checkpoint %s: %w", cid, err)
+	}
+	return nil
 }
 
 func ptrRefs(r cp.PersistentRefs) *cp.PersistentRefs { return &r }
