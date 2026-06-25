@@ -107,8 +107,9 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 		return err
 	}
 
-	fmt.Fprintln(errW, "Gathering repository signal…")
+	stopGather := startSpinner(errW, "Gathering repository signal")
 	brief := gatherTuningContext(ctx, errW, repoRoot, src, opts.limit, opts.insecureHTTP)
+	stopGather(true)
 	prompt := buildTunePrompt(brief, runners)
 
 	if opts.debugDir != "" {
@@ -165,8 +166,9 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 		return fmt.Errorf("provider %s cannot generate text", provider.Name)
 	}
 
-	fmt.Fprintf(errW, "Tuning %d runner(s) with %s…\n", len(runners), provider.DisplayName)
+	stop := startSpinner(errW, fmt.Sprintf("Tuning %d runner(s) with %s", len(runners), provider.DisplayName))
 	out, err := textGen.GenerateText(ctx, prompt, provider.Model)
+	stop(err == nil)
 	if err != nil {
 		return fmt.Errorf("agent run failed: %w", err)
 	}
