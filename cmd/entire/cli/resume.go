@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -38,16 +39,17 @@ func newResumeCmd() *cobra.Command {
 
 With no argument, opens an interactive picker of stopped sessions across all
 worktrees so you don't have to remember which branch you left work on. Picking
-a session checks out its branch and shows the command to continue the agent. If
-the branch is already checked out in another worktree, you'll be pointed there
-instead.
+a session checks out its branch, restores its checkpoint session log, and asks
+whether Entire should start the agent. If the branch is already checked out in
+another worktree, you'll be pointed there instead.
 
 With a branch argument, switches to that branch and resumes its session directly:
 1. Checks out the specified branch
 2. Finds the session ID from commits unique to this branch (not on main)
 3. Restores the session log if it doesn't exist locally (an existing local log
    is kept as-is; use --force to overwrite it from the checkpoint)
-4. Shows the command to resume the session
+4. In an interactive terminal, asks whether to start the agent; otherwise prints
+   the command to resume the session
 
 If the branch doesn't exist locally but exists on origin, you'll be prompted
 to fetch it.
@@ -197,7 +199,7 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 	if err != nil || len(sessions) == 0 {
 		return err
 	}
-	return displayRestoredSessions(w, sessions)
+	return continueSessionRestoredSessions(ctx, w, sessions)
 }
 
 func restoreByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID id.CheckpointID, force bool) ([]strategy.RestoredSession, error) {
@@ -241,7 +243,16 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	if err != nil || len(sessions) == 0 {
 		return err
 	}
-	return displayRestoredSessions(w, sessions)
+	return continueSessionRestoredSessions(ctx, w, sessions)
+}
+
+func continueSessionRestoredSessions(ctx context.Context, w io.Writer, sessions []strategy.RestoredSession) error {
+	return continueRestoredSessions(ctx, w, sessions, restoredSessionContinueOptions{
+		CanPrompt:     interactive.CanPromptInteractively(),
+		PromptSession: promptTrailRestoredSession,
+		Launch:        launchTrailRestoredSession,
+		Display:       displayRestoredSessions,
+	})
 }
 
 func restoreFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName string, force bool) ([]strategy.RestoredSession, error) {

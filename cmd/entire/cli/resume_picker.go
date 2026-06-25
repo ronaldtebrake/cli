@@ -58,8 +58,8 @@ func (r resumableSession) unresumableReason() string {
 
 // runResumePicker lists stopped sessions across all worktrees and lets the user
 // pick one to resume. Selecting a session checks out its branch (or, when the
-// branch is already checked out in another worktree, points there) and prints
-// the command to continue the agent.
+// branch is already checked out in another worktree, points there), restores its
+// checkpoint session log, and offers to start the agent.
 func runResumePicker(ctx context.Context, cmd *cobra.Command, force bool) error {
 	w := cmd.OutOrStdout()
 
@@ -103,7 +103,7 @@ func runResumePicker(ctx context.Context, cmd *cobra.Command, force bool) error 
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Resume a session").
-				Description("Checks out the branch and prints the command to continue the agent.\n" +
+				Description("Checks out the branch, restores the session log, and offers to start the agent.\n" +
 					"Lists sessions from this machine — to resume a branch from origin, run: entire resume <branch>").
 				Options(options...).
 				Value(&selected),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -704,6 +705,164 @@ func TestDisplayTrailRestoredSessionsMarksActualMostRecent(t *testing.T) {
 	reviewLine := lineContaining(text, "codex resume review-session")
 	if !strings.Contains(reviewLine, "most recent") {
 		t.Fatalf("newest review session command should be marked most recent:\n%s", text)
+	}
+}
+
+func TestContinueRestoredSessionsTTYDeclinePrintsAgentCommands(t *testing.T) {
+	t.Parallel()
+
+	sessions := []strategy.RestoredSession{
+		{
+			SessionID: "codex-session",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "continue implementation",
+			CreatedAt: time.Date(2026, 6, 23, 7, 30, 0, 0, time.UTC),
+		},
+		{
+			SessionID: "claude-session",
+			Agent:     agent.AgentTypeClaudeCode,
+			Prompt:    "review the branch",
+			CreatedAt: time.Date(2026, 6, 23, 7, 40, 0, 0, time.UTC),
+		},
+	}
+	var out strings.Builder
+	launched := false
+
+	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
+		CanPrompt: true,
+		PromptStartAgent: func(context.Context) (bool, error) {
+			return false, nil
+		},
+		PromptSession: func(context.Context, io.Writer, []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
+			t.Fatal("session picker should not run when user declines launching")
+			return strategy.RestoredSession{}, false, nil
+		},
+		Launch: func(context.Context, io.Writer, strategy.RestoredSession) error {
+			launched = true
+			return nil
+		},
+		Display: displayTrailRestoredSessions,
+	})
+	if err != nil {
+		t.Fatalf("continueRestoredSessions() error = %v", err)
+	}
+	if launched {
+		t.Fatal("agent should not launch when user chooses to show commands")
+	}
+	text := out.String()
+	for _, want := range []string{
+		"To continue:",
+		"codex resume codex-session",
+		"claude -r claude-session",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestContinueRestoredSessionsTTYStartSingleLaunchesSession(t *testing.T) {
+	t.Parallel()
+
+	session := strategy.RestoredSession{
+		SessionID: "codex-session",
+		Agent:     types.AgentType("Codex"),
+		Prompt:    "continue implementation",
+		CreatedAt: time.Date(2026, 6, 23, 7, 30, 0, 0, time.UTC),
+	}
+	var out strings.Builder
+	var launched string
+
+	err := continueRestoredSessions(context.Background(), &out, []strategy.RestoredSession{session}, restoredSessionContinueOptions{
+		CanPrompt: true,
+		PromptStartAgent: func(context.Context) (bool, error) {
+			return true, nil
+		},
+		PromptSession: func(context.Context, io.Writer, []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
+			t.Fatal("session picker should not run for a single restored session")
+			return strategy.RestoredSession{}, false, nil
+		},
+		Launch: func(_ context.Context, _ io.Writer, selected strategy.RestoredSession) error {
+			launched = selected.SessionID
+			return nil
+		},
+		Display: displayTrailRestoredSessions,
+	})
+	if err != nil {
+		t.Fatalf("continueRestoredSessions() error = %v", err)
+	}
+	if launched != "codex-session" {
+		t.Fatalf("launched session = %q, want codex-session", launched)
+	}
+	if strings.Contains(out.String(), "To continue") {
+		t.Fatalf("should not print manual commands when launching succeeds:\n%s", out.String())
+	}
+}
+
+func TestContinueRestoredSessionsTTYStartMultipleLaunchesPickerSelection(t *testing.T) {
+	t.Parallel()
+
+	sessions := []strategy.RestoredSession{
+		{SessionID: "first-session", Agent: types.AgentType("Codex")},
+		{SessionID: "second-session", Agent: agent.AgentTypeClaudeCode},
+	}
+	var out strings.Builder
+	pickerCalled := false
+	var launched string
+
+	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
+		CanPrompt: true,
+		PromptStartAgent: func(context.Context) (bool, error) {
+			return true, nil
+		},
+		PromptSession: func(_ context.Context, _ io.Writer, restored []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
+			pickerCalled = true
+			return restored[1], true, nil
+		},
+		Launch: func(_ context.Context, _ io.Writer, selected strategy.RestoredSession) error {
+			launched = selected.SessionID
+			return nil
+		},
+		Display: displayTrailRestoredSessions,
+	})
+	if err != nil {
+		t.Fatalf("continueRestoredSessions() error = %v", err)
+	}
+	if !pickerCalled {
+		t.Fatal("expected picker to run for multiple restored sessions")
+	}
+	if launched != "second-session" {
+		t.Fatalf("launched session = %q, want second-session", launched)
+	}
+}
+
+func TestContinueRestoredSessionsPreferredDeclinePrintsOnlyPreferredSession(t *testing.T) {
+	t.Parallel()
+
+	sessions := []strategy.RestoredSession{
+		{SessionID: "first-session", Agent: types.AgentType("Codex")},
+		{SessionID: "second-session", Agent: agent.AgentTypeClaudeCode},
+	}
+	var out strings.Builder
+
+	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
+		CanPrompt:          true,
+		PreferredSessionID: "second-session",
+		PromptStartAgent: func(context.Context) (bool, error) {
+			return false, nil
+		},
+		Launch:  func(context.Context, io.Writer, strategy.RestoredSession) error { return nil },
+		Display: displayTrailRestoredSessions,
+	})
+	if err != nil {
+		t.Fatalf("continueRestoredSessions() error = %v", err)
+	}
+	text := out.String()
+	if strings.Contains(text, "codex resume first-session") {
+		t.Fatalf("preferred --session fallback should not print unrelated sessions:\n%s", text)
+	}
+	if !strings.Contains(text, "claude -r second-session") {
+		t.Fatalf("preferred session command missing:\n%s", text)
 	}
 }
 

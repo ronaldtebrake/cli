@@ -110,11 +110,12 @@ func newTrailResumeCmd() *cobra.Command {
 The trail may be given as the first argument or via --trail, as a number, id, or
 branch. Without one, the trail for the current branch is used.
 
-By default, interactive terminals show the trail context and let you choose
-between checkpoint sessions on the trail branch when there are multiple.
-Non-interactive runs show the same context and resume the latest checkpoint on
-the trail branch. Use --session or --checkpoint to resume an exact session or
-checkpoint.
+By default, interactive terminals show the trail context, restore the checkpoint
+sessions on the trail branch, and ask whether Entire should start the agent. If
+there are multiple sessions in the checkpoint, you can choose which one to
+start. Non-interactive runs show the same context and print resume commands for
+the latest checkpoint on the trail branch. Use --session or --checkpoint to
+resume an exact session or checkpoint.
 
 Use --repo to assert the GitHub repository for copied commands, and --branch
 with a trail number or id to assert the branch you expect the trail to be
@@ -325,36 +326,14 @@ func trailResumeSkipBranchPrompts(force bool) bool {
 
 func continueTrailRestoredSessions(ctx context.Context, cmd *cobra.Command, sessions []strategy.RestoredSession, preferredSessionID string) error {
 	w := cmd.OutOrStdout()
-	if len(sessions) == 0 {
-		return nil
-	}
-
-	if preferredSessionID != "" {
-		session, ok := findTrailRestoredSession(sessions, preferredSessionID)
-		if !ok {
-			return fmt.Errorf("session %q was not found in the restored checkpoint", preferredSessionID)
-		}
-		if !interactive.CanPromptInteractively() {
-			return displayTrailRestoredSessions(w, []strategy.RestoredSession{session})
-		}
-		printTrailRestoredSessionSummary(w, []strategy.RestoredSession{session})
-		return launchTrailRestoredSession(ctx, w, session)
-	}
-
-	if !interactive.CanPromptInteractively() {
-		return displayTrailRestoredSessions(w, sessions)
-	}
-
-	printTrailRestoredSessionSummary(w, sessions)
-	if len(sessions) == 1 {
-		return launchTrailRestoredSession(ctx, w, sessions[0])
-	}
-
-	selected, ok, err := promptTrailRestoredSession(ctx, w, sessions)
-	if err != nil || !ok {
-		return err
-	}
-	return launchTrailRestoredSession(ctx, w, selected)
+	return continueRestoredSessions(ctx, w, sessions, restoredSessionContinueOptions{
+		CanPrompt:          interactive.CanPromptInteractively(),
+		PreferredSessionID: preferredSessionID,
+		PromptSession:      promptTrailRestoredSession,
+		Launch:             launchTrailRestoredSession,
+		Display:            displayTrailRestoredSessions,
+		PrintSummary:       printTrailRestoredSessionSummary,
+	})
 }
 
 func printTrailRestoredSessionSummary(w io.Writer, sessions []strategy.RestoredSession) {
