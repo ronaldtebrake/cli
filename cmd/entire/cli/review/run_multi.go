@@ -113,19 +113,13 @@ func RunMulti(
 		return summary, nil
 	}
 
+	plannedRuns := plannedAgentRunsForReviewers(reviewers, cfg)
 	states := make([]*perAgentState, len(reviewers))
-	for i, r := range reviewers {
-		// Mirror Run's fallback: when a reviewer carries no model metadata, use
-		// the run config's model so session-to-manifest matching still sees the
-		// model that was actually requested.
-		model := reviewerModelName(r)
-		if model == "" {
-			model = cfg.Model
-		}
+	for i, run := range plannedRuns {
 		states[i] = &perAgentState{
-			name:      r.Name(),
-			agentName: reviewerActualAgentName(r),
-			model:     model,
+			name:      run.Name,
+			agentName: run.AgentName,
+			model:     run.Model,
 			startedAt: time.Now(),
 		}
 	}
@@ -297,6 +291,25 @@ func RunMulti(
 	}
 
 	return summary, firstErr
+}
+
+func plannedAgentRunsForReviewers(reviewers []reviewtypes.AgentReviewer, cfg reviewtypes.RunConfig) []reviewtypes.AgentRun {
+	planned := make([]reviewtypes.AgentRun, len(reviewers))
+	for i, r := range reviewers {
+		// Mirror Run's fallback: when a reviewer carries no model metadata, use
+		// the run config's model so session-to-manifest matching still sees the
+		// model that was actually requested.
+		model := reviewerModelName(r)
+		if model == "" {
+			model = cfg.Model
+		}
+		planned[i] = reviewtypes.AgentRun{
+			Name:      r.Name(),
+			AgentName: reviewerActualAgentName(r),
+			Model:     model,
+		}
+	}
+	return planned
 }
 
 func startFailureTerminal(parentCtx, agentCtx context.Context, agentIdx int, startErr error) taggedEvent {

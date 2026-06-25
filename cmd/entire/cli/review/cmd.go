@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
+	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
@@ -1208,10 +1210,10 @@ func runMultiAgentPath(
 		defer tuiSink.Wait()
 	}
 
-	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{
-		EnrichAgentRun:  reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
-		ReviewerTimeout: timeout,
-	}, sinks)
+	runMultiCfg := reviewtypes.RunConfig{ReviewerTimeout: timeout}
+	runMultiCfg.EnrichAgentRun = reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA, plannedAgentRunsForReviewers(reviewers, runMultiCfg))
+	runMultiCfg.EnrichSummary = reviewSummaryTokenEnricher(worktreeRoot, headSHA)
+	summary, waitErr := RunMulti(runCtx, reviewers, runMultiCfg, sinks)
 	if shouldAbortMultiReview(summary, waitErr) && runCtx.Err() == nil && ctx.Err() == nil {
 		return multiReviewFailureError(waitErr)
 	}
@@ -1484,17 +1486,37 @@ func reviewSummaryTokenEnricher(worktreeRoot, headSHA string) func(context.Conte
 }
 
 func reviewAgentRunTokenEnricher(worktreeRoot, headSHA string) func(context.Context, reviewtypes.AgentRun) reviewtypes.AgentRun {
+	return reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA, nil)
+}
+
+func reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA string, planned []reviewtypes.AgentRun) func(context.Context, reviewtypes.AgentRun) reviewtypes.AgentRun {
 	var mu sync.Mutex
 	usedSessions := map[string]bool{}
+	claimedPlan := make([]bool, len(planned))
+	planned = slices.Clone(planned)
+	runStartedAt := time.Now()
 	return func(ctx context.Context, run reviewtypes.AgentRun) reviewtypes.AgentRun {
 		mu.Lock()
 		defer mu.Unlock()
-		enriched, err := hydrateReviewAgentRunTokensFromCurrentStateWithUsed(ctx, worktreeRoot, headSHA, run, agent.GetByAgentType, usedSessions)
+
+		store, err := session.NewStateStore(ctx)
 		if err != nil {
-			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", err.Error()))
+			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", fmt.Errorf("create session state store: %w", err).Error()))
 			return run
 		}
-		return enriched
+		states, err := store.List(ctx)
+		if err != nil {
+			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", fmt.Errorf("list session states: %w", err).Error()))
+			return run
+		}
+
+		if enriched, ok, sessionID := hydrateReviewAgentRunTokensFromStatesWithPlan(ctx, worktreeRoot, headSHA, run, states, agent.GetByAgentType, planned, runStartedAt, claimedPlan); ok {
+			if sessionID != "" {
+				usedSessions[sessionID] = true
+			}
+			return enriched
+		}
+		return hydrateReviewAgentRunTokensFromStatesWithUsed(ctx, worktreeRoot, headSHA, run, states, agent.GetByAgentType, usedSessions)
 	}
 }
 

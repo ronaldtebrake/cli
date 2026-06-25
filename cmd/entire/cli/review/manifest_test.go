@@ -890,6 +890,66 @@ func TestHydrateReviewAgentRunTokensFromStatesWithUsedDisambiguatesDuplicateSlot
 	}
 }
 
+func TestHydrateReviewAgentRunTokensFromStatesWithPlanClaimsExplicitBeforeDefault(t *testing.T) {
+	t.Parallel()
+	const (
+		sessDefault = "sess-default"
+		sessOpus    = "sess-opus"
+	)
+	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
+	defaultRun := reviewtypes.AgentRun{
+		Name:      "claude-code",
+		AgentName: "claude-code",
+		StartedAt: started,
+	}
+	opusRun := reviewtypes.AgentRun{
+		Name:      "claude-code",
+		AgentName: "claude-code",
+		Model:     "opus",
+		StartedAt: started,
+	}
+	planned := []reviewtypes.AgentRun{defaultRun, opusRun}
+	states := []*session.State{
+		{
+			SessionID:    sessDefault,
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    started.Add(time.Second),
+			AgentType:    agenttypes.AgentType("Claude Code"),
+			ModelName:    "claude-sonnet-4-5",
+			TokenUsage:   &agent.TokenUsage{InputTokens: 20, OutputTokens: 2},
+		},
+		{
+			SessionID:    sessOpus,
+			Kind:         session.KindAgentReview,
+			WorktreePath: "/repo",
+			BaseCommit:   "abc123",
+			StartedAt:    started.Add(2 * time.Second), // newer: a naive default match would grab this
+			AgentType:    agenttypes.AgentType("Claude Code"),
+			ModelName:    "claude-opus-4-1",
+			TokenUsage:   &agent.TokenUsage{InputTokens: 10, OutputTokens: 1},
+		},
+	}
+
+	claimed := make([]bool, len(planned))
+	defaultFirst, ok, sessionID := hydrateReviewAgentRunTokensFromStatesWithPlan(context.Background(), "/repo", "abc123", defaultRun, states, nil, planned, started, claimed)
+	if !ok {
+		t.Fatal("default run did not claim a planned slot")
+	}
+	if sessionID != sessDefault || defaultFirst.Tokens.In != 20 || defaultFirst.Tokens.Out != 2 {
+		t.Fatalf("default run matched session %q tokens %+v, want %s tokens 20/2", sessionID, defaultFirst.Tokens, sessDefault)
+	}
+
+	opusSecond, ok, sessionID := hydrateReviewAgentRunTokensFromStatesWithPlan(context.Background(), "/repo", "abc123", opusRun, states, nil, planned, started, claimed)
+	if !ok {
+		t.Fatal("opus run did not claim a planned slot")
+	}
+	if sessionID != sessOpus || opusSecond.Tokens.In != 10 || opusSecond.Tokens.Out != 1 {
+		t.Fatalf("opus run matched session %q tokens %+v, want %s tokens 10/1", sessionID, opusSecond.Tokens, sessOpus)
+	}
+}
+
 func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThinking(t *testing.T) {
 	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
 	summary := reviewtypes.RunSummary{
