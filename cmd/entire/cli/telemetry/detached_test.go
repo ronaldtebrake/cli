@@ -13,6 +13,7 @@ func TestBuildPluginEventPayload(t *testing.T) {
 	payload := BuildPluginEventPayload("pgr", true, "1.2.3")
 	if payload == nil {
 		t.Fatal("BuildPluginEventPayload returned nil")
+		return
 	}
 	if payload.Event != "cli_plugin_executed" {
 		t.Errorf("Event = %q, want %q", payload.Event, "cli_plugin_executed")
