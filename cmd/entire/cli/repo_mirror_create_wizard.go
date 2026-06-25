@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/huh/v2"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/internal/coreapi"
 )
 
@@ -438,13 +440,22 @@ func createMirrors(ctx context.Context, errW io.Writer, targets []mirrorTarget, 
 		}
 	}
 
-	stop := startSpinner(errW, fmt.Sprintf("Creating %d mirror(s)…", len(targets)))
+	// Docker-pull-style live progress: one line per (repo, region), each
+	// updating independently as its CreateMirror + clone poll advance.
+	labels := make([]string, len(targets))
+	for i, t := range targets {
+		labels[i] = t.owner + "/" + t.repo + " @ " + t.region.host
+	}
+	prog := newMirrorProgress(errW, labels)
+	prog.start()
+
 	results := make([]mirrorResult, len(targets))
 	g := new(errgroup.Group)
 	g.SetLimit(mirrorCreateConcurrency)
 	for i, t := range targets {
 		g.Go(func() error {
-			results[i] = createOneMirror(ctx, t, clientByHost[t.region.host], clientErrByHost[t.region.host], noWait, waitTimeout)
+			results[i] = createOneMirror(ctx, t, clientByHost[t.region.host], clientErrByHost[t.region.host], noWait, waitTimeout,
+				func(status string, final, ok bool) { prog.set(i, status, final, ok) })
 			return nil
 		})
 	}
@@ -454,26 +465,35 @@ func createMirrors(ctx context.Context, errW io.Writer, targets []mirrorTarget, 
 	if err := g.Wait(); err != nil {
 		fmt.Fprintf(errW, "mirror creation: %v\n", err)
 	}
-	stop(true)
+	prog.stop()
 	return results
 }
 
 // createOneMirror registers a single (repo, region) mirror and, unless noWait
 // or the upstream is empty, waits for its initial clone. It never returns an
 // error: every outcome is folded into the mirrorResult so a single failure
-// can't sink the batch.
-func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, clientErr error, noWait bool, waitTimeout time.Duration) mirrorResult {
+// can't sink the batch. report (may be nil) is called as the mirror moves
+// through its phases so the caller can render live progress; the final call has
+// final=true and ok set to whether it succeeded.
+func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, clientErr error, noWait bool, waitTimeout time.Duration, report func(status string, final, ok bool)) mirrorResult {
+	if report == nil {
+		report = func(string, bool, bool) {}
+	}
 	res := mirrorResult{owner: t.owner, repo: t.repo, regionLabel: regionLabel(t.region)}
 	if clientErr != nil {
 		res.status, res.err = mirrorStatusError, clientErr
+		report(mirrorStatusError, true, false)
 		return res
 	}
+	report("creating", false, false)
 	// Same create-then-wait path as the one-shot `repo mirror create <url>`
 	// (createAndAwaitMirror), so both report identical lifecycle states. The
-	// poll is silent; the wizard's aggregate spinner shows liveness.
-	outcome, err := createAndAwaitMirror(ctx, c, t.owner, t.repo, t.region.host, noWait, waitTimeout)
+	// per-poll status drives this mirror's progress line.
+	outcome, err := createAndAwaitMirror(ctx, c, t.owner, t.repo, t.region.host, noWait, waitTimeout,
+		func(s coreapi.MirrorStatus) { report(string(s), false, false) })
 	if outcome.created == nil {
 		res.status, res.err = mirrorStatusError, renderCoreError(err)
+		report(mirrorStatusError, true, false)
 		return res
 	}
 	res.cloneURL = outcome.created.MirrorUrl
@@ -484,6 +504,7 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 		} else {
 			res.status = mirrorStatusRegistered
 		}
+		report(res.status, true, true)
 		return res
 	}
 
@@ -508,7 +529,125 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 	default:
 		nonTerminal()
 	}
+	report(res.status, true, res.err == nil)
 	return res
+}
+
+// mirrorProgress renders a Docker-pull-style live list: one line per mirror,
+// each showing its label and a status that updates independently — a spinner
+// while in flight, ✓/✗ once terminal. On a non-terminal writer (pipes, tests)
+// it degrades to one printed line per mirror as each reaches a terminal state.
+type mirrorProgress struct {
+	w       io.Writer
+	tty     bool
+	labelW  int
+	mu      sync.Mutex
+	lines   []mirrorProgressLine
+	frame   int
+	painted bool
+	done    chan struct{}
+	stopped chan struct{}
+}
+
+type mirrorProgressLine struct {
+	label   string
+	status  string
+	final   bool
+	ok      bool
+	printed bool // non-tty: terminal line already emitted
+}
+
+func newMirrorProgress(w io.Writer, labels []string) *mirrorProgress {
+	lines := make([]mirrorProgressLine, len(labels))
+	labelW := 0
+	for i, l := range labels {
+		lines[i] = mirrorProgressLine{label: l, status: "queued"}
+		if n := len(l); n > labelW {
+			labelW = n
+		}
+	}
+	return &mirrorProgress{w: w, tty: interactive.IsTerminalWriter(w), labelW: labelW, lines: lines}
+}
+
+// start paints the initial block and, on a TTY, begins animating the spinner.
+func (p *mirrorProgress) start() {
+	if !p.tty {
+		return
+	}
+	p.done = make(chan struct{})
+	p.stopped = make(chan struct{})
+	p.mu.Lock()
+	p.renderLocked()
+	p.mu.Unlock()
+	go func() {
+		defer close(p.stopped)
+		ticker := time.NewTicker(spinnerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-p.done:
+				return
+			case <-ticker.C:
+				p.mu.Lock()
+				p.frame++
+				p.renderLocked()
+				p.mu.Unlock()
+			}
+		}
+	}()
+}
+
+// set updates one mirror's line. On a TTY it repaints immediately; otherwise it
+// prints a single line the first time the mirror reaches a terminal state.
+func (p *mirrorProgress) set(i int, status string, final, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lines[i].status = status
+	p.lines[i].final = final
+	p.lines[i].ok = ok
+	switch {
+	case p.tty:
+		p.renderLocked()
+	case final && !p.lines[i].printed:
+		p.lines[i].printed = true
+		fmt.Fprintf(p.w, "%s %s %s\n", terminalIcon(ok), p.lines[i].label, status)
+	}
+}
+
+// stop ends the animation and leaves the final state painted.
+func (p *mirrorProgress) stop() {
+	if !p.tty {
+		return
+	}
+	close(p.done)
+	<-p.stopped
+	p.mu.Lock()
+	p.renderLocked()
+	p.mu.Unlock()
+}
+
+// renderLocked repaints the whole block in place. Caller holds p.mu.
+func (p *mirrorProgress) renderLocked() {
+	if p.painted {
+		fmt.Fprintf(p.w, "\033[%dA", len(p.lines)) // move up to the block's top
+	}
+	p.painted = true
+	for _, ln := range p.lines {
+		var icon string
+		if ln.final {
+			icon = terminalIcon(ln.ok)
+		} else {
+			icon = spinnerFrames[p.frame%len(spinnerFrames)]
+		}
+		fmt.Fprintf(p.w, "\r\033[K%-*s  %s %s\n", p.labelW, ln.label, icon, ln.status)
+	}
+}
+
+func terminalIcon(ok bool) string {
+	if ok {
+		return "✓"
+	}
+	return "✗"
 }
 
 // reportMirrorResults renders the results table, a copy-pasteable git-clone

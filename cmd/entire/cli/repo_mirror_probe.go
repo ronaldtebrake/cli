@@ -95,7 +95,10 @@ type mirrorStatusGetter interface {
 // info/refs probe: the control plane now reports clone readiness directly via
 // Mirror.status, so a single authenticated control-plane call per tick suffices
 // — no repo-scoped token exchange or data-plane round trip.
-func awaitMirrorReady(ctx context.Context, c mirrorStatusGetter, mirrorID string, timeout time.Duration) (coreapi.MirrorStatus, error) {
+//
+// onStatus (may be nil) is invoked with each observed status so callers can show
+// live per-mirror progress (e.g. the wizard's Docker-style line list).
+func awaitMirrorReady(ctx context.Context, c mirrorStatusGetter, mirrorID string, timeout time.Duration, onStatus func(coreapi.MirrorStatus)) (coreapi.MirrorStatus, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -115,6 +118,9 @@ func awaitMirrorReady(ctx context.Context, c mirrorStatusGetter, mirrorID string
 		}
 		if s, ok := m.Status.Get(); ok {
 			last = s
+			if onStatus != nil {
+				onStatus(s)
+			}
 			switch s {
 			case coreapi.MirrorStatusReady:
 				return s, nil

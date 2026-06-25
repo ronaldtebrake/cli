@@ -173,7 +173,9 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
 				errW := cmd.ErrOrStderr()
 				stop := startSpinner(errW, fmt.Sprintf("Cloning %s/%s into %s", owner, repo, clusterHost))
-				outcome, err := createAndAwaitMirror(ctx, c, owner, repo, clusterHost, noWait, waitTimeout)
+				// nil onStatus: the one-shot's single spinner shows liveness; the
+				// per-mirror progress lines are the wizard's concern.
+				outcome, err := createAndAwaitMirror(ctx, c, owner, repo, clusterHost, noWait, waitTimeout, nil)
 				// Only a confirmed-ready clone earns the ✓; everything else
 				// (empty, --no-wait, suspended, failed, timeout) erases the line
 				// and lets reportOneShotMirror print the specific outcome.
@@ -204,7 +206,7 @@ type mirrorCreateOutcome struct {
 // status. The returned error is the create error (when outcome.created is nil)
 // or the wait error — a status sentinel (errMirrorCloneFailed /
 // errMirrorSuspended) or a timeout; callers read outcome.status for the state.
-func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, clusterHost string, noWait bool, timeout time.Duration) (mirrorCreateOutcome, error) {
+func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, clusterHost string, noWait bool, timeout time.Duration, onStatus func(coreapi.MirrorStatus)) (mirrorCreateOutcome, error) {
 	created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
 		Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
 		Owner:       owner,
@@ -218,7 +220,7 @@ func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, c
 	if noWait || created.Empty {
 		return outcome, nil
 	}
-	status, werr := awaitMirrorReady(ctx, c, created.MirrorId, timeout)
+	status, werr := awaitMirrorReady(ctx, c, created.MirrorId, timeout, onStatus)
 	outcome.status = status
 	outcome.polled = true
 	return outcome, werr

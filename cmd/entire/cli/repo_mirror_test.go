@@ -60,7 +60,7 @@ func TestAwaitMirrorReady(t *testing.T) {
 
 	t.Run("ready resolves with no error", func(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusReady}}
-		status, err := awaitMirrorReady(ctx, f, "m", time.Second)
+		status, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
 		require.NoError(t, err)
 		require.Equal(t, coreapi.MirrorStatusReady, status)
 	})
@@ -69,7 +69,7 @@ func TestAwaitMirrorReady(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{
 			coreapi.MirrorStatusProcessing, coreapi.MirrorStatusProcessing, coreapi.MirrorStatusReady,
 		}}
-		status, err := awaitMirrorReady(ctx, f, "m", time.Second)
+		status, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
 		require.NoError(t, err)
 		require.Equal(t, coreapi.MirrorStatusReady, status)
 		require.GreaterOrEqual(t, f.calls, 3)
@@ -77,21 +77,21 @@ func TestAwaitMirrorReady(t *testing.T) {
 
 	t.Run("failed returns errMirrorCloneFailed", func(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusFailed}}
-		status, err := awaitMirrorReady(ctx, f, "m", time.Second)
+		status, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
 		require.ErrorIs(t, err, errMirrorCloneFailed)
 		require.Equal(t, coreapi.MirrorStatusFailed, status)
 	})
 
 	t.Run("suspended returns errMirrorSuspended", func(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusSuspended}}
-		status, err := awaitMirrorReady(ctx, f, "m", time.Second)
+		status, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
 		require.ErrorIs(t, err, errMirrorSuspended)
 		require.Equal(t, coreapi.MirrorStatusSuspended, status)
 	})
 
 	t.Run("never-ready times out", func(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusProcessing}}
-		_, err := awaitMirrorReady(ctx, f, "m", 20*time.Millisecond)
+		_, err := awaitMirrorReady(ctx, f, "m", 20*time.Millisecond, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }

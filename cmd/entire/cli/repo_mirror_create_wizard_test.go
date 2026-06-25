@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -133,6 +134,26 @@ func TestMirrorCreateResultRow(t *testing.T) {
 		[]string{"octocat/hello", "us-east", "error", placeholderDash},
 		mirrorCreateResultRow(mirrorResult{owner: "octocat", repo: "hello", regionLabel: "us-east", status: "error"}),
 	)
+}
+
+func TestMirrorProgress_NonTTY(t *testing.T) {
+	t.Parallel()
+	// A bytes.Buffer is non-interactive, so the progress degrades to one printed
+	// line per mirror as it reaches a terminal state — no cursor escapes, and
+	// non-final updates print nothing.
+	var buf bytes.Buffer
+	p := newMirrorProgress(&buf, []string{"a/x @ aws-eu-central-1.entire.io", "b/y @ aws-us-east-2.entire.io"})
+	p.start()
+	p.set(0, "processing", false, false) // in-flight: prints nothing
+	require.Empty(t, buf.String())
+	p.set(0, "ready", true, true)
+	p.set(1, "failed", true, false)
+	p.stop()
+
+	out := buf.String()
+	require.Contains(t, out, "✓ a/x @ aws-eu-central-1.entire.io ready")
+	require.Contains(t, out, "✗ b/y @ aws-us-east-2.entire.io failed")
+	require.NotContains(t, out, "\033[", "non-tty output must not emit cursor escapes")
 }
 
 func TestClustersToRegions(t *testing.T) {
