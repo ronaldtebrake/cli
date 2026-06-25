@@ -253,6 +253,10 @@ type State struct {
 	// Token usage tracking (accumulated across all checkpoints in this session)
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
 
+	// CheckpointTokenUsage tracks hook-provided token usage since the last condensation.
+	// This is checkpoint-scoped; TokenUsage remains the session-wide total.
+	CheckpointTokenUsage *agent.TokenUsage `json:"checkpoint_token_usage,omitempty"`
+
 	// SkillEvents records explicit native skill signals observed during this session.
 	// Stored as sidecar metadata so consumers can collapse skill-related transcript events
 	// without mutating the raw agent transcript.

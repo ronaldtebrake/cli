@@ -857,8 +857,15 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 		transcriptLinesAtStart = preState.TranscriptOffset
 	}
 
-	// Calculate token usage - prefer SubagentAwareExtractor to include subagent tokens
-	tokenUsage := agent.CalculateTokenUsage(ctx, ag, transcriptData, transcriptLinesAtStart, subagentsDir)
+	// Resolve token usage. Hook-provided counts (e.g., Cursor's stop hook,
+	// which is the only authoritative source for Cursor sessions because the
+	// JSONL transcript has no usage fields) take precedence; otherwise fall
+	// back to transcript-based computation, preferring SubagentAwareExtractor
+	// to include subagent tokens.
+	tokenUsage := event.TokenUsage
+	if tokenUsage == nil {
+		tokenUsage = agent.CalculateTokenUsage(ctx, ag, transcriptData, transcriptLinesAtStart, subagentsDir)
+	}
 
 	// Build fully-populated step context and delegate to strategy
 	stepCtx := strategy.StepContext{
