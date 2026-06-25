@@ -58,6 +58,11 @@ const (
 	// to Kind.IsInvestigate so the checkpoint's HasInvestigation umbrella
 	// flag keeps covering them.
 	KindAgentInvestigate Kind = "agent_investigate"
+
+	// KindImported tags a checkpoint created by `entire import` from a
+	// pre-existing agent transcript. Imported checkpoints are read-only,
+	// commit-less, and (this pass) local-only.
+	KindImported Kind = "imported"
 )
 
 // IsReview reports whether this Kind counts as "a review happened" for the
