@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -91,7 +92,8 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 
 	// Onboarding: a repo with no runners yet gets the default set scaffolded
 	// (on confirmation), which tune then tailors below.
-	if err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes); err != nil {
+	created, err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes)
+	if err != nil {
 		return err
 	}
 
@@ -106,17 +108,22 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 
 	if !opts.run {
 		fmt.Fprintln(w, prompt)
+		if len(created) > 0 {
+			fmt.Fprintf(errW, "\nCreated %d working default runner(s) (untracked). They are functional as-is; paste the prompt above into your agent to tailor them to this repo.\n", len(created))
+		}
 		fmt.Fprintf(errW, "\n%d runner(s) in scope. Paste the prompt above into your agent, or re-run with --run to apply headlessly.\n", len(runners))
 		return nil
 	}
 
-	return applyTuneWithAgent(ctx, w, errW, runners, prompt)
+	return applyTuneWithAgent(ctx, w, errW, runners, prompt, created)
 }
 
 // applyTuneWithAgent runs the prompt through the configured summary provider
 // (prompt -> text), parses the runner-id -> template map it returns, and
-// surgically rewrites each runner file's prompt.template in place.
-func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRunner, prompt string) error {
+// surgically rewrites each runner file's prompt.template in place. createdIDs
+// are runners onboarding just scaffolded from defaults; any of those left
+// un-tailored is flagged so it isn't committed as if it were repo-specific.
+func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRunner, prompt string, createdIDs []string) error {
 	// Reuse the summary-provider resolution (selection + persistence), but pull
 	// the raw TextGenerator rather than provider.Generator: the latter is a
 	// summarize.Generator that turns a transcript Input into a checkpoint
@@ -151,6 +158,7 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 	}
 
 	updated, skipped := 0, 0
+	tailored := make(map[string]bool)
 	for id, tmpl := range templates {
 		r, ok := byID[normalizeRunnerID(id)]
 		if !ok {
@@ -179,19 +187,29 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 			return fmt.Errorf("writing %s: %w", r.Path, err)
 		}
 		fmt.Fprintf(w, "updated %s\n", filepath.Base(r.Path))
+		tailored[normalizeRunnerID(r.ID)] = true
 		updated++
 	}
 
-	if updated > 0 {
+	switch {
+	case updated > 0:
 		fmt.Fprintf(w, "\nUpdated %d runner(s). Review with: git diff .entire/runners\n", updated)
-		return nil
-	}
-	// Nothing applied. An empty proposal set ({}) is a legitimate no-op; but if
-	// the model proposed templates and every one was rejected or out of scope,
-	// that is a failed run, not a clean no-op.
-	if skipped > 0 {
+	case len(createdIDs) == 0 && skipped > 0:
+		// Existing runners, model proposed templates, all rejected — a failed run.
+		// (When onboarding just created the set, an un-tailored runner is reported
+		// below as a generic default instead, which is more actionable.)
 		return fmt.Errorf("model proposed %d template(s) but all were rejected or out of scope (see messages above)", skipped)
+	case len(createdIDs) == 0:
+		fmt.Fprintln(w, "No runner changes proposed.")
 	}
-	fmt.Fprintln(w, "No runner changes proposed.")
+
+	// Runners onboarding scaffolded but tuning didn't tailor remain the generic
+	// defaults. Those are working minimal prompts (valid output contract), so
+	// they're committable as-is — just note which are still generic.
+	if untailored := untailoredRunners(createdIDs, tailored); len(untailored) > 0 {
+		fmt.Fprintf(errW, "\n%d runner(s) kept as working defaults (generic, not tailored to this repo): %s\n",
+			len(untailored), strings.Join(untailored, ", "))
+		fmt.Fprintln(errW, "They are functional as-is; re-run `entire trail tune --run` to tailor them.")
+	}
 	return nil
 }

@@ -135,6 +135,24 @@ func TestDroppedPlaceholders(t *testing.T) {
 	}
 }
 
+func TestUntailoredRunners(t *testing.T) {
+	t.Parallel()
+
+	created := []string{"trail-risk", "trail-drift", "trail-review"}
+	tailored := map[string]bool{"risk": true} // normalized IDs (no "trail-" prefix)
+
+	got := untailoredRunners(created, tailored)
+	want := []string{"trail-drift", "trail-review"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("untailoredRunners = %v, want %v", got, want)
+	}
+
+	// Nothing created → nothing untailored, even with no tailoring recorded.
+	if u := untailoredRunners(nil, map[string]bool{}); len(u) != 0 {
+		t.Errorf("expected empty, got %v", u)
+	}
+}
+
 func TestParseTuneOutput(t *testing.T) {
 	t.Parallel()
 

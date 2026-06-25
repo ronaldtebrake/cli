@@ -54,6 +54,21 @@ func validateNewTemplate(oldTemplate, newTemplate string) error {
 	return nil
 }
 
+// untailoredRunners returns the created runner IDs that tuning did NOT tailor
+// (still generic defaults), sorted. These were scaffolded by onboarding but
+// left unchanged — skipped, omitted by the model, or returned verbatim — so
+// they must not be presented as repo-tailored.
+func untailoredRunners(createdIDs []string, tailored map[string]bool) []string {
+	var out []string
+	for _, id := range createdIDs {
+		if !tailored[normalizeRunnerID(id)] {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // droppedPlaceholders returns the placeholders present in oldTemplate but not in
 // newTemplate, sorted. Used to inform the user when a rewrite stops using one.
 func droppedPlaceholders(oldTemplate, newTemplate string) []string {

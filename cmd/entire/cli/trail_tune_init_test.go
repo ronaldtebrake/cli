@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/runnerdefaults"
@@ -37,6 +38,21 @@ func TestRunnerDefaults_AreValidAndComplete(t *testing.T) {
 		if doc.ID == "" || doc.Output.ResultType == "" || doc.Prompt.Template == "" {
 			t.Errorf("%s: missing contract fields (id=%q result_type=%q template_empty=%v)",
 				f.Name, doc.ID, doc.Output.ResultType, doc.Prompt.Template == "")
+			continue
+		}
+		// A default must be a *working* minimal prompt: its template has to spell
+		// out the output contract its adapter expects, else it produces nothing
+		// usable when left un-tailored.
+		contractToken := map[string]string{
+			"trail_monitor":        `"value"`,
+			"code_review_comments": `"comments"`,
+			"trail_review_focus":   `"files"`,
+			"trail_summary":        "Problem",
+		}[doc.Output.ResultType]
+		if contractToken == "" {
+			t.Errorf("%s: unknown result_type %q (no working-contract check)", f.Name, doc.Output.ResultType)
+		} else if !strings.Contains(doc.Prompt.Template, contractToken) {
+			t.Errorf("%s: template missing its output contract %q — not a working prompt", f.Name, contractToken)
 		}
 	}
 }
@@ -47,8 +63,12 @@ func TestEnsureRunnersPresent_CreatesDefaultsWhenEmpty(t *testing.T) {
 	repoRoot := t.TempDir()
 	var out, errOut bytes.Buffer
 
-	if err := ensureRunnersPresent(&out, &errOut, repoRoot, true /* assumeYes */); err != nil {
+	created, err := ensureRunnersPresent(&out, &errOut, repoRoot, true /* assumeYes */)
+	if err != nil {
 		t.Fatalf("ensureRunnersPresent: %v", err)
+	}
+	if len(created) < 7 {
+		t.Fatalf("expected >=7 created runner IDs, got %d: %v", len(created), created)
 	}
 
 	written, err := filepath.Glob(filepath.Join(repoRoot, ".entire", "runners", "*.json"))
@@ -81,8 +101,12 @@ func TestEnsureRunnersPresent_NoopWhenRunnersExist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ensureRunnersPresent(&bytes.Buffer{}, &bytes.Buffer{}, repoRoot, true); err != nil {
+	created, err := ensureRunnersPresent(&bytes.Buffer{}, &bytes.Buffer{}, repoRoot, true)
+	if err != nil {
 		t.Fatalf("ensureRunnersPresent: %v", err)
+	}
+	if len(created) != 0 {
+		t.Errorf("expected no created runners when they already exist, got %v", created)
 	}
 	// No defaults should have been scaffolded over the existing runner.
 	after, err := filepath.Glob(filepath.Join(dir, "*.json"))
