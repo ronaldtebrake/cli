@@ -110,7 +110,7 @@ func TestReviewTrailFindingInputsSplitsTopLevelMarkedFindings(t *testing.T) {
 
 func TestReviewTrailFindingInputsAcceptsRunnerStyleJSONLastLine(t *testing.T) {
 	verdict := `Intermediate prose that should be ignored for posting.
-{"summary":"","comments":[{"severity":"high","confidence":0.92,"body":"` + "`" + `daytona.ts` + "`" + ` rejects public repos without a token; allow public clones or mint a token.","location":{"granularity":"line","file_path":"daytona.ts","start_line":901}},{"severity":"P2","confidence":0.7,"body":"Delete failures are swallowed, orphaning provider snapshots.","location":{"granularity":"range","file_path":"daytona.ts","start_line":966,"end_line":970}}]}`
+{"summary":"","comments":[{"severity":"high","confidence":0.92,"body":"` + "`" + `daytona.ts` + "`" + ` rejects public repos without a token; allow public clones or mint a token.","location":{"granularity":"line","file_path":"daytona.ts","start_line":901,"selected_text":"return err"}},{"severity":"P2","confidence":0.7,"body":"Delete failures are swallowed, orphaning provider snapshots.","location":{"granularity":"range","file_path":"daytona.ts","start_line":966,"end_line":970}}]}`
 
 	inputs := reviewTrailFindingInputs("general", verdict)
 	if len(inputs) != 2 {
@@ -127,6 +127,9 @@ func TestReviewTrailFindingInputsAcceptsRunnerStyleJSONLastLine(t *testing.T) {
 	}
 	if inputs[0].Location.Granularity != reviewTrailGranularityLine || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "daytona.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 901 {
 		t.Fatalf("location[0] = %+v, want daytona.ts:901", inputs[0].Location)
+	}
+	if inputs[0].Location.SelectedText == nil || *inputs[0].Location.SelectedText != "return err" {
+		t.Fatalf("selected_text[0] = %v, want preserved JSON selected_text", inputs[0].Location.SelectedText)
 	}
 	if inputs[1].Severity == nil || *inputs[1].Severity != "medium" {
 		t.Fatalf("severity[1] = %v, want normalized medium", inputs[1].Severity)

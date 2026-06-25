@@ -376,6 +376,82 @@ func TestCreateTrailReviewFindingsPostsOneBatch(t *testing.T) {
 	}
 }
 
+func TestCreateTrailReviewFindingsHydratesLineSelectedText(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.InitRepo(t, tmp)
+	t.Chdir(tmp)
+	testutil.WriteFile(t, tmp, "src/app.go", "package main\nfunc main() {}\n")
+
+	var gotBatch api.TrailReviewCommentBatchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestStartPath:
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1", Limits: api.TrailReviewLimits{MaxCommentsPerBatch: 10}})
+		case r.Method == http.MethodPost && r.URL.Path == trailReviewTestCommentsPath:
+			if err := json.NewDecoder(r.Body).Decode(&gotBatch); err != nil {
+				t.Fatalf("decode batch body: %v", err)
+			}
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentBatchResponse{Results: []api.TrailReviewCommentBatchResult{
+				{ClientID: "c1", Status: "created", Comment: &api.TrailReviewComment{ID: "cm_1", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusOpen}},
+			}})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer srv.Close()
+	t.Setenv(api.BaseURLEnvVar, srv.URL)
+	client := api.NewClient("tok")
+
+	filePath := "src/app.go"
+	line := 2
+	_, err := createTrailReviewFindings(context.Background(), client, "trl_1", []api.TrailReviewCommentInput{{
+		ClientID: "c1",
+		Body:     trailReviewStrPtr("body"),
+		Location: api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: &filePath, StartLine: &line},
+	}})
+	if err != nil {
+		t.Fatalf("createTrailReviewFindings: %v", err)
+	}
+	if len(gotBatch.Comments) != 1 {
+		t.Fatalf("posted comments = %d, want 1", len(gotBatch.Comments))
+	}
+	loc := gotBatch.Comments[0].Location
+	if loc.Granularity != reviewTrailGranularityLine || loc.SelectedText == nil || *loc.SelectedText != "func main() {}" {
+		t.Fatalf("posted location = %+v, want line selected_text", loc)
+	}
+}
+
+func TestPrepareTrailReviewCommentInputsForCreateDowngradesUnselectableLine(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.WriteFile(t, tmp, "src/app.go", "package main\n\n")
+
+	filePath := "src/app.go"
+	line := 2
+	got := prepareTrailReviewCommentInputsForCreate(tmp, []api.TrailReviewCommentInput{{
+		ClientID: "c1",
+		Body:     trailReviewStrPtr("body"),
+		Location: api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: &filePath, StartLine: &line},
+	}})
+	if len(got) != 1 {
+		t.Fatalf("inputs = %d, want 1", len(got))
+	}
+	loc := got[0].Location
+	if loc.Granularity != reviewTrailGranularityFile || loc.FilePath == nil || *loc.FilePath != filePath || loc.SelectedText != nil {
+		t.Fatalf("location = %+v, want file fallback without selected_text", loc)
+	}
+
+	missing := "src/missing.go"
+	got = prepareTrailReviewCommentInputsForCreate(tmp, []api.TrailReviewCommentInput{{
+		ClientID: "c2",
+		Body:     trailReviewStrPtr("body"),
+		Location: api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: &missing, StartLine: &line},
+	}})
+	if loc := got[0].Location; loc.Granularity != reviewTrailGranularityWholeChange {
+		t.Fatalf("missing-file location = %+v, want whole_change fallback", loc)
+	}
+}
+
 func TestCreateTrailReviewFindingSurfacesBatchError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

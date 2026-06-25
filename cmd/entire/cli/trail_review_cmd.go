@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -833,6 +834,91 @@ func buildTrailReviewCommentLocation(opts trailReviewCommentAddOptions) (api.Tra
 // createTrailReviewFinding posts a single finding through the current API flow:
 // start a review session, then submit a one-item comment batch under it. It
 // returns the created (or already-existing) finding.
+func prepareTrailReviewCommentInputsForCreate(worktreeRoot string, inputs []api.TrailReviewCommentInput) []api.TrailReviewCommentInput {
+	out := make([]api.TrailReviewCommentInput, len(inputs))
+	copy(out, inputs)
+	for i := range out {
+		out[i].Location = prepareTrailReviewLocationForCreate(worktreeRoot, out[i].Location)
+	}
+	return out
+}
+
+func prepareTrailReviewLocationForCreate(worktreeRoot string, loc api.TrailReviewLocationCreateRequest) api.TrailReviewLocationCreateRequest {
+	switch loc.Granularity {
+	case reviewTrailGranularityLine, reviewTrailGranularityRange:
+		if loc.SelectedText != nil && strings.TrimSpace(*loc.SelectedText) != "" {
+			return loc
+		}
+		filePath := ""
+		if loc.FilePath != nil {
+			filePath = strings.TrimSpace(*loc.FilePath)
+		}
+		startLine := 0
+		if loc.StartLine != nil {
+			startLine = *loc.StartLine
+		}
+		endLine := startLine
+		if loc.Granularity == reviewTrailGranularityRange && loc.EndLine != nil && *loc.EndLine > startLine {
+			endLine = *loc.EndLine
+		}
+		selected, fileOK, selectedOK := trailReviewSelectedTextFromWorktree(worktreeRoot, filePath, startLine, endLine)
+		if selectedOK {
+			loc.SelectedText = stringPtr(selected)
+			return loc
+		}
+		if fileOK {
+			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityFile, FilePath: stringPtr(filePath)}
+		}
+		return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityWholeChange}
+	case reviewTrailGranularityFile:
+		if loc.FilePath != nil && strings.TrimSpace(*loc.FilePath) != "" {
+			return loc
+		}
+	}
+	return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityWholeChange}
+}
+
+func trailReviewSelectedTextFromWorktree(worktreeRoot, filePath string, startLine, endLine int) (selected string, fileOK bool, selectedOK bool) {
+	if strings.TrimSpace(worktreeRoot) == "" || strings.TrimSpace(filePath) == "" || startLine <= 0 || endLine < startLine {
+		return "", false, false
+	}
+	fullPath, ok := safeWorktreeFilePath(worktreeRoot, filePath)
+	if !ok {
+		return "", false, false
+	}
+	data, err := os.ReadFile(fullPath) //nolint:gosec // path is constrained to the current worktree root.
+	if err != nil {
+		return "", false, false
+	}
+	contents := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(contents, "\n")
+	if startLine > len(lines) || endLine > len(lines) {
+		return "", true, false
+	}
+	text := strings.Join(lines[startLine-1:endLine], "\n")
+	if strings.TrimSpace(text) == "" {
+		return "", true, false
+	}
+	return text, true, true
+}
+
+func safeWorktreeFilePath(worktreeRoot, filePath string) (string, bool) {
+	if filepath.IsAbs(filePath) {
+		return "", false
+	}
+	root := filepath.Clean(worktreeRoot)
+	cleanRel := filepath.Clean(filepath.FromSlash(filePath))
+	if cleanRel == "." || cleanRel == "" || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	fullPath := filepath.Join(root, cleanRel)
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return fullPath, true
+}
+
 func createTrailReviewFinding(ctx context.Context, client *api.Client, trailID string, input api.TrailReviewCommentInput) (api.TrailReviewComment, error) {
 	findings, err := createTrailReviewFindings(ctx, client, trailID, []api.TrailReviewCommentInput{input})
 	if err != nil {
@@ -850,6 +936,11 @@ func createTrailReviewFindings(ctx context.Context, client *api.Client, trailID 
 	if len(inputs) == 0 {
 		return nil, errors.New("create finding: no findings to post")
 	}
+	worktreeRoot, err := paths.WorktreeRoot(ctx)
+	if err != nil {
+		worktreeRoot = ""
+	}
+	inputs = prepareTrailReviewCommentInputsForCreate(worktreeRoot, inputs)
 	review, err := startTrailReview(ctx, client, trailID)
 	if err != nil {
 		return nil, err

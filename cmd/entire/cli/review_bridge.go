@@ -164,27 +164,34 @@ type reviewTrailJSONComment struct {
 }
 
 type reviewTrailJSONLocation struct {
-	Granularity string `json:"granularity"`
-	FilePath    string `json:"file_path"`
-	StartLine   int    `json:"start_line"`
-	EndLine     int    `json:"end_line"`
+	Granularity  string `json:"granularity"`
+	FilePath     string `json:"file_path"`
+	StartLine    int    `json:"start_line"`
+	EndLine      int    `json:"end_line"`
+	SelectedText string `json:"selected_text"`
 }
 
 func reviewTrailLocationFromJSON(loc reviewTrailJSONLocation) api.TrailReviewLocationCreateRequest {
 	filePath := strings.TrimSpace(loc.FilePath)
+	withSelectedText := func(req api.TrailReviewLocationCreateRequest) api.TrailReviewLocationCreateRequest {
+		if strings.TrimSpace(loc.SelectedText) != "" {
+			req.SelectedText = stringPtr(loc.SelectedText)
+		}
+		return req
+	}
 	switch strings.ToLower(strings.TrimSpace(loc.Granularity)) {
 	case reviewTrailGranularityLine:
 		if filePath != "" && loc.StartLine > 0 {
-			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine}
+			return withSelectedText(api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine})
 		}
 	case reviewTrailGranularityRange:
 		if filePath != "" && loc.StartLine > 0 && loc.EndLine > loc.StartLine {
-			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityRange, FilePath: stringPtr(filePath), StartLine: &loc.StartLine, EndLine: &loc.EndLine}
+			return withSelectedText(api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityRange, FilePath: stringPtr(filePath), StartLine: &loc.StartLine, EndLine: &loc.EndLine})
 		}
 		if filePath != "" && loc.StartLine > 0 {
 			// Preserve the precise start-line anchor for malformed, missing, or
 			// single-line ranges instead of silently degrading to whole-change.
-			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine}
+			return withSelectedText(api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine})
 		}
 	case reviewTrailGranularityFile:
 		if filePath != "" {
