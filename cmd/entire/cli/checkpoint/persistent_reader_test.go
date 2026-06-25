@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReadCommittedCheckpointNormalizesNilSummary(t *testing.T) {
+func TestReadCheckpointNormalizesNilSummary(t *testing.T) {
 	t.Parallel()
 
 	reader := &committedReaderStub{}
@@ -21,7 +21,7 @@ func TestReadCommittedCheckpointNormalizesNilSummary(t *testing.T) {
 	require.ErrorIs(t, err, ErrCheckpointNotFound)
 }
 
-func TestReadCommittedCheckpointWrapsReaderError(t *testing.T) {
+func TestReadCheckpointWrapsReaderError(t *testing.T) {
 	t.Parallel()
 
 	readerErr := errors.New("boom")
@@ -107,6 +107,6 @@ func (s *committedReaderStub) ReadSessionPrompts(context.Context, id.CheckpointI
 	return "", ErrCheckpointNotFound
 }
 
-func (s *committedReaderStub) ReadSessionMetadataAndPrompts(context.Context, id.CheckpointID, int) (*SessionContent, error) {
-	return nil, ErrCheckpointNotFound
+func (s *committedReaderStub) ReadSessionMetadataAndPrompts(context.Context, id.CheckpointID, int) (*Metadata, string, error) {
+	return nil, "", ErrCheckpointNotFound
 }

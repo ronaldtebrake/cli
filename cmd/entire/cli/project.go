@@ -40,11 +40,12 @@ func newProjectCreateCmd() *cobra.Command {
 		Use:   "create <name>",
 		Short: "Create a project under an org or account",
 		Long: "Creates a project owned by an org or an account. --owner is the " +
-			"owning org/account ULID and --owner-type selects which (org or account).",
-		Example: "  # Project under an org\n" +
-			"  entire project create widgets --owner 01J0... --owner-type org\n\n" +
-			"  # Project owned by an account\n" +
-			"  entire project create widgets --owner 01J0... --owner-type account",
+			"owning org (name or ULID) or account (github:handle or ULID), and " +
+			"--owner-type selects which (org or account).",
+		Example: "  # Project under an org (by name)\n" +
+			"  entire project create widgets --owner acme --owner-type org\n\n" +
+			"  # Project owned by an account (by handle)\n" +
+			"  entire project create widgets --owner github:alice --owner-type account",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -53,9 +54,21 @@ func newProjectCreateCmd() *cobra.Command {
 				return err
 			}
 			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+				// Orgs are addressed by name, accounts by github:handle; both
+				// also accept a raw ULID.
+				var ownerRef string
+				switch ot {
+				case coreapi.CreateProjectInputBodyOwnerTypeOrg:
+					ownerRef, err = resolveOrgRef(ctx, c, ownerID)
+				case coreapi.CreateProjectInputBodyOwnerTypeAccount:
+					ownerRef, err = resolveAccountRef(ctx, c, ownerID)
+				}
+				if err != nil {
+					return nil, err
+				}
 				body := &coreapi.CreateProjectInputBody{
 					Name:      args[0],
-					OwnerId:   ownerID,
+					OwnerId:   ownerRef,
 					OwnerType: ot,
 				}
 				if region != "" {
@@ -65,7 +78,7 @@ func newProjectCreateCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&ownerID, "owner", "", "owning org or account ULID (required)")
+	cmd.Flags().StringVar(&ownerID, "owner", "", "owning org (name or ULID), or account (github:handle or ULID) (required)")
 	cmd.Flags().StringVar(&ownerType, "owner-type", "org", "owner kind: org or account")
 	cmd.Flags().StringVar(&region, "region", "", "jurisdiction slug (defaults to the server's home jurisdiction)")
 	markRequired(cmd, "owner")
@@ -73,26 +86,58 @@ func newProjectCreateCmd() *cobra.Command {
 }
 
 func newProjectListCmd() *cobra.Command {
-	var name string
+	var name, org string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List projects you can see",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCoreList(cmd, projectColumns, projectRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Project, error) {
-				var params coreapi.ListProjectsParams
+				// Both the global and org-scoped list endpoints filter by name
+				// server-side (case-insensitive), returning the single match
+				// under the response's `project` field or 404. Listing by a name
+				// that doesn't exist is an empty result, not an error.
+				if org != "" {
+					orgID, err := resolveOrgRef(ctx, c, org)
+					if err != nil {
+						return nil, err
+					}
+					params := coreapi.ListOrgProjectsParams{OrgId: orgID}
+					if name != "" {
+						params.Name = coreapi.NewOptString(name)
+					}
+					out, err := c.ListOrgProjects(ctx, params)
+					if err != nil {
+						if name != "" && isCoreNotFound(err) {
+							return nil, nil
+						}
+						return nil, err
+					}
+					if name != "" {
+						return toProjectList(out.Project), nil
+					}
+					return out.Projects, nil
+				}
+				params := coreapi.ListProjectsParams{}
 				if name != "" {
 					params.Name = coreapi.NewOptString(name)
 				}
 				out, err := c.ListProjects(ctx, params)
 				if err != nil {
+					if name != "" && isCoreNotFound(err) {
+						return nil, nil
+					}
 					return nil, err
+				}
+				if name != "" {
+					return toProjectList(out.Project), nil
 				}
 				return out.Projects, nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "filter by exact project name")
+	cmd.Flags().StringVar(&org, "org", "", "list projects owned by this org (name or ULID)")
 	return cmd
 }
 
