@@ -354,8 +354,7 @@ func ListCheckpointsWithImports(ctx context.Context) ([]CheckpointInfo, error) {
 	}
 	defer repo.Close()
 
-	importsRefs := checkpoint.ImportsRefs()
-	imports, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &importsRefs})
+	imports, err := checkpoint.OpenImports(ctx, repo)
 	if err != nil {
 		return base, nil
 	}

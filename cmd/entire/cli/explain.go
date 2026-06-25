@@ -2170,8 +2170,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 // entire/imports/v1 as RewindPoint entries (flagged Imported, not rewindable).
 // Best-effort: returns nil when the imports ref is absent or unreadable.
 func getImportedRewindPoints(ctx context.Context, repo *git.Repository) []strategy.RewindPoint {
-	importsRefs := checkpoint.ImportsRefs()
-	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &importsRefs})
+	stores, err := checkpoint.OpenImports(ctx, repo)
 	if err != nil {
 		return nil
 	}

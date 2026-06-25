@@ -423,8 +423,7 @@ func refuseIfImportedCheckpoint(ctx context.Context, errW io.Writer, commitID st
 	}
 	defer repo.Close()
 
-	importsRefs := checkpoint.ImportsRefs()
-	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &importsRefs})
+	stores, err := checkpoint.OpenImports(ctx, repo)
 	if err != nil {
 		return nil
 	}

@@ -75,7 +75,7 @@ func TestRun_ImportsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("re-run not idempotent: %+v", res2)
 	}
 
-	stores, err := cp.Open(context.Background(), repo, cp.OpenOptions{Refs: ptrRefs(cp.ImportsRefs())})
+	stores, err := cp.OpenImports(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestRun_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry-run should count 2 turns, got %+v", res)
 	}
 
-	stores, err := cp.Open(context.Background(), repo, cp.OpenOptions{Refs: ptrRefs(cp.ImportsRefs())})
+	stores, err := cp.OpenImports(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}

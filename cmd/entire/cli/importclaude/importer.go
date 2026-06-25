@@ -45,7 +45,7 @@ func Run(ctx context.Context, repo *git.Repository, opts Options) (Result, error
 		return res, err
 	}
 
-	stores, err := cp.Open(ctx, repo, cp.OpenOptions{Refs: ptrRefs(cp.ImportsRefs())})
+	stores, err := cp.OpenImports(ctx, repo)
 	if err != nil {
 		return res, fmt.Errorf("open imports store: %w", err)
 	}
@@ -118,5 +118,3 @@ func writeTurn(ctx context.Context, stores *cp.Stores, cid id.CheckpointID, sess
 	}
 	return nil
 }
-
-func ptrRefs(r cp.PersistentRefs) *cp.PersistentRefs { return &r }

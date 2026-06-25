@@ -126,13 +126,11 @@ func runTokensProfile(ctx context.Context, cmd *cobra.Command, jsonOutput bool, 
 	}
 	// Include read-only imported checkpoints from entire/imports/v1, read from
 	// their own store. Best-effort: skipped when the ref is absent.
-	importsRefs := checkpoint.ImportsRefs()
-	if importsStore := checkpoint.NewGitStore(repo, importsRefs); importsStore != nil {
-		importsStore.SetBlobFetcher(FetchBlobsByHash)
-		if importInfos, listErr := importsStore.List(ctx); listErr == nil {
-			for _, info := range importInfos {
-				refs = append(refs, tokensCheckpointRef{store: importsStore, info: info})
-			}
+	importsStore := checkpoint.NewGitStore(repo, checkpoint.ImportsRefs())
+	importsStore.SetBlobFetcher(FetchBlobsByHash)
+	if importInfos, listErr := importsStore.List(ctx); listErr == nil {
+		for _, info := range importInfos {
+			refs = append(refs, tokensCheckpointRef{store: importsStore, info: info})
 		}
 	}
 
