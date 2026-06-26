@@ -18,7 +18,7 @@ var experimentalCommands = []experimentalCommandInfo{
 	{
 		CommandPath: []string{"review"},
 		Invocation:  "entire review",
-		Summary:     "Run configured review skills against the current branch",
+		Summary:     "Run a multi-agent review against the current branch",
 	},
 	{
 		CommandPath: []string{"investigate"},
