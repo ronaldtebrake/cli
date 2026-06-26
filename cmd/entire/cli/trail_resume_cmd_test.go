@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -907,6 +908,31 @@ func TestStartRestoredAgentPromptUsesYesNoLabels(t *testing.T) {
 		if strings.Contains(view, notWant) {
 			t.Fatalf("prompt view should not contain %q:\n%s", notWant, view)
 		}
+	}
+}
+
+func TestLaunchTrailRestoredSessionTreatsAgentExitAsHandled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script fake executable")
+	}
+
+	binDir := t.TempDir()
+	fakeCodex := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nexit 42\n"), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out strings.Builder
+	err := launchTrailRestoredSession(context.Background(), &out, strategy.RestoredSession{
+		SessionID: "codex-session",
+		Agent:     types.AgentType("Codex"),
+	})
+	if err != nil {
+		t.Fatalf("launchTrailRestoredSession() error = %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "Launching: codex resume codex-session") {
+		t.Fatalf("launch output missing command:\n%s", out.String())
 	}
 }
 

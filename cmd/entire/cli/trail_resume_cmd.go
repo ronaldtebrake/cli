@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -1038,6 +1039,10 @@ func launchTrailRestoredSession(ctx context.Context, w io.Writer, session strate
 	}
 	fmt.Fprintf(w, "\nLaunching: %s\n", resumeCmd)
 	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
 		return fmt.Errorf("resume command failed: %w", err)
 	}
 	return nil
