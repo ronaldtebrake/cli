@@ -201,11 +201,18 @@ func selectCloneTarget(cmd *cobra.Command, mirrors []coreapi.Mirror, clusterFlag
 		),
 	)
 	if err := form.RunWithContext(cmd.Context()); err != nil {
-		return coreapi.Mirror{}, handleFormCancellation(cmd.ErrOrStderr(), "Clone", err)
+		// handleFormCancellation prints "Clone cancelled." and returns nil for a
+		// Ctrl+C / cancelled-context abort. Surface that as a SilentError so the
+		// caller stops instead of falling through to clone a zero-value target
+		// (the `entire:///gh/...` empty-host bug); a real form error propagates.
+		if cerr := handleFormCancellation(cmd.ErrOrStderr(), "Clone", err); cerr != nil {
+			return coreapi.Mirror{}, cerr
+		}
+		return coreapi.Mirror{}, NewSilentError(errors.New("clone cancelled"))
 	}
 	m, ok := byHost[selected]
 	if !ok {
-		return coreapi.Mirror{}, errors.New("no cluster selected")
+		return coreapi.Mirror{}, NewSilentError(errors.New("clone cancelled"))
 	}
 	return m, nil
 }
