@@ -1085,6 +1085,9 @@ func TestRestoreSingleSession_UsesV1TranscriptAndReturnsRestoredSession(t *testi
 	if restored.Agent != ag.Type() {
 		t.Fatalf("restored Agent = %q, want %q", restored.Agent, ag.Type())
 	}
+	if restored.CheckpointID != cpID.String() {
+		t.Fatalf("restored CheckpointID = %q, want %q", restored.CheckpointID, cpID.String())
+	}
 
 	if ag.writtenSession == nil {
 		t.Fatal("restoreSingleSession() did not restore a session")

@@ -730,7 +730,7 @@ func TestContinueRestoredSessionsTTYDeclinePrintsAgentCommands(t *testing.T) {
 
 	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
 		CanPrompt: true,
-		PromptStartAgent: func(context.Context) (bool, error) {
+		PromptStartAgent: func(context.Context, []strategy.RestoredSession) (bool, error) {
 			return false, nil
 		},
 		PromptSession: func(context.Context, io.Writer, []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
@@ -775,7 +775,7 @@ func TestContinueRestoredSessionsTTYStartSingleLaunchesSession(t *testing.T) {
 
 	err := continueRestoredSessions(context.Background(), &out, []strategy.RestoredSession{session}, restoredSessionContinueOptions{
 		CanPrompt: true,
-		PromptStartAgent: func(context.Context) (bool, error) {
+		PromptStartAgent: func(context.Context, []strategy.RestoredSession) (bool, error) {
 			return true, nil
 		},
 		PromptSession: func(context.Context, io.Writer, []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
@@ -812,7 +812,7 @@ func TestContinueRestoredSessionsTTYStartMultipleLaunchesPickerSelection(t *test
 
 	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
 		CanPrompt: true,
-		PromptStartAgent: func(context.Context) (bool, error) {
+		PromptStartAgent: func(context.Context, []strategy.RestoredSession) (bool, error) {
 			return true, nil
 		},
 		PromptSession: func(_ context.Context, _ io.Writer, restored []strategy.RestoredSession) (strategy.RestoredSession, bool, error) {
@@ -848,7 +848,7 @@ func TestContinueRestoredSessionsPreferredDeclinePrintsOnlyPreferredSession(t *t
 	err := continueRestoredSessions(context.Background(), &out, sessions, restoredSessionContinueOptions{
 		CanPrompt:          true,
 		PreferredSessionID: "second-session",
-		PromptStartAgent: func(context.Context) (bool, error) {
+		PromptStartAgent: func(context.Context, []strategy.RestoredSession) (bool, error) {
 			return false, nil
 		},
 		Launch:  func(context.Context, io.Writer, strategy.RestoredSession) error { return nil },
@@ -863,6 +863,50 @@ func TestContinueRestoredSessionsPreferredDeclinePrintsOnlyPreferredSession(t *t
 	}
 	if !strings.Contains(text, "claude -r second-session") {
 		t.Fatalf("preferred session command missing:\n%s", text)
+	}
+}
+
+func TestPrintTrailRestoredSessionSummaryIncludesCheckpointID(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	printTrailRestoredSessionSummary(&out, []strategy.RestoredSession{
+		{
+			SessionID:    "019ef5f3-3472-7f70-82f7-6f0ce46691f4",
+			CheckpointID: "8a18ef79cd93",
+		},
+	})
+
+	text := out.String()
+	if !strings.Contains(text, "✓ Restored checkpoint 8a18ef79cd93 (1 session).") {
+		t.Fatalf("summary missing checkpoint ID:\n%s", text)
+	}
+}
+
+func TestStartRestoredAgentPromptUsesYesNoLabels(t *testing.T) {
+	t.Parallel()
+
+	startAgent := true
+	prompt := newStartRestoredAgentConfirm(&startAgent, "8a18ef79cd93")
+	prompt.WithWidth(80)
+	view := prompt.View()
+
+	for _, want := range []string{
+		"Start the agent now?",
+		"Entire restored checkpoint 8a18ef79cd93.",
+		"Choose No to print the resume",
+		"instead.",
+		"Yes",
+		"No",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("prompt view missing %q:\n%s", want, view)
+		}
+	}
+	for _, notWant := range []string{"Start agent", "Show commands"} {
+		if strings.Contains(view, notWant) {
+			t.Fatalf("prompt view should not contain %q:\n%s", notWant, view)
+		}
 	}
 }
 

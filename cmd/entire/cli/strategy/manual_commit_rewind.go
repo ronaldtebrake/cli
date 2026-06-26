@@ -749,6 +749,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 			}
 			restored = append(restored, RestoredSession{
 				SessionID:    sessionID,
+				CheckpointID: point.CheckpointID.String(),
 				Agent:        sessionAgent.Type(),
 				Prompt:       promptPreview,
 				CreatedAt:    content.Metadata.CreatedAt,
@@ -795,6 +796,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 
 		restored = append(restored, RestoredSession{
 			SessionID:    sessionID,
+			CheckpointID: point.CheckpointID.String(),
 			Agent:        sessionAgent.Type(),
 			Prompt:       promptPreview,
 			CreatedAt:    content.Metadata.CreatedAt,

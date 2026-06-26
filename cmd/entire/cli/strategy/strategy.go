@@ -267,6 +267,7 @@ func TaskMetadataDir(sessionMetadataDir, toolUseID string) string {
 // per-session resume commands without re-reading the metadata tree.
 type RestoredSession struct {
 	SessionID    string
+	CheckpointID string
 	Agent        types.AgentType
 	Prompt       string
 	CreatedAt    time.Time // From session metadata; used by resume to determine most recent

@@ -1010,8 +1010,9 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 
 func restoreSingleSession(ctx context.Context, w io.Writer, ag agent.Agent, sessionID string, checkpointID id.CheckpointID, repoRoot string, force bool) (strategy.RestoredSession, bool, error) {
 	restored := strategy.RestoredSession{
-		SessionID: sessionID,
-		Agent:     ag.Type(),
+		SessionID:    sessionID,
+		CheckpointID: checkpointID.String(),
+		Agent:        ag.Type(),
 	}
 
 	sessionLogPath, err := resolveTranscriptPath(ctx, sessionID, ag)

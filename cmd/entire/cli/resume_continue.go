@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 
 	"charm.land/huh/v2"
 )
 
-type restoredSessionStartPrompt func(context.Context) (bool, error)
+type restoredSessionStartPrompt func(context.Context, []strategy.RestoredSession) (bool, error)
 type restoredSessionPicker func(context.Context, io.Writer, []strategy.RestoredSession) (strategy.RestoredSession, bool, error)
 type restoredSessionLauncher func(context.Context, io.Writer, strategy.RestoredSession) error
 type restoredSessionDisplayer func(io.Writer, []strategy.RestoredSession) error
@@ -61,7 +62,7 @@ func continueRestoredSessions(ctx context.Context, w io.Writer, sessions []strat
 		return display(w, sessions)
 	}
 
-	startAgent, err := promptStart(ctx)
+	startAgent, err := promptStart(ctx, sessions)
 	if err != nil {
 		return err
 	}
@@ -98,7 +99,7 @@ func continueSelectedRestoredSession(
 		return display(w, sessions)
 	}
 
-	startAgent, err := promptStart(ctx)
+	startAgent, err := promptStart(ctx, sessions)
 	if err != nil {
 		return err
 	}
@@ -112,16 +113,11 @@ func continueSelectedRestoredSession(
 	return launch(ctx, w, session)
 }
 
-func promptStartRestoredAgent(ctx context.Context) (bool, error) {
+func promptStartRestoredAgent(ctx context.Context, sessions []strategy.RestoredSession) (bool, error) {
 	startAgent := true
 	form := NewAccessibleForm(
 		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Start the agent now?").
-				Description("Entire restored the checkpoint session log.").
-				Affirmative("Start agent").
-				Negative("Show commands").
-				Value(&startAgent),
+			newStartRestoredAgentConfirm(&startAgent, restoredSessionsCheckpointID(sessions)),
 		),
 	)
 	if err := form.RunWithContext(ctx); err != nil {
@@ -131,4 +127,35 @@ func promptStartRestoredAgent(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to choose resume action: %w", err)
 	}
 	return startAgent, nil
+}
+
+func newStartRestoredAgentConfirm(startAgent *bool, checkpointID string) *huh.Confirm {
+	description := "Entire restored the checkpoint session log. Choose No to print the resume command instead."
+	if checkpointID != "" {
+		description = fmt.Sprintf("Entire restored checkpoint %s. Choose No to print the resume command instead.", checkpointID)
+	}
+	return huh.NewConfirm().
+		Title("Start the agent now?").
+		Description(description).
+		Affirmative("Yes").
+		Negative("No").
+		Value(startAgent)
+}
+
+func restoredSessionsCheckpointID(sessions []strategy.RestoredSession) string {
+	var checkpointID string
+	for _, session := range sessions {
+		current := strings.TrimSpace(session.CheckpointID)
+		if current == "" {
+			return ""
+		}
+		if checkpointID == "" {
+			checkpointID = current
+			continue
+		}
+		if checkpointID != current {
+			return ""
+		}
+	}
+	return checkpointID
 }

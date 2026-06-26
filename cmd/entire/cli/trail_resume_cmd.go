@@ -337,9 +337,15 @@ func continueTrailRestoredSessions(ctx context.Context, cmd *cobra.Command, sess
 }
 
 func printTrailRestoredSessionSummary(w io.Writer, sessions []strategy.RestoredSession) {
-	if len(sessions) > 1 {
+	checkpointID := restoredSessionsCheckpointID(sessions)
+	switch {
+	case checkpointID != "" && len(sessions) > 1:
+		fmt.Fprintf(w, "\n✓ Restored checkpoint %s (%d sessions).\n", checkpointID, len(sessions))
+	case checkpointID != "" && len(sessions) == 1:
+		fmt.Fprintf(w, "✓ Restored checkpoint %s (1 session).\n", checkpointID)
+	case len(sessions) > 1:
 		fmt.Fprintf(w, "\n✓ Restored %d checkpoint sessions.\n", len(sessions))
-	} else if len(sessions) == 1 {
+	case len(sessions) == 1:
 		fmt.Fprintf(w, "✓ Restored checkpoint session %s.\n", sessions[0].SessionID)
 	}
 	if len(sessions) > 0 && trailRestoredSessionsAreAllReviewOrInvestigation(sessions) {
