@@ -75,6 +75,8 @@ var importers = []Importer{
 }
 
 // Get returns the importer registered under name.
+//
+//nolint:ireturn // Importer is the intended polymorphic seam returned to callers.
 func Get(name string) (Importer, bool) {
 	for _, imp := range importers {
 		if imp.Name() == name {
