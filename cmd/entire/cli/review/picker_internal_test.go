@@ -25,6 +25,24 @@ func TestSlotActionOptionsOnlyModelRemoveCancel(t *testing.T) {
 	}
 }
 
+func TestGuidedProfileTaskPreservesExistingCustomTask(t *testing.T) {
+	t.Parallel()
+	const (
+		generated = "built-in generated task"
+		existing  = "saved custom task"
+		custom    = "new custom task"
+	)
+	if got := guidedProfileTask(DefaultProfileName, generated, existing, ""); got != existing {
+		t.Fatalf("guidedProfileTask without new custom task = %q, want existing %q", got, existing)
+	}
+	if got := guidedProfileTask(DefaultProfileName, generated, existing, custom); got != custom {
+		t.Fatalf("guidedProfileTask with new custom task = %q, want %q", got, custom)
+	}
+	if got := guidedProfileTask(DefaultProfileName, generated, "", ""); got != generated {
+		t.Fatalf("guidedProfileTask without existing task = %q, want generated %q", got, generated)
+	}
+}
+
 func TestReviewModelSelectOptionsPreservesCurrentCustomModel(t *testing.T) {
 	t.Parallel()
 	const current = "my-custom-model"

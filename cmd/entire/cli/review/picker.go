@@ -136,9 +136,7 @@ func RunReviewGuidedSetup(
 	if err != nil {
 		return "", settings.ReviewProfileConfig{}, err
 	}
-	if customTask != "" {
-		profile.Task = customTask
-	}
+	profile.Task = guidedProfileTask(profileName, profile.Task, existing.Task, customTask)
 	if len(profile.Agents) > 1 {
 		judge, err := promptForJudge(ctx, launchable, existing)
 		if err != nil {
@@ -163,6 +161,19 @@ func RunReviewGuidedSetup(
 
 // launchableInstalledAgentNames returns the installed agents that have a
 // review-runner adapter, in the order they can be offered to the user.
+func guidedProfileTask(profileName, generatedTask, existingTask, customTask string) string {
+	if customTask != "" {
+		return customTask
+	}
+	if strings.TrimSpace(existingTask) != "" {
+		return existingTask
+	}
+	if strings.TrimSpace(generatedTask) != "" {
+		return generatedTask
+	}
+	return profileTask(profileName, settings.ReviewProfileConfig{})
+}
+
 func launchableInstalledAgentNames(installed []types.AgentName, reviewerFor func(string) reviewtypes.AgentReviewer) []string {
 	names := make([]string, 0, len(installed))
 	for _, name := range installed {
