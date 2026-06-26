@@ -42,8 +42,10 @@ their canonical paths are still runnable.
 - `configure`: bare prints help and a hint pointing at `entire agent`; flags
   manage non-agent settings (telemetry, git-hook installation mode, strategy
   options, summary provider). Agent CRUD lives under `entire agent`.
-- `auth`: `login`, `logout`, `status`, `contexts`, `use`. `logout` takes
-  `--everywhere` (revoke every session on the active core, not just the
+- `auth`: `login`, `logout`, `status`, `contexts`, `use`, plus the hidden
+  `token` (prints the active control-plane bearer to stdout for scripting/curl;
+  honors `ENTIRE_TOKEN`, else the refreshed active-context login JWT). `logout`
+  takes `--everywhere` (revoke every session on the active core, not just the
   current one) and `--all-contexts` (log out of every saved login)
 - `doctor`: bare runs the scan-and-fix flow, plus `trace`, `logs`, `bundle`
 
