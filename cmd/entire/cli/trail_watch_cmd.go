@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// SSE control events for the agent-native finding stream. Domain events
+// SSE control events for the trail-wide event stream. Domain events
 // (for example "session.started" or "comment.created") are emitted as their
 // code_review_events.event_type values.
 const (
@@ -47,19 +47,19 @@ func newTrailWatchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "watch [<number>]",
-		Short: "Tail a trail's finding events live",
-		Long: `Subscribe to the trail-scoped agent-native finding SSE stream and
-print events as they arrive. Reconnects automatically when the server caps the
-connection (~50s) and on transient network errors.
+		Short: "Tail a trail's events live",
+		Long: `Subscribe to the trail-wide SSE stream and print events as they arrive.
+Reconnects automatically when the server caps the connection (~50s) and on
+transient network errors.
 
 If <number> is omitted, the trail for the current branch is used.
 
 This command resolves the trail's id internally and streams
-GET /api/v1/trails/<id>/reviews/events with Accept: text/event-stream.
+GET /api/v1/trails/<id>/events with Accept: text/event-stream.
 
 Events emitted by the server:
   ready              initial frame, includes trail and cursor
-  <event_type>       finding domain event (sessions, findings, suggested changes, ...)
+  <event_type>       trail domain event (reviews, findings, runners, monitors, ...)
   reconnect          server cap reached; re-establishing
   forbidden          access was revoked; stream ends
   error              server-side error; treated as reconnect`,
@@ -84,11 +84,12 @@ Events emitted by the server:
 }
 
 func runTrailWatch(cmd *cobra.Command, number int, jsonOutput, showPings, once bool) error {
-	return runAuthenticatedDataAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
 		trailID, description, err := resolveTrailWatchTarget(ctx, client, number)
 		if err != nil {
 			return err
 		}
+		saveTrailsEnabledForRepoBestEffort(ctx, true)
 		return runTrailWatchResolved(cmd, client, trailID, description, jsonOutput, showPings, once)
 	})
 }
@@ -219,7 +220,7 @@ func trailWatchDescription(forge, owner, repo string, number int, trailID string
 }
 
 func reviewEventsPath(trailID string) string {
-	return "/api/v1/trails/" + url.PathEscape(trailID) + "/reviews/events"
+	return "/api/v1/trails/" + url.PathEscape(trailID) + "/events"
 }
 
 type streamCloseReason int

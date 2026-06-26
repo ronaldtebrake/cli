@@ -466,7 +466,7 @@ func runTrailReviewSetStatus(cmd *cobra.Command, selector string, commentID, sta
 func authenticatedTrailReviewTarget(cmd *cobra.Command, selector string) (*api.Client, trailReviewTarget, error) {
 	var target trailReviewTarget
 	var resolvedClient *api.Client
-	err := runAuthenticatedDataAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+	err := runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
 		var err error
 		resolvedClient = client
 		target, err = resolveTrailReviewTarget(ctx, client, selector)

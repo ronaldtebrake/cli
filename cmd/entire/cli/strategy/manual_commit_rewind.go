@@ -653,7 +653,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(point.CheckpointID.String(), summary.CheckpointVersion); err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, err
 	}
 
 	// Get worktree root for agent session directory lookup

@@ -90,11 +90,10 @@ func maybePromptReviewSettingsMigration(
 		return fmt.Errorf("review settings migration prompt: %w", err)
 	}
 	if !migrate {
-		if prefs == nil {
-			prefs = &settings.ClonePreferences{}
-		}
-		prefs.ReviewMigrationDismissed = true
-		if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+		if err := settings.ModifyClonePreferences(ctx, func(prefs *settings.ClonePreferences) error {
+			prefs.ReviewMigrationDismissed = true
+			return nil
+		}); err != nil {
 			return fmt.Errorf("save migration dismissal: %w", err)
 		}
 		return nil
@@ -154,59 +153,50 @@ func migrateProjectReviewSettings(ctx context.Context, project *projectReviewSet
 		return false, nil
 	}
 
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return false, fmt.Errorf("load review preferences for migration: %w", err)
-	}
-	if prefs == nil {
-		prefs = &settings.ClonePreferences{}
-	}
-
 	preferencesChanged := false
-	if project.hasReview && !isJSONNull(project.review) {
-		var projectReview map[string]settings.ReviewConfig
-		if err := json.Unmarshal(project.review, &projectReview); err != nil {
-			return false, fmt.Errorf("parsing project review settings: %w", err)
-		}
-		if len(projectReview) > 0 {
-			merged, mergedOK, conflicts := mergeProjectReviewIntoPrefs(prefs.Review, projectReview)
-			if len(conflicts) > 0 {
-				return false, fmt.Errorf(
-					"review settings exist in both %s and clone-local preferences for agent(s) %v; "+
-						"reconcile manually by removing the redundant keys from %s, then re-run `entire review`",
-					project.path, conflicts, project.path,
-				)
+	if err := settings.ModifyClonePreferences(ctx, func(prefs *settings.ClonePreferences) error {
+		if project.hasReview && !isJSONNull(project.review) {
+			var projectReview map[string]settings.ReviewConfig
+			if err := json.Unmarshal(project.review, &projectReview); err != nil {
+				return fmt.Errorf("parsing project review settings: %w", err)
 			}
-			if mergedOK {
-				prefs.Review = merged
-				preferencesChanged = true
-			}
-		}
-	}
-	if project.hasFixAgent && !isJSONNull(project.fixAgent) {
-		var fixAgent string
-		if err := json.Unmarshal(project.fixAgent, &fixAgent); err != nil {
-			return false, fmt.Errorf("parsing project review_fix_agent: %w", err)
-		}
-		if fixAgent != "" {
-			if prefs.ReviewFixAgent != "" && prefs.ReviewFixAgent != fixAgent {
-				return false, fmt.Errorf(
-					"review_fix_agent differs between %s (%q) and clone-local preferences (%q); "+
-						"reconcile manually by removing review_fix_agent from %s, then re-run `entire review`",
-					project.path, fixAgent, prefs.ReviewFixAgent, project.path,
-				)
-			}
-			if prefs.ReviewFixAgent == "" {
-				prefs.ReviewFixAgent = fixAgent
-				preferencesChanged = true
+			if len(projectReview) > 0 {
+				merged, mergedOK, conflicts := mergeProjectReviewIntoPrefs(prefs.Review, projectReview)
+				if len(conflicts) > 0 {
+					return fmt.Errorf(
+						"review settings exist in both %s and clone-local preferences for agent(s) %v; "+
+							"reconcile manually by removing the redundant keys from %s, then re-run `entire review`",
+						project.path, conflicts, project.path,
+					)
+				}
+				if mergedOK {
+					prefs.Review = merged
+					preferencesChanged = true
+				}
 			}
 		}
-	}
-
-	if preferencesChanged {
-		if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
-			return false, fmt.Errorf("save review preferences for migration: %w", err)
+		if project.hasFixAgent && !isJSONNull(project.fixAgent) {
+			var fixAgent string
+			if err := json.Unmarshal(project.fixAgent, &fixAgent); err != nil {
+				return fmt.Errorf("parsing project review_fix_agent: %w", err)
+			}
+			if fixAgent != "" {
+				if prefs.ReviewFixAgent != "" && prefs.ReviewFixAgent != fixAgent {
+					return fmt.Errorf(
+						"review_fix_agent differs between %s (%q) and clone-local preferences (%q); "+
+							"reconcile manually by removing review_fix_agent from %s, then re-run `entire review`",
+						project.path, fixAgent, prefs.ReviewFixAgent, project.path,
+					)
+				}
+				if prefs.ReviewFixAgent == "" {
+					prefs.ReviewFixAgent = fixAgent
+					preferencesChanged = true
+				}
+			}
 		}
+		return nil
+	}); err != nil {
+		return false, fmt.Errorf("save review preferences for migration: %w", err)
 	}
 
 	delete(project.raw, "review")

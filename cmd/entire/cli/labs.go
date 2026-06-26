@@ -26,6 +26,11 @@ var experimentalCommands = []experimentalCommandInfo{
 		Summary:     "Run a multi-agent investigation against a topic, issue, or seed doc",
 	},
 	{
+		CommandPath: []string{"import", "claude-code"},
+		Invocation:  "entire import claude-code",
+		Summary:     "Import existing Claude Code transcripts as local, read-only history",
+	},
+	{
 		CommandPath: []string{"tokens"},
 		Invocation:  "entire tokens",
 		Summary:     "Analyze experimental token usage diagnostics",

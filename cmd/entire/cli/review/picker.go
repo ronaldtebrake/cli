@@ -256,31 +256,21 @@ func MergePickerResults(existing map[string]settings.ReviewConfig, offered map[s
 }
 
 func SaveReviewFixAgent(ctx context.Context, agentName string) error {
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return fmt.Errorf("load review preferences before save: %w", err)
-	}
-	if prefs == nil {
-		prefs = &settings.ClonePreferences{}
-	}
-	prefs.ReviewFixAgent = agentName
-	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+	if err := settings.ModifyClonePreferences(ctx, func(prefs *settings.ClonePreferences) error {
+		prefs.ReviewFixAgent = agentName
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save review preferences: %w", err)
 	}
 	return nil
 }
 
 func saveReviewConfigAndFixAgent(ctx context.Context, review map[string]settings.ReviewConfig, fixAgent string) error {
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return fmt.Errorf("load review preferences before save: %w", err)
-	}
-	if prefs == nil {
-		prefs = &settings.ClonePreferences{}
-	}
-	prefs.Review = review
-	prefs.ReviewFixAgent = fixAgent
-	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+	if err := settings.ModifyClonePreferences(ctx, func(prefs *settings.ClonePreferences) error {
+		prefs.Review = review
+		prefs.ReviewFixAgent = fixAgent
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save review preferences: %w", err)
 	}
 	return nil

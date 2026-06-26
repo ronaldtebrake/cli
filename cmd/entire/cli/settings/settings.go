@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/internal/flock"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -152,6 +153,12 @@ type ClonePreferences struct {
 	// definitive false. This is clone-local and not committed so hook-time agent
 	// context injection can avoid network/auth work on the prompt path.
 	TrailsEnabled *bool `json:"trails_enabled,omitempty"`
+
+	// Freshness and scope for TrailsEnabled.
+	TrailsEnabledCheckedAt *time.Time `json:"trails_enabled_checked_at,omitempty"`
+	TrailsEnabledRepoKey   string     `json:"trails_enabled_repo_key,omitempty"`
+	TrailsEnabledAPIBase   string     `json:"trails_enabled_api_base,omitempty"`
+	TrailsEnabledAuthKey   string     `json:"trails_enabled_auth_key,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
@@ -582,6 +589,15 @@ func SaveClonePreferences(ctx context.Context, prefs *ClonePreferences) error {
 	return saveClonePreferencesToFile(prefs, path)
 }
 
+// ModifyClonePreferences runs a read-modify-write under the preferences lock.
+func ModifyClonePreferences(ctx context.Context, fn func(*ClonePreferences) error) error {
+	path, err := ClonePreferencesPath(ctx)
+	if err != nil {
+		return err
+	}
+	return modifyClonePreferencesFile(path, fn)
+}
+
 // LoadFromBytes parses settings from raw JSON bytes without merging local overrides.
 // Use this when you have settings content from a non-file source (e.g., git show).
 func LoadFromBytes(data []byte) (*EntireSettings, error) {
@@ -684,6 +700,26 @@ func saveClonePreferencesToFile(prefs *ClonePreferences, filePath string) error 
 		return fmt.Errorf("writing preferences file: %w", err)
 	}
 	return nil
+}
+
+func modifyClonePreferencesFile(filePath string, fn func(*ClonePreferences) error) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
+		return fmt.Errorf("creating preferences directory: %w", err)
+	}
+	release, err := flock.Acquire(filePath + ".lock")
+	if err != nil {
+		return fmt.Errorf("lock preferences file: %w", err)
+	}
+	defer release()
+
+	prefs, err := loadClonePreferencesFromFile(filePath)
+	if err != nil {
+		return err
+	}
+	if err := fn(prefs); err != nil {
+		return err
+	}
+	return saveClonePreferencesToFile(prefs, filePath)
 }
 
 func applyClonePreferences(settings *EntireSettings, prefs *ClonePreferences) {
