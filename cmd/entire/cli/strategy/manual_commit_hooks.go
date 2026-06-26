@@ -2787,6 +2787,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	}
 	defer repo.Close()
 	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
+		state.TurnCheckpointIDs = nil
 		return 1
 	}
 

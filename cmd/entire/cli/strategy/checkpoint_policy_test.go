@@ -79,7 +79,7 @@ func TestCondenseAndMarkFullyCondensedPolicyBlockLeavesSessionRetryable(t *testi
 	require.Positive(t, state.StepCount)
 }
 
-func TestFinalizeAllTurnCheckpointsPolicyBlockKeepsTurnCheckpointIDs(t *testing.T) {
+func TestFinalizeAllTurnCheckpointsPolicyBlockClearsTurnCheckpointIDs(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -106,7 +106,7 @@ func TestFinalizeAllTurnCheckpointsPolicyBlockKeepsTurnCheckpointIDs(t *testing.
 
 	errCount := NewManualCommitStrategy().finalizeAllTurnCheckpoints(context.Background(), state)
 	require.Equal(t, 1, errCount)
-	require.Equal(t, []string{"a1b2c3d4e5f6"}, state.TurnCheckpointIDs)
+	require.Empty(t, state.TurnCheckpointIDs)
 }
 
 func TestPrePushSkipsCheckpointPushWhenPolicyWriteUnsupported(t *testing.T) {
