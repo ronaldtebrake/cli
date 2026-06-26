@@ -621,20 +621,24 @@ func (r *attributionResolver) readSessionForCheckpoint(cpID id.CheckpointID, ind
 	if meta.Summary != nil {
 		intent = strings.TrimSpace(meta.Summary.Intent)
 	}
-	// prompt.txt holds the prompt(s) recorded for this checkpoint's session and
-	// is the prompt that also surfaces in `checkpoint explain`. When it is empty
-	// (e.g. an attach/trail session), fall back to the session's seed
-	// ReviewPrompt — but flag it session-level so `why` does not imply it lives
-	// in this checkpoint's transcript.
+	// prompt.txt holds session-wide prompts (extracted from the transcript at
+	// offset 0; `checkpoint explain` re-derives a checkpoint-scoped prompt from
+	// the transcript slice and only falls back to these). So the prompt shown
+	// here is session-level — not necessarily this checkpoint's — whenever this
+	// is a later checkpoint (transcript start > 0). Flag that so `why` labels it
+	// "Session prompt:" and points at `checkpoint explain` instead of implying it
+	// is scoped to this checkpoint. The first checkpoint (start 0) is exact.
 	prompt := strings.TrimSpace(prompts)
 	sessionLevel := false
-	if prompt == "" {
-		if reviewPrompt := strings.TrimSpace(meta.ReviewPrompt); reviewPrompt != "" {
-			prompt = reviewPrompt
-			sessionLevel = true
-		}
-	}
-	if prompt == "" {
+	switch {
+	case prompt != "":
+		sessionLevel = meta.GetTranscriptStart() > 0
+	case strings.TrimSpace(meta.ReviewPrompt) != "":
+		// Empty prompt.txt (e.g. an attach/trail session) → the seed ReviewPrompt,
+		// which is always a session-level value, not this checkpoint's prompt.
+		prompt = strings.TrimSpace(meta.ReviewPrompt)
+		sessionLevel = true
+	default:
 		prompt = intent
 	}
 	return checkpointSessionForFile{
@@ -912,6 +916,48 @@ func largestRemainderPercent(counts []int, total int) []int {
 	return pct
 }
 
+// attributionLineMarker returns a one-character flag for the blame tables:
+// "~" when the agent/checkpoint shown is a best-effort guess (the file is not in
+// the checkpoint session's recorded paths, or only trailer-level metadata was
+// found), "?" when more than one checkpoint is a candidate for the line, and a
+// space otherwise. `entire why` surfaces the same information in prose; this
+// closes the gap where the blame table looked equally confident on every line.
+func attributionLineMarker(line attributionLine) string {
+	switch {
+	case line.SessionFallback || line.MetadataMissing:
+		return "~"
+	case len(line.Candidates) > 1:
+		return "?"
+	default:
+		return " "
+	}
+}
+
+// renderAttributionMarkerLegend prints a one-line legend explaining the blame
+// markers, but only for the markers actually present in the table.
+func renderAttributionMarkerLegend(w io.Writer, sty statusStyles, lines []attributionLine) {
+	approximate, ambiguous := false, false
+	for _, line := range lines {
+		switch attributionLineMarker(line) {
+		case "~":
+			approximate = true
+		case "?":
+			ambiguous = true
+		}
+	}
+	if !approximate && !ambiguous {
+		return
+	}
+	var parts []string
+	if approximate {
+		parts = append(parts, "~ best-effort attribution (file not in the checkpoint's recorded paths)")
+	}
+	if ambiguous {
+		parts = append(parts, "? multiple candidate checkpoints — see entire why <file>:<line>")
+	}
+	fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Join(parts, "   ")))
+}
+
 func renderAttributionBlame(w io.Writer, result *fileAttributionResult, lineFlag string, longOutput bool) {
 	if longOutput {
 		renderAttributionBlameLong(w, result, lineFlag)
@@ -933,6 +979,7 @@ func renderAttributionBlameTable(w io.Writer, result *fileAttributionResult, lin
 	}
 
 	body(sty)
+	renderAttributionMarkerLegend(w, sty, result.Lines)
 	renderAttributionSummary(w, sty, result.Summary, lineFlag)
 }
 
@@ -943,18 +990,22 @@ func renderAttributionBlameCompact(w io.Writer, result *fileAttributionResult, l
 		const authorWidth = 6
 		const checkpointWidth = 12
 		const minContentWidth = 12
-		fixedWidth := 2 + lineWidth + 2 + len("[AI]") + 2 + agentWidth + 2 + authorWidth + 2 + checkpointWidth + 2
+		// The trailing "+ 1 + 1" reserves a one-character marker column (plus its
+		// separator) between Checkpoint and Content. Placing it after the last
+		// fixed column means only Content shifts — the Tag/Agent/Author/Checkpoint
+		// positions stay put.
+		fixedWidth := 2 + lineWidth + 2 + len("[AI]") + 2 + agentWidth + 2 + authorWidth + 2 + checkpointWidth + 2 + 1 + 1
 		contentWidth := sty.width - fixedWidth
 		if contentWidth < minContentWidth {
 			contentWidth = minContentWidth
 		}
 		tableWidth := fixedWidth + contentWidth - 2
 
-		fmt.Fprintf(w, "  %*s  Tag   %-*s  %-*s  %-*s  Content\n", lineWidth, "Line", agentWidth, "Agent", authorWidth, "Author", checkpointWidth, "Checkpoint")
+		fmt.Fprintf(w, "  %*s  Tag   %-*s  %-*s  %-*s    Content\n", lineWidth, "Line", agentWidth, "Agent", authorWidth, "Author", checkpointWidth, "Checkpoint")
 		fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Repeat("─", tableWidth)))
 
 		for _, line := range result.Lines {
-			fmt.Fprintf(w, "  %s  %s  %-*s  %-*s  %-*s  %s\n",
+			fmt.Fprintf(w, "  %s  %s  %-*s  %-*s  %-*s  %s %s\n",
 				sty.render(sty.dim, fmt.Sprintf("%*d", lineWidth, line.LineNumber)),
 				renderAttributionTag(sty, line.Authorship),
 				agentWidth,
@@ -963,6 +1014,7 @@ func renderAttributionBlameCompact(w io.Writer, result *fileAttributionResult, l
 				stringutil.TruncateRunes(shortAuthorName(line.Author), authorWidth, ""),
 				checkpointWidth,
 				stringutil.TruncateRunes(compactAttributionCheckpoint(line), checkpointWidth, ""),
+				sty.render(sty.dim, attributionLineMarker(line)),
 				renderAttributionContentCompact(sty, line, contentWidth),
 			)
 		}
@@ -973,23 +1025,24 @@ func renderAttributionBlameLong(w io.Writer, result *fileAttributionResult, line
 	renderAttributionBlameTable(w, result, lineFlag, func(sty statusStyles) {
 		lineWidth := attributionLineColumnWidth(result.Lines)
 		const checkpointColumnWidth = 21
-		fmt.Fprintf(w, "  %*s  Tag   %-12s  %-18s  %-16s  %-21s  Content\n",
+		fmt.Fprintf(w, "  %*s  Tag   %-12s  %-18s  %-16s  %-21s    Content\n",
 			lineWidth, "Line", "Agent", "Model", "Author", "Checkpoint/Session")
-		fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Repeat("─", lineWidth+92)))
+		fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Repeat("─", lineWidth+94)))
 
 		for _, line := range result.Lines {
-			fmt.Fprintf(w, "  %s  %s  %-12s  %-18s  %-16s  %-21s  %s\n",
+			fmt.Fprintf(w, "  %s  %s  %-12s  %-18s  %-16s  %-21s  %s %s\n",
 				sty.render(sty.dim, fmt.Sprintf("%*d", lineWidth, line.LineNumber)),
 				renderAttributionTag(sty, line.Authorship),
 				stringutil.TruncateRunes(line.Agent, 12, ""),
 				stringutil.TruncateRunes(line.Model, 18, ""),
 				stringutil.TruncateRunes(shortAuthorName(line.Author), 16, ""),
 				stringutil.TruncateRunes(shortCheckpointSession(line), checkpointColumnWidth, ""),
+				sty.render(sty.dim, attributionLineMarker(line)),
 				renderAttributionContent(sty, line),
 			)
 		}
 
-		fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Repeat("─", lineWidth+92)))
+		fmt.Fprintf(w, "  %s\n", sty.render(sty.dim, strings.Repeat("─", lineWidth+94)))
 	})
 }
 

@@ -49,6 +49,32 @@ func TestReadCheckpointContextFlagsReviewPromptAsSessionLevel(t *testing.T) {
 	require.True(t, ctx.PromptSessionLevel, "ReviewPrompt seed must be flagged session-level")
 }
 
+// Bug #1 (general case): prompt.txt is session-wide (extracted from transcript
+// offset 0). On a LATER checkpoint (transcript start > 0) the leading prompt is
+// from earlier in the session, so it may not match `checkpoint explain` for this
+// checkpoint — it must be flagged session-level even though prompt.txt is non-empty.
+func TestReadCheckpointContextFlagsSessionWidePromptOnLaterCheckpoint(t *testing.T) {
+	t.Parallel()
+	cpID := checkpointid.MustCheckpointID("d5e6f7a8b9c0")
+	reader := &attributionCheckpointReaderStub{
+		summary: &checkpoint.CheckpointSummary{
+			FilesTouched: []string{"auth.py"},
+			Sessions:     []checkpoint.SessionFilePaths{{Metadata: "metadata.json"}},
+		},
+		content: &checkpoint.SessionContent{
+			Metadata: checkpoint.Metadata{
+				SessionID:                 "session-multi-turn",
+				FilesTouched:              []string{"auth.py"},
+				Agent:                     agent.AgentTypeClaudeCode,
+				CheckpointTranscriptStart: 120, // a later checkpoint in the session
+			},
+			Prompts: "work on this trail please\nthen add a leaderboard route",
+		},
+	}
+	ctx := newStubAttributionResolver(reader).readCheckpointContext(cpID, "auth.py")
+	require.True(t, ctx.PromptSessionLevel, "session-wide prompt on a later checkpoint must be flagged")
+}
+
 func TestReadCheckpointContextKeepsCheckpointPromptNotSessionLevel(t *testing.T) {
 	t.Parallel()
 	cpID := checkpointid.MustCheckpointID("c2c3c4d5e6f7")
@@ -248,6 +274,52 @@ func TestWhyLineFlagRejectsRange(t *testing.T) {
 	var out bytes.Buffer
 	err := runAttributionWhy(context.Background(), &out, "auth.py", attributionWhyOptions{LineFlag: "2-3"})
 	require.ErrorContains(t, err, "single line")
+}
+
+// Item 2: the compact blame table must disclose approximate (SessionFallback /
+// MetadataMissing) and ambiguous (multiple candidate checkpoints) lines with a
+// marker + legend, mirroring what `why` already shows, without breaking column
+// alignment.
+func TestBlameCompactMarksApproximateAndAmbiguousLines(t *testing.T) {
+	t.Parallel()
+	lines := []attributionLine{
+		{LineNumber: 1, Authorship: attributionHuman, Author: "blackg", Content: "human = 1"},
+		{LineNumber: 2, Authorship: attributionAI, Agent: "Claude", Author: "blackg", CheckpointID: "a1b2c3d4e5f6", Content: "ok = 2"},
+		{LineNumber: 3, Authorship: attributionAI, Agent: "Codex", Author: "blackg", CheckpointID: "b1b2c3d4e5f6", SessionFallback: true, Content: "guess = 3"},
+		{
+			LineNumber: 4, Authorship: attributionMixed, Agent: "Codex", Author: "blackg", CheckpointID: "c1b2c3d4e5f6",
+			Candidates: []attributionCandidate{{CheckpointID: "c1b2c3d4e5f6"}, {CheckpointID: "d1b2c3d4e5f6"}},
+			Content:    "amb = 4",
+		},
+	}
+	result := &fileAttributionResult{File: "f.py", Lines: lines, Summary: summarizeAttributionLines(lines)}
+
+	var out bytes.Buffer
+	renderAttributionBlameCompact(&out, result, "")
+	text := out.String()
+
+	require.Contains(t, text, "~", "approximate line should carry a marker")
+	require.Contains(t, text, "?", "ambiguous line should carry a marker")
+	require.Contains(t, text, "best-effort attribution")
+	require.Contains(t, text, "candidate checkpoints")
+	requireCompactBlameColumnsAlign(t, text)
+	requireCompactBlameTableFits(t, text, 80)
+}
+
+func TestBlameCompactNoLegendWhenAllConfident(t *testing.T) {
+	t.Parallel()
+	lines := []attributionLine{
+		{LineNumber: 1, Authorship: attributionHuman, Author: "blackg", Content: "human = 1"},
+		{LineNumber: 2, Authorship: attributionAI, Agent: "Claude", Author: "blackg", CheckpointID: "a1b2c3d4e5f6", Content: "ok = 2"},
+	}
+	result := &fileAttributionResult{File: "f.py", Lines: lines, Summary: summarizeAttributionLines(lines)}
+
+	var out bytes.Buffer
+	renderAttributionBlameCompact(&out, result, "")
+	text := out.String()
+	require.NotContains(t, text, "best-effort attribution")
+	require.NotContains(t, text, "candidate checkpoints")
+	requireCompactBlameColumnsAlign(t, text)
 }
 
 func attributionRepoWithAILine2(t *testing.T) {
