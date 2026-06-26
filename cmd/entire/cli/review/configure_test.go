@@ -290,16 +290,21 @@ func TestBuildConfiguredProfile_RejectsUnknownJudge(t *testing.T) {
 
 func TestBuildConfiguredProfile_InvalidModelSpec(t *testing.T) {
 	t.Parallel()
-	deps := configureTestDeps("claude-code")
-	_, err := buildConfiguredProfile(
-		context.Background(),
-		"general",
-		reviewConfigureOptions{Agents: []string{"claude-code"}, Models: []string{"no-equals"}},
-		&settings.EntireSettings{},
-		deps,
-	)
-	if err == nil {
-		t.Fatal("expected error for malformed --set-model spec")
+	deps := configureTestDeps(tAgentClaude)
+	for _, spec := range []string{"no-equals", "=opus", tAgentClaude + "="} {
+		t.Run(spec, func(t *testing.T) {
+			t.Parallel()
+			_, err := buildConfiguredProfile(
+				context.Background(),
+				DefaultProfileName,
+				reviewConfigureOptions{Agents: []string{tAgentClaude}, Models: []string{spec}},
+				&settings.EntireSettings{},
+				deps,
+			)
+			if err == nil {
+				t.Fatal("expected error for malformed --set-model spec")
+			}
+		})
 	}
 }
 

@@ -624,7 +624,7 @@ func buildConfiguredProfile(ctx context.Context, profileName string, opts review
 		key, model, ok := strings.Cut(raw, "=")
 		key = strings.TrimSpace(key)
 		model = strings.TrimSpace(model)
-		if !ok || key == "" {
+		if !ok || key == "" || model == "" {
 			return settings.ReviewProfileConfig{}, fmt.Errorf("invalid --set-model %q; expected agent=model", raw)
 		}
 		workerName, _, selErr := selectProfileWorker(profile, key)
