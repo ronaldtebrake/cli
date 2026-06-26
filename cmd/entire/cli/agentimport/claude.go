@@ -25,14 +25,9 @@ func (claudeImporter) AgentType() types.AgentType { return agent.AgentTypeClaude
 // dir; sessionFilter, when non-empty, keeps only matching session IDs (the
 // file stem).
 func (claudeImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &claudecode.ClaudeCodeAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve claude session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "claude", (&claudecode.ClaudeCodeAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".jsonl", identitySessionID))
 }
@@ -59,15 +54,11 @@ func (claudeImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 				//nolint:nilerr // skip defensively; the line already parsed in isUserPromptLine
 				return nil, nil
 			}
-			ts, parseErr := time.Parse(time.RFC3339, rec.Timestamp)
-			if parseErr != nil {
-				ts = time.Time{}
-			}
 			return &Turn{
 				UUID:      rec.UUID,
 				Prompt:    transcript.ExtractUserContent(rec.Message),
 				Model:     modelInRange(rawLines, start, end),
-				CreatedAt: ts,
+				CreatedAt: parseTimestamp(rec.Timestamp),
 				Tokens:    tokens,
 			}, nil
 		})

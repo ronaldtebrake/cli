@@ -25,14 +25,9 @@ func (piImporter) AgentType() types.AgentType { return agent.AgentTypePi }
 // window. The session ID is the <uuid> suffix of the <timestamp>_<uuid> file
 // stem (Pi timestamps use dashes, so the first underscore is the separator).
 func (piImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &pi.PiAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve pi session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "pi", (&pi.PiAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".jsonl", piSessionID))
 }
@@ -73,12 +68,8 @@ func (piImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
 				//nolint:nilerr // skip defensively; the line already parsed in piPromptText
 				return nil, nil
 			}
-			ts, parseErr := time.Parse(time.RFC3339, entry.Timestamp)
-			if parseErr != nil {
-				ts = time.Time{}
-			}
 			prompt, _ := piPromptText(rawLines[start])
-			return &Turn{UUID: entry.ID, Prompt: prompt, Model: model, CreatedAt: ts, Tokens: tokens}, nil
+			return &Turn{UUID: entry.ID, Prompt: prompt, Model: model, CreatedAt: parseTimestamp(entry.Timestamp), Tokens: tokens}, nil
 		})
 }
 

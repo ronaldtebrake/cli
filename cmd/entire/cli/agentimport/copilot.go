@@ -33,14 +33,9 @@ func (copilotImporter) AgentType() types.AgentType { return agent.AgentTypeCopil
 // session.start context) modified within the lookback window. The session ID is
 // the session-state subdirectory name.
 func (copilotImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &copilotcli.CopilotCLIAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve copilot session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "copilot", (&copilotcli.CopilotCLIAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	// Each session is a subdirectory holding events.jsonl; keep only those whose
 	// session.start places them in this repo.
@@ -109,12 +104,8 @@ func (copilotImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 				//nolint:nilerr // skip defensively; the line already parsed in copilotPromptText
 				return nil, nil
 			}
-			ts, parseErr := time.Parse(time.RFC3339, evt.Timestamp)
-			if parseErr != nil {
-				ts = time.Time{}
-			}
 			prompt, _ := copilotPromptText(rawLines[start])
-			return &Turn{UUID: evt.ID, Prompt: prompt, Model: model, CreatedAt: ts, Tokens: tokens}, nil
+			return &Turn{UUID: evt.ID, Prompt: prompt, Model: model, CreatedAt: parseTimestamp(evt.Timestamp), Tokens: tokens}, nil
 		})
 }
 

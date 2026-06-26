@@ -2,7 +2,6 @@ package agentimport
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,14 +27,9 @@ func (cursorImporter) AgentType() types.AgentType { return agent.AgentTypeCursor
 // lookback window. Cursor stores sessions either flat (<dir>/<id>.jsonl) or
 // nested (<dir>/<id>/<id>.jsonl, the IDE layout); both are discovered.
 func (cursorImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &cursor.CursorAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve cursor session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "cursor", (&cursor.CursorAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	return discoverSessionFiles(dir, now, sessionFilter, func(dir string, e os.DirEntry) (string, string, bool) {
 		id, path := cursorSessionFile(dir, e)
@@ -75,14 +69,10 @@ func (cursorImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
 				//nolint:nilerr // skip defensively; the line already parsed in isUserPromptLine
 				return nil, nil
 			}
-			ts, parseErr := time.Parse(time.RFC3339, rec.Timestamp)
-			if parseErr != nil {
-				ts = time.Time{}
-			}
 			return &Turn{
 				UUID:      rec.UUID,
 				Prompt:    transcript.ExtractUserContent(rec.Message),
-				CreatedAt: ts,
+				CreatedAt: parseTimestamp(rec.Timestamp),
 			}, nil
 		})
 }

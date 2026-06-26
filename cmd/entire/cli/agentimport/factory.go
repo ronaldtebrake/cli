@@ -26,14 +26,9 @@ func (factoryImporter) AgentType() types.AgentType { return agent.AgentTypeFacto
 // Discover returns Factory transcript files for the repo modified within the
 // lookback window.
 func (factoryImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &factoryaidroid.FactoryAIDroidAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve factory session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "factory", (&factoryaidroid.FactoryAIDroidAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".jsonl", identitySessionID))
 }

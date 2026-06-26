@@ -1,5 +1,18 @@
 package agentimport
 
+import "time"
+
+// parseTimestamp parses an RFC3339 timestamp, returning the zero time when the
+// string is empty or unparseable. Shared by the importers that read a per-turn
+// timestamp off the transcript line.
+func parseTimestamp(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // splitLineTurns is the shared per-turn scaffolding for line-based (JSONL)
 // importers. It finds the user-prompt turn starts with isPrompt, then for each
 // turn spanning raw lines [start, end) calls build to fill the agent-specific

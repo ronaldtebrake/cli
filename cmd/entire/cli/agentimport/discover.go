@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+// resolveDir returns overridePath when set, otherwise the agent's session
+// directory for the repo. getDir is the agent's GetSessionDir method.
+func resolveDir(repoRoot, overridePath, agentName string, getDir func(string) (string, error)) (string, error) {
+	if overridePath != "" {
+		return overridePath, nil
+	}
+	dir, err := getDir(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s session dir: %w", agentName, err)
+	}
+	return dir, nil
+}
+
 // sessionResolver maps a directory entry under dir to a discovered session's
 // (sessionID, transcript path). ok=false skips the entry — it is not a
 // transcript this importer should import (wrong extension/layout, or rejected

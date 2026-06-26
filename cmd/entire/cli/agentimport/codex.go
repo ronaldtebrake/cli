@@ -37,14 +37,9 @@ type codexSessionMeta struct {
 // Discover walks the Codex sessions tree and returns transcripts belonging to
 // this repo (by session_meta cwd) modified within the lookback window.
 func (codexImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &codex.CodexAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve codex session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "codex", (&codex.CodexAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	cutoff := now.AddDate(0, 0, -LookbackDays)
 	var out []SessionFile
@@ -178,11 +173,7 @@ func codexLineTime(raw []byte) time.Time {
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return time.Time{}
 	}
-	ts, err := time.Parse(time.RFC3339, line.Timestamp)
-	if err != nil {
-		return time.Time{}
-	}
-	return ts
+	return parseTimestamp(line.Timestamp)
 }
 
 // repoMatches reports whether cwd is the repo root or a descendant of it. Both

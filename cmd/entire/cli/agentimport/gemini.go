@@ -24,14 +24,9 @@ func (geminiImporter) AgentType() types.AgentType { return agent.AgentTypeGemini
 // Discover returns Gemini transcript files for the repo modified within the
 // lookback window. The session ID is the file stem (session-<date>-<shortid>).
 func (geminiImporter) Discover(repoRoot, overridePath string, now time.Time, sessionFilter []string) ([]SessionFile, error) {
-	dir := overridePath
-	if dir == "" {
-		ag := &geminicli.GeminiCLIAgent{}
-		d, err := ag.GetSessionDir(repoRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve gemini session dir: %w", err)
-		}
-		dir = d
+	dir, err := resolveDir(repoRoot, overridePath, "gemini", (&geminicli.GeminiCLIAgent{}).GetSessionDir)
+	if err != nil {
+		return nil, err
 	}
 	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".json", identitySessionID))
 }
