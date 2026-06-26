@@ -98,7 +98,8 @@ type EntireSettings struct {
 	ReviewDefaultProfile string `json:"review_default_profile,omitempty"`
 
 	// Deprecated: legacy pre-profile review settings. Kept so old config files
-	// still parse, but `entire review` no longer reads this field.
+	// still parse. `entire review` reads this only as a compatibility fallback
+	// when no review_profiles are configured, exposing it as the general profile.
 	Review map[string]ReviewConfig `json:"review,omitempty"`
 
 	// ReviewFixAgent is a legacy saved fix-agent preference. The `entire review
@@ -156,7 +157,8 @@ type ClonePreferences struct {
 	ReviewDefaultProfile string                         `json:"review_default_profile,omitempty"`
 
 	// Deprecated: legacy pre-profile review settings. Kept so old preference
-	// files parse, but new review setup writes ReviewProfiles instead.
+	// files parse. New review setup writes ReviewProfiles instead, while
+	// `entire review` may read Review as a fallback when profiles are absent.
 	Review         map[string]ReviewConfig `json:"review,omitempty"`
 	ReviewFixAgent string                  `json:"review_fix_agent,omitempty"`
 

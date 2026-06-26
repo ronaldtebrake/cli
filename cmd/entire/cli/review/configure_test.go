@@ -202,6 +202,63 @@ func TestBuildConfiguredProfile_PreservesExistingTask(t *testing.T) {
 	}
 }
 
+func TestSelectReviewProfile_LegacyReviewFallback(t *testing.T) {
+	t.Parallel()
+	s := &settings.EntireSettings{
+		Review: map[string]settings.ReviewConfig{
+			tAgentClaude: {Skills: []string{"/review"}, Model: tModelSonnet},
+		},
+	}
+
+	name, profile, err := selectReviewProfile(s, "")
+	if err != nil {
+		t.Fatalf("selectReviewProfile: %v", err)
+	}
+	if name != DefaultProfileName {
+		t.Fatalf("profile name = %q, want %s", name, DefaultProfileName)
+	}
+	cfg, ok := profile.Agents[tAgentClaude]
+	if !ok {
+		t.Fatalf("legacy agent missing from fallback profile: %#v", profile.Agents)
+	}
+	if cfg.Model != tModelSonnet || strings.Join(cfg.Skills, ",") != "/review" {
+		t.Fatalf("fallback config = %#v, want legacy config", cfg)
+	}
+	if s.ReviewDefaultProfile != DefaultProfileName {
+		t.Fatalf("default profile = %q, want %s", s.ReviewDefaultProfile, DefaultProfileName)
+	}
+}
+
+func TestSelectReviewProfile_ConfiguredProfilesOverrideLegacyReview(t *testing.T) {
+	t.Parallel()
+	const securityProfile = "security"
+	s := &settings.EntireSettings{
+		Review: map[string]settings.ReviewConfig{
+			tAgentClaude: {Skills: []string{"/legacy"}},
+		},
+		ReviewProfiles: map[string]settings.ReviewProfileConfig{
+			securityProfile: {
+				Agents: map[string]settings.ReviewConfig{tAgentCodex: {Skills: []string{"/review"}}},
+			},
+		},
+		ReviewDefaultProfile: securityProfile,
+	}
+
+	name, profile, err := selectReviewProfile(s, "")
+	if err != nil {
+		t.Fatalf("selectReviewProfile: %v", err)
+	}
+	if name != securityProfile {
+		t.Fatalf("profile name = %q, want %s", name, securityProfile)
+	}
+	if _, ok := profile.Agents[tAgentClaude]; ok {
+		t.Fatalf("legacy review config leaked into configured profile: %#v", profile.Agents)
+	}
+	if _, ok := s.ReviewProfiles[DefaultProfileName]; ok {
+		t.Fatalf("legacy fallback profile was added despite configured profiles: %#v", s.ReviewProfiles)
+	}
+}
+
 func TestProfileOutput(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

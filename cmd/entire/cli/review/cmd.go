@@ -279,6 +279,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 	profileName := strings.TrimSpace(profileOverride)
 	if profileName == "" {
 		profileName = strings.TrimSpace(s.ReviewDefaultProfile)
@@ -405,6 +406,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
 		fmt.Fprintln(out, "No review profiles configured. Create one with `entire review --configure`.")
@@ -725,6 +727,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 
 	profileOverride = strings.TrimSpace(profileOverride)
 	interactiveTTY := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()

@@ -72,10 +72,11 @@ func profileTask(name string, cfg settings.ReviewProfileConfig) string {
 	}
 }
 
-// selectReviewProfile resolves the profile to run. No legacy fallback is used:
-// users must configure review_profiles (the command is experimental, so there
-// is intentionally no migration from the old review map).
+// selectReviewProfile resolves the profile to run. When no review_profiles are
+// configured, a legacy top-level review map is exposed as the general profile so
+// upgrades keep honoring existing review setups until the user saves profiles.
 func selectReviewProfile(s *settings.EntireSettings, override string) (string, settings.ReviewProfileConfig, error) {
+	applyLegacyReviewProfileFallback(s)
 	if s == nil || len(s.ReviewProfiles) == 0 {
 		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire review --configure` or add review_profiles to Entire preferences")
 	}
@@ -112,6 +113,24 @@ func selectReviewProfile(s *settings.EntireSettings, override string) (string, s
 		return "", settings.ReviewProfileConfig{}, fmt.Errorf("review profile %q has no configured agents", name)
 	}
 	return name, cfg, nil
+}
+
+func applyLegacyReviewProfileFallback(s *settings.EntireSettings) {
+	if s == nil || len(nonZeroProfiles(s.ReviewProfiles)) > 0 {
+		return
+	}
+	legacyAgents := nonZeroAgentConfigs(s.Review) //nolint:staticcheck // intentional compatibility fallback for deprecated review config
+	if len(legacyAgents) == 0 {
+		return
+	}
+	s.ReviewProfiles = map[string]settings.ReviewProfileConfig{
+		DefaultProfileName: {
+			Agents: legacyAgents,
+		},
+	}
+	if strings.TrimSpace(s.ReviewDefaultProfile) == "" {
+		s.ReviewDefaultProfile = DefaultProfileName
+	}
 }
 
 func nonZeroProfiles(in map[string]settings.ReviewProfileConfig) map[string]settings.ReviewProfileConfig {
