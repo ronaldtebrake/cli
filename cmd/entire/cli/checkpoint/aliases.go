@@ -27,7 +27,6 @@ type (
 	LearningsSummary = apicheckpoint.LearningsSummary
 	CodeLearning     = apicheckpoint.CodeLearning
 	Attribution      = apicheckpoint.Attribution
-	Provenance       = apicheckpoint.Provenance
 
 	// Operation option types.
 	WriteOptions               = apicheckpoint.WriteOptions

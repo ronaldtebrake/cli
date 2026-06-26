@@ -99,10 +99,9 @@ func (claudeImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 		}
 
 		var rec struct {
-			UUID       string          `json:"uuid"`
-			Message    json.RawMessage `json:"message"`
-			ParentUUID string          `json:"parentUuid"`
-			Timestamp  string          `json:"timestamp"`
+			UUID      string          `json:"uuid"`
+			Message   json.RawMessage `json:"message"`
+			Timestamp string          `json:"timestamp"`
 		}
 		if err := json.Unmarshal(rawLines[start], &rec); err != nil {
 			// Already validated as a user-prompt line in isUserPromptLine; skip
@@ -115,14 +114,13 @@ func (claudeImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 		}
 
 		turns = append(turns, Turn{
-			LineStart:  start,
-			LineEnd:    end,
-			UUID:       rec.UUID,
-			ParentUUID: rec.ParentUUID,
-			Prompt:     transcript.ExtractUserContent(rec.Message),
-			Model:      modelInRange(rawLines, start, end),
-			CreatedAt:  ts,
-			Tokens:     tokens,
+			LineStart: start,
+			LineEnd:   end,
+			UUID:      rec.UUID,
+			Prompt:    transcript.ExtractUserContent(rec.Message),
+			Model:     modelInRange(rawLines, start, end),
+			CreatedAt: ts,
+			Tokens:    tokens,
 		})
 	}
 	return turns, nil

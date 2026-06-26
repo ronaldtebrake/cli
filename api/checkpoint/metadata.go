@@ -11,21 +11,6 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
-// Provenance records where an imported checkpoint came from, so explain/search
-// can cite the original transcript honestly and re-import stays idempotent.
-// Only set for imported (Kind == "imported") checkpoints.
-type Provenance struct {
-	Source         string `json:"source"`                // e.g. "claude-code"
-	TranscriptFile string `json:"transcript_file"`       // basename of the source transcript (no absolute path: avoid leaking local usernames/repo layout)
-	SessionID      string `json:"session_id"`            // agent session id
-	TurnUUID       string `json:"turn_uuid"`             // uuid of the user-prompt line that starts this turn
-	ParentUUID     string `json:"parent_uuid,omitempty"` // parent uuid of that line
-	LineStart      int    `json:"line_start"`            // 0-indexed start line of this turn in the source
-	LineEnd        int    `json:"line_end"`              // exclusive end line (next turn start or EOF)
-	ContentHash    string `json:"content_hash"`          // hash of the redacted turn slice (never raw content)
-	ImportVersion  int    `json:"import_version"`        // importer schema version
-}
-
 // WriteOptions contains options for writing a persistent checkpoint.
 type WriteOptions struct {
 	// CheckpointID is the stable 12-hex-char identifier
@@ -150,10 +135,6 @@ type WriteOptions struct {
 
 	// Kind identifies the session purpose (e.g., "agent_review"). Empty for normal sessions.
 	Kind string
-
-	// Provenance records the source of an imported checkpoint. Only set when
-	// Kind == "imported".
-	Provenance *Provenance
 
 	// ReviewSkills is the snapshot of skills used (only meaningful when Kind is a review kind).
 	// May be empty when a review is attached post-hoc without declared skills.
@@ -369,10 +350,6 @@ type Metadata struct {
 
 	// Kind identifies the session purpose (e.g., "agent_review"). Empty for normal sessions.
 	Kind string `json:"kind,omitempty"`
-
-	// Provenance records the source of an imported checkpoint. Only set when
-	// Kind == "imported".
-	Provenance *Provenance `json:"provenance,omitempty"`
 
 	// ReviewSkills lists the review skills that were run (only set when Kind is a review kind).
 	// May be empty when a review was attached post-hoc without declared skills.

@@ -14,7 +14,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -27,16 +26,13 @@ import (
 	"github.com/entireio/cli/redact"
 )
 
-// importVersion is the importer schema version stamped into provenance.
-const importVersion = 1
-
 // LookbackDays bounds how far back import reaches. Fixed this pass (no flag).
 const LookbackDays = 30
 
 // SessionFile is one discovered agent transcript for a repo.
 type SessionFile struct {
 	Path      string // absolute path to the transcript file
-	SessionID string // agent session id (used in checkpoint metadata + provenance)
+	SessionID string // agent session id (used in checkpoint metadata)
 }
 
 // Turn is one user-prompt turn extracted from a session transcript. Line
@@ -44,7 +40,7 @@ type SessionFile struct {
 // and the agent token-usage helpers.
 type Turn struct {
 	LineStart, LineEnd int
-	UUID, ParentUUID   string
+	UUID               string
 	Prompt, Model      string
 	CreatedAt          time.Time
 	Tokens             *types.TokenUsage
@@ -150,10 +146,7 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 		// checkpoint (each turn stores the full session transcript with its own
 		// CheckpointTranscriptStart). Redacting per turn would be O(turns).
 		// Computed lazily so a fully-skipped or dry-run file pays nothing.
-		// redLines holds the redacted transcript split into raw lines so each
-		// turn's provenance hash covers redacted (never raw) content.
 		var red redact.RedactedBytes
-		var redLines [][]byte
 		redacted := false
 		for _, turn := range turns {
 			cid := DeriveCheckpointID(sf.SessionID, turn.UUID)
@@ -171,10 +164,9 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 					return res, fmt.Errorf("redact %s transcript: %w", sf.SessionID, rerr)
 				}
 				red = r
-				redLines = splitRawLines(red.Bytes())
 				redacted = true
 			}
-			if err := writeTurn(ctx, stores, imp, cid, sf, red, contentHash(redLines, turn), turn); err != nil {
+			if err := writeTurn(ctx, stores, imp, cid, sf, red, turn); err != nil {
 				return res, err
 			}
 			existing[cid.String()] = true
@@ -184,32 +176,7 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 	return res, nil
 }
 
-// contentHash returns "sha256:<hex>" over the redacted turn slice
-// (redLines[LineStart:LineEnd]). Hashing redacted content keeps the stored
-// provenance hash from enabling confirmation attacks against guessed raw
-// prompt/output text. Returns "" when the bounds are empty.
-func contentHash(redLines [][]byte, turn Turn) string {
-	start, end := turn.LineStart, turn.LineEnd
-	if start < 0 {
-		start = 0
-	}
-	if end > len(redLines) {
-		end = len(redLines)
-	}
-	if start >= end {
-		return ""
-	}
-	sum := sha256.Sum256(joinLines(redLines[start:end]))
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func writeTurn(ctx context.Context, stores *cp.Stores, imp Importer, cid id.CheckpointID, sf SessionFile, red redact.RedactedBytes, hash string, turn Turn) error {
-	prov := &cp.Provenance{
-		Source: imp.Name(), TranscriptFile: filepath.Base(sf.Path), SessionID: sf.SessionID,
-		TurnUUID: turn.UUID, ParentUUID: turn.ParentUUID,
-		LineStart: turn.LineStart, LineEnd: turn.LineEnd,
-		ContentHash: hash, ImportVersion: importVersion,
-	}
+func writeTurn(ctx context.Context, stores *cp.Stores, imp Importer, cid id.CheckpointID, sf SessionFile, red redact.RedactedBytes, turn Turn) error {
 	if err := stores.Persistent.Write(ctx, cp.Session(cp.WriteOptions{
 		CheckpointID:              cid,
 		SessionID:                 sf.SessionID,
@@ -223,7 +190,6 @@ func writeTurn(ctx context.Context, stores *cp.Stores, imp Importer, cid id.Chec
 		CheckpointsCount:          1,
 		CheckpointTranscriptStart: turn.LineStart,
 		TokenUsage:                turn.Tokens,
-		Provenance:                prov,
 	})); err != nil {
 		return fmt.Errorf("write imported checkpoint %s: %w", cid, err)
 	}

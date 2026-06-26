@@ -50,9 +50,6 @@ func TestWrite_ImportedSurfacesOnList(t *testing.T) {
 		Transcript:       red,
 		Prompts:          []string{"hi"},
 		CheckpointsCount: 1,
-		Provenance: &Provenance{
-			Source: "claude-code", SessionID: "s1", TurnUUID: "u1", ImportVersion: 1,
-		},
 	})
 	if err != nil {
 		t.Fatalf("write imported checkpoint: %v", err)
