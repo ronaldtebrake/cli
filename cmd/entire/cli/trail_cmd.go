@@ -1722,10 +1722,16 @@ func parseTrailRepoArg(raw string) (forge, owner, repo string, err error) {
 	// fall through to the URL parser, which understands hosts and schemes.
 	if !strings.Contains(raw, "://") && !strings.Contains(raw, "@") {
 		parts := strings.Split(strings.Trim(raw, "/"), "/")
-		if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
-			return parts[0], parts[1], strings.TrimSuffix(parts[2], ".git"), nil
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return "", "", "", fmt.Errorf("invalid --repo %q: expected forge/owner/repo (e.g. gh/acme/app) or a clone URL", raw)
 		}
-		return "", "", "", fmt.Errorf("invalid --repo %q: expected forge/owner/repo (e.g. gh/acme/app) or a clone URL", raw)
+		// parts[0] must be a short forge id ("gh"), not a hostname. A host-like
+		// value (github.com/acme/app) would otherwise be forwarded verbatim and
+		// the server would reject the malformed path with an opaque error.
+		if !gitremote.IsSupportedForge(parts[0]) {
+			return "", "", "", fmt.Errorf("invalid --repo %q: %q is not a supported forge id (use a forge id like \"gh\", or pass a clone URL such as https://github.com/%s/%s)", raw, parts[0], parts[1], parts[2])
+		}
+		return parts[0], parts[1], strings.TrimSuffix(parts[2], ".git"), nil
 	}
 	info, perr := gitremote.ParseURL(raw)
 	if perr != nil {

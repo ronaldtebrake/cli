@@ -29,6 +29,9 @@ func TestParseTrailRepoArg(t *testing.T) {
 		{name: "forge plus owner only", raw: "gh/acme", wantErr: true},
 		{name: "four segments", raw: "gh/acme/app/extra", wantErr: true},
 		{name: "unsupported forge host", raw: "git@gitlab.com:acme/app.git", wantErr: true},
+		{name: "bare host instead of forge id", raw: "github.com/acme/app", wantErr: true},
+		{name: "bare unsupported forge host", raw: "gitlab.com/acme/app", wantErr: true},
+		{name: "unknown short forge id", raw: "zz/acme/app", wantErr: true},
 	}
 
 	for _, tt := range tests {
