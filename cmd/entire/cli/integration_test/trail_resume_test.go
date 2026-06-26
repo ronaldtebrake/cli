@@ -100,7 +100,7 @@ func TestTrailResume_UsesCheckpointSessionsWhenLocalStateIsMissing(t *testing.T)
 
 	resumeOutput := env.RunCLI("trail", "--insecure-http-auth", "resume", "321", "--session", secondSession.ID)
 	for _, want := range []string{
-		"Restored checkpoint session " + secondSession.ID,
+		"Restored checkpoint " + checkpointID + " (1 session)",
 		"claude -r " + secondSession.ID,
 		"Create goodbye method",
 	} {

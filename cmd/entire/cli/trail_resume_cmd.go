@@ -786,13 +786,14 @@ func printTrailResumeSessions(w io.Writer, sessions []trailResumeSessionContext,
 }
 
 func printTrailResumeFindings(w io.Writer, findings trailResumeFindingsContext) {
-	counts := findings.Counts
-	fmt.Fprintf(w, "  Findings: open %d  high %d  medium %d  low %d  resolved %d  dismissed %d  stale %d\n",
-		counts.Open, counts.OpenHigh, counts.OpenMedium, counts.OpenLow, counts.Resolved, counts.Dismissed, counts.Stale)
 	if findings.Unavailable != "" {
+		fmt.Fprintln(w, "  Findings:")
 		fmt.Fprintf(w, "    unavailable: %s\n\n", findings.Unavailable)
 		return
 	}
+	counts := findings.Counts
+	fmt.Fprintf(w, "  Findings: open %d  high %d  medium %d  low %d  resolved %d  dismissed %d  stale %d\n",
+		counts.Open, counts.OpenHigh, counts.OpenMedium, counts.OpenLow, counts.Resolved, counts.Dismissed, counts.Stale)
 	if len(findings.Top) == 0 {
 		fmt.Fprintln(w, "    no current high/medium open findings")
 		fmt.Fprintln(w)
@@ -832,7 +833,7 @@ func encodeTrailResumeContextJSON(w io.Writer, ctx trailResumeContext) error {
 		Trail               trailResumeTrailContext     `json:"trail"`
 		Sessions            []trailResumeSessionContext `json:"sessions"`
 		SessionsUnavailable string                      `json:"sessions_unavailable,omitempty"`
-		FindingsSummary     trailResumeFindingCounts    `json:"findings_summary"`
+		FindingsSummary     *trailResumeFindingCounts   `json:"findings_summary,omitempty"`
 		Findings            []api.TrailReviewComment    `json:"findings"`
 		FindingsHasMore     bool                        `json:"findings_has_more,omitempty"`
 		FindingsUnavailable string                      `json:"findings_unavailable,omitempty"`
@@ -842,12 +843,15 @@ func encodeTrailResumeContextJSON(w io.Writer, ctx trailResumeContext) error {
 		Trail:               ctx.Trail,
 		Sessions:            ctx.Sessions,
 		SessionsUnavailable: ctx.SessionsUnavailable,
-		FindingsSummary:     trailResumeFindingCountsFromReviewCounts(ctx.Findings.Counts),
 		Findings:            ctx.Findings.Top,
 		FindingsHasMore:     ctx.Findings.HasMore,
 		FindingsUnavailable: ctx.Findings.Unavailable,
 		DefaultResume:       ctx.DefaultResume,
 		Commands:            ctx.Commands,
+	}
+	if ctx.Findings.Unavailable == "" {
+		summary := trailResumeFindingCountsFromReviewCounts(ctx.Findings.Counts)
+		payload.FindingsSummary = &summary
 	}
 
 	enc := json.NewEncoder(w)

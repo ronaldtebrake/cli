@@ -433,6 +433,31 @@ func TestPrintTrailResumeContextShowsUnavailableSessions(t *testing.T) {
 	}
 }
 
+func TestPrintTrailResumeContextSuppressesCountsWhenFindingsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{
+			Number: 575,
+			Title:  "Add trail resume",
+			Branch: "feature/trail-resume",
+		},
+		Findings: trailResumeFindingsContext{
+			Unavailable: "reviews API unavailable",
+		},
+	}
+
+	var out strings.Builder
+	printTrailResumeContext(&out, ctx)
+	text := out.String()
+	if !strings.Contains(text, "Findings:") || !strings.Contains(text, "unavailable: reviews API unavailable") {
+		t.Fatalf("context output missing unavailable findings message:\n%s", text)
+	}
+	if strings.Contains(text, "open 0") || strings.Contains(text, "high 0") {
+		t.Fatalf("context output should not print zero findings counts when findings are unavailable:\n%s", text)
+	}
+}
+
 func TestEncodeTrailResumeContextJSON(t *testing.T) {
 	t.Parallel()
 
@@ -502,6 +527,32 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 	}
 	if len(decoded.Findings) != 1 || decoded.Findings[0].ID != "finding-1" {
 		t.Fatalf("decoded findings = %#v", decoded.Findings)
+	}
+}
+
+func TestEncodeTrailResumeContextJSONOmitsFindingsSummaryWhenUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{ID: "trl_1", Number: 575, Branch: "feature/trail-resume"},
+		Findings: trailResumeFindingsContext{
+			Unavailable: "reviews API unavailable",
+		},
+	}
+
+	var out bytes.Buffer
+	if err := encodeTrailResumeContextJSON(&out, ctx); err != nil {
+		t.Fatalf("encodeTrailResumeContextJSON: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out.String())
+	}
+	if decoded["findings_unavailable"] != "reviews API unavailable" {
+		t.Fatalf("decoded findings_unavailable = %#v", decoded["findings_unavailable"])
+	}
+	if _, ok := decoded["findings_summary"]; ok {
+		t.Fatalf("findings_summary should be omitted when findings are unavailable:\n%s", out.String())
 	}
 }
 
