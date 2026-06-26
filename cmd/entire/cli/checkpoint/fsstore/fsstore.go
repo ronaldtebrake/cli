@@ -10,6 +10,12 @@
 // the git-specific blob-hash fields of the contract and stores transcript bytes
 // directly, which keeps the example small and makes the contract's remaining
 // git leakage concrete.
+//
+// It is faithful to the contract's per-session metadata and write-request
+// semantics, but it does not replicate the git store's cross-session
+// aggregation: the root summary's TokenUsage reflects the latest session rather
+// than a sum across sessions. That aggregation is not needed to validate the
+// pluggable seam and is intentionally omitted.
 package fsstore
 
 import (
@@ -21,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	cp "github.com/entireio/cli/api/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
@@ -89,8 +96,16 @@ func (s *Store) save(sc *storedCheckpoint) error {
 	if err != nil {
 		return fmt.Errorf("fsstore: encode %s: %w", sc.Summary.CheckpointID, err)
 	}
-	if err := os.WriteFile(s.path(sc.Summary.CheckpointID), data, 0o644); err != nil { //nolint:gosec // reference test backend
+	// Write atomically (temp + rename) so a reader never observes a partial
+	// document. This guards a single writer's in-progress write; cross-process
+	// concurrency is out of scope for this test-only backend.
+	final := s.path(sc.Summary.CheckpointID)
+	tmp := final + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("fsstore: write %s: %w", sc.Summary.CheckpointID, err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		return fmt.Errorf("fsstore: commit %s: %w", sc.Summary.CheckpointID, err)
 	}
 	return nil
 }
@@ -130,6 +145,16 @@ func (s *Store) writeSession(opts cp.WriteOptions) error {
 		Prompts:    redact.String(strings.Join(opts.Prompts, checkpoint.PromptSeparator)),
 	}
 	sc.Sessions = upsertSession(sc.Sessions, session)
+
+	// Summary-level flags accumulate across sessions and survive recompute.
+	sc.Summary.HasReview = sc.Summary.HasReview || opts.HasReview
+	sc.Summary.HasInvestigation = sc.Summary.HasInvestigation || opts.HasInvestigation
+	if opts.CombinedAttribution != nil {
+		// Migration path: an initial write may carry holistic attribution. Normal
+		// condensation sets this later via a CheckpointAttribution write instead.
+		sc.Summary.CombinedAttribution = opts.CombinedAttribution
+	}
+
 	recomputeSummary(sc)
 	return s.save(sc)
 }
@@ -285,28 +310,39 @@ func (s *Store) sessionAt(checkpointID id.CheckpointID, sessionIndex int) (*stor
 }
 
 func metadataFromWriteOptions(opts cp.WriteOptions) cp.Metadata {
+	createdAt := opts.CreatedAt
+	if createdAt.IsZero() {
+		// Contract: a zero CreatedAt means "use the current time".
+		createdAt = time.Now()
+	}
 	return cp.Metadata{
-		CheckpointID:     opts.CheckpointID,
-		SessionID:        opts.SessionID,
-		Strategy:         opts.Strategy,
-		CreatedAt:        opts.CreatedAt,
-		Branch:           opts.Branch,
-		CheckpointsCount: opts.CheckpointsCount,
-		SaveStepCount:    opts.SaveStepCount,
-		FilesTouched:     opts.FilesTouched,
-		Agent:            opts.Agent,
-		Model:            opts.Model,
-		TurnID:           opts.TurnID,
-		IsTask:           opts.IsTask,
-		ToolUseID:        opts.ToolUseID,
-		TokenUsage:       opts.TokenUsage,
-		SkillEvents:      opts.SkillEvents,
-		SessionMetrics:   opts.SessionMetrics,
-		Summary:          opts.Summary,
-		Attribution:      opts.Attribution,
-		Kind:             opts.Kind,
-		ReviewSkills:     opts.ReviewSkills,
-		ReviewPrompt:     opts.ReviewPrompt,
+		CheckpointID:                opts.CheckpointID,
+		SessionID:                   opts.SessionID,
+		Strategy:                    opts.Strategy,
+		CreatedAt:                   createdAt,
+		Branch:                      opts.Branch,
+		CheckpointsCount:            opts.CheckpointsCount,
+		SaveStepCount:               opts.SaveStepCount,
+		FilesTouched:                opts.FilesTouched,
+		Agent:                       opts.Agent,
+		Model:                       opts.Model,
+		TurnID:                      opts.TurnID,
+		IsTask:                      opts.IsTask,
+		ToolUseID:                   opts.ToolUseID,
+		TranscriptIdentifierAtStart: opts.TranscriptIdentifierAtStart,
+		CheckpointTranscriptStart:   opts.CheckpointTranscriptStart,
+		TranscriptLinesAtStart:      opts.CheckpointTranscriptStart, // git writes both for back-compat
+		TokenUsage:                  opts.TokenUsage,
+		SkillEvents:                 opts.SkillEvents,
+		PromptAttributions:          opts.PromptAttributionsJSON,
+		SessionMetrics:              opts.SessionMetrics,
+		Summary:                     opts.Summary,
+		Attribution:                 opts.Attribution,
+		Kind:                        opts.Kind,
+		ReviewSkills:                opts.ReviewSkills,
+		ReviewPrompt:                opts.ReviewPrompt,
+		InvestigateRunID:            opts.InvestigateRunID,
+		InvestigateTopic:            opts.InvestigateTopic,
 	}
 }
 

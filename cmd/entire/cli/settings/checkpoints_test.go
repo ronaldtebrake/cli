@@ -91,6 +91,16 @@ func TestLoadCheckpointsConfig_ToleratesWholeFileSyntaxError(t *testing.T) {
 	assert.Nil(t, cfg)
 }
 
+func TestLoadCheckpointsConfig_ToleratesUnreadableFile(t *testing.T) {
+	dir := newCheckpointsSettingsRepo(t)
+	// settings.json as a directory makes os.ReadFile fail with a non-ENOENT
+	// error; the loader must stay fail-soft (no new failure for Open).
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".entire", "settings.json"), 0o755))
+	cfg, err := LoadCheckpointsConfig(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, cfg)
+}
+
 func TestLoadCheckpointsConfig_LocalOverridesBase(t *testing.T) {
 	dir := newCheckpointsSettingsRepo(t)
 	writeFile(t, dir, "settings.json", `{"enabled": true, "checkpoints": {"primary": {"type": "git"}, "mirrors": [{"type": "fs"}]}}`)

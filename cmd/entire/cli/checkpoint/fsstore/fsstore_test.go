@@ -130,6 +130,41 @@ func TestStore_ListReturnsCheckpoints(t *testing.T) {
 	assert.Equal(t, id.MustCheckpointID("b1b2c3d4e5f6"), infos[0].CheckpointID)
 }
 
+func TestStore_DefaultsCreatedAtWhenZero(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := New(t.TempDir())
+	cid := id.MustCheckpointID("a1b2c3d4e5f6")
+
+	require.NoError(t, store.Write(ctx, cp.Session{
+		CheckpointID: cid, SessionID: "s1", // CreatedAt left zero
+		Transcript: redact.AlreadyRedacted([]byte("t")),
+	}))
+
+	meta, err := store.ReadSessionMetadata(ctx, cid, 0)
+	require.NoError(t, err)
+	assert.False(t, meta.CreatedAt.IsZero(), "zero CreatedAt should default to the current time")
+}
+
+func TestStore_PersistsReviewFlagAndCombinedAttribution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := New(t.TempDir())
+	cid := id.MustCheckpointID("a1b2c3d4e5f6")
+
+	require.NoError(t, store.Write(ctx, cp.Session{
+		CheckpointID: cid, SessionID: "s1", Transcript: redact.AlreadyRedacted([]byte("t")),
+		HasReview:           true,
+		CombinedAttribution: &cp.Attribution{AgentLines: 3},
+	}))
+
+	summary, err := store.Read(ctx, cid)
+	require.NoError(t, err)
+	assert.True(t, summary.HasReview)
+	require.NotNil(t, summary.CombinedAttribution)
+	assert.Equal(t, 3, summary.CombinedAttribution.AgentLines)
+}
+
 func TestStore_FactoryRequiresPath(t *testing.T) {
 	t.Parallel()
 	_, err := factory(context.Background(), checkpoint.OpenEnv{}, nil)

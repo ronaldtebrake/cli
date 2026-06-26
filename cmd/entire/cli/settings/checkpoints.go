@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
@@ -54,12 +56,12 @@ type checkpointsEnvelope struct {
 func LoadCheckpointsConfig(ctx context.Context) (*CheckpointsConfig, error) {
 	base, local := checkpointsSettingsPaths(ctx)
 
-	cfg, err := loadCheckpointsFromFile(base)
+	cfg, err := loadCheckpointsFromFile(ctx, base)
 	if err != nil {
 		return nil, err
 	}
 	if local != "" {
-		localCfg, err := loadCheckpointsFromFile(local)
+		localCfg, err := loadCheckpointsFromFile(ctx, local)
 		if err != nil {
 			return nil, err
 		}
@@ -76,13 +78,18 @@ func LoadCheckpointsConfig(ctx context.Context) (*CheckpointsConfig, error) {
 	return cfg, nil
 }
 
-func loadCheckpointsFromFile(filePath string) (*CheckpointsConfig, error) {
+func loadCheckpointsFromFile(ctx context.Context, filePath string) (*CheckpointsConfig, error) {
 	data, err := os.ReadFile(filePath) //nolint:gosec // path is from AbsPath or a worktree-root join
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil //nolint:nilnil // absent file => no checkpoints config, not an error
+		if !os.IsNotExist(err) {
+			// A non-ENOENT read error (bad perms, settings.json is a directory,
+			// etc.) is a broken setup that the strict Load path surfaces for
+			// normal commands. Stay fail-soft here so checkpoint construction
+			// defaults to git rather than newly failing resume/explain/hooks.
+			logging.Debug(ctx, "checkpoints config unreadable; defaulting to git backend",
+				slog.String("path", filePath), slog.String("error", err.Error()))
 		}
-		return nil, fmt.Errorf("reading settings file %s: %w", filePath, err)
+		return nil, nil //nolint:nilnil // absent or unreadable file => no checkpoints config, fail-soft
 	}
 
 	var env checkpointsEnvelope

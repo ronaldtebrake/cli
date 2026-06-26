@@ -40,6 +40,13 @@ type Stores struct {
 // checkpoints config it resolves to the git backend with no mirrors, so default
 // behavior is unchanged. When mirrors are configured, the persistent store is a
 // fan-out wrapper (reads from primary, best-effort writes to each mirror).
+//
+// Backend selection is read via settings.LoadCheckpointsConfig, which resolves
+// like settings.Load: from the context's worktree root if set, else relative to
+// the current working directory — not from repo. Callers opening a repository
+// that is not the cwd should wrap ctx with that worktree root (as dispatch does).
+// Resolution is fail-soft: a missing or unreadable settings file yields the
+// default git backend with no mirrors, preserving default behavior.
 func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores, error) {
 	refs := resolveOpenRefs(ctx, opts)
 	env := OpenEnv{Repo: repo, BlobFetcher: opts.BlobFetcher, Refs: refs}
