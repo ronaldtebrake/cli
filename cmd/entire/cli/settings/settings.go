@@ -127,6 +127,12 @@ type EntireSettings struct {
 	// nil/true = sign (default), false = skip signing.
 	SignCheckpointCommits *bool `json:"sign_checkpoint_commits,omitempty"`
 
+	// Checkpoints selects checkpoint storage backends (a primary plus optional
+	// write-only mirrors). checkpoint.Open consumes it via the lenient
+	// LoadCheckpointsConfig loader; the field also lives here so the strict
+	// settings loader (DisallowUnknownFields) accepts a "checkpoints" key.
+	Checkpoints *CheckpointsConfig `json:"checkpoints,omitempty"`
+
 	// Deprecated: no longer used. Exists to tolerate old settings files
 	// that still contain "strategy": "auto-commit" or similar.
 	Strategy string `json:"strategy,omitempty"`

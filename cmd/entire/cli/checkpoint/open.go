@@ -2,8 +2,12 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/go-git/go-git/v6"
+
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
 // OpenOptions configures Open. The zero value uses the default committed-ref
@@ -32,20 +36,69 @@ type Stores struct {
 
 // Open resolves the checkpoint storage topology and constructs the backing
 // store(s). It keeps ref resolution, backend selection, and blob-fetcher wiring
-// in one place. The primary is built through the backend registry; today it
-// always resolves to the git backend, so default behavior is unchanged.
+// in one place. The primary is built through the backend registry; with no
+// checkpoints config it resolves to the git backend with no mirrors, so default
+// behavior is unchanged. When mirrors are configured, the persistent store is a
+// fan-out wrapper (reads from primary, best-effort writes to each mirror).
 func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores, error) {
 	refs := resolveOpenRefs(ctx, opts)
 	env := OpenEnv{Repo: repo, BlobFetcher: opts.BlobFetcher, Refs: refs}
-	primary, err := build(ctx, env, BackendTypeGit, nil)
+
+	cfg, err := settings.LoadCheckpointsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve checkpoints config: %w", err)
+	}
+
+	primary, err := buildPrimary(ctx, env, cfg)
 	if err != nil {
 		return nil, err
 	}
+	mirrors, err := buildMirrors(ctx, env, cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Stores{
-		Persistent: primary,
+		Persistent: newFanoutStore(primary, mirrors),
 		ephemeral:  newEphemeralStore(repo, refs),
 		refs:       refs,
 	}, nil
+}
+
+// buildPrimary constructs the primary persistent store. The primary must be the
+// git backend: attach, resume, push, doctor, cleanup, and OPF all assume a git
+// refs.Primary, so a non-git primary is rejected rather than silently
+// half-supported.
+func buildPrimary(ctx context.Context, env OpenEnv, cfg *settings.CheckpointsConfig) (PersistentStore, error) {
+	typ, raw := BackendTypeGit, json.RawMessage(nil)
+	if cfg != nil && cfg.Primary.Type != "" {
+		typ, raw = cfg.Primary.Type, cfg.Primary.Config
+	}
+	if typ != BackendTypeGit {
+		return nil, fmt.Errorf("checkpoints.primary.type %q is not supported: only %q may be the primary backend", typ, BackendTypeGit)
+	}
+	return build(ctx, env, typ, raw)
+}
+
+// buildMirrors constructs the mirror writers. A git-typed mirror is rejected: it
+// would share the primary ref topology and double-write the same ref, so it is
+// never a meaningful independent mirror.
+func buildMirrors(ctx context.Context, env OpenEnv, cfg *settings.CheckpointsConfig) ([]Writer, error) {
+	if cfg == nil || len(cfg.Mirrors) == 0 {
+		return nil, nil
+	}
+	mirrors := make([]Writer, 0, len(cfg.Mirrors))
+	for i, m := range cfg.Mirrors {
+		if m.Type == BackendTypeGit {
+			return nil, fmt.Errorf("checkpoints.mirrors[%d]: a %q mirror would duplicate the primary ref and is not supported", i, BackendTypeGit)
+		}
+		store, err := build(ctx, env, m.Type, m.Config)
+		if err != nil {
+			return nil, fmt.Errorf("checkpoints.mirrors[%d]: %w", i, err)
+		}
+		mirrors = append(mirrors, store)
+	}
+	return mirrors, nil
 }
 
 func resolveOpenRefs(ctx context.Context, opts OpenOptions) PersistentRefs {
