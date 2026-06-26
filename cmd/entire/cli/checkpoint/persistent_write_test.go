@@ -120,6 +120,33 @@ func TestWriteCommittedWritesBranchCheckpointVersion(t *testing.T) {
 	}
 }
 
+func TestWriteCommittedUsesExplicitCheckpointVersion(t *testing.T) {
+	t.Parallel()
+	repo, _ := setupBranchTestRepo(t)
+	store := NewGitStore(repo, DefaultV1Refs())
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("c1c2c3d4e5f6")
+	const configuredVersion = "refs-v1"
+
+	if err := store.Write(ctx, Session{
+		CheckpointID:      cpID,
+		SessionID:         "session-001",
+		Strategy:          "manual-commit",
+		Transcript:        redact.AlreadyRedacted([]byte("transcript\n")),
+		Prompts:           []string{"initial"},
+		AuthorName:        "Test",
+		AuthorEmail:       "test@test.com",
+		CheckpointVersion: configuredVersion,
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	rawSummary := readSummaryFromBranch(t, repo, cpID)
+	if rawSummary.CheckpointVersion != configuredVersion {
+		t.Fatalf("raw checkpoint_version = %q, want %q", rawSummary.CheckpointVersion, configuredVersion)
+	}
+}
+
 // TestWrite_BackfillSummaryNotFound verifies error propagation through dispatch.
 func TestWrite_BackfillSummaryNotFound(t *testing.T) {
 	t.Parallel()

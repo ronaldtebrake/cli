@@ -498,6 +498,9 @@ func (s *GitStore) writeCheckpointSummary(opts WriteOptions, basePath string, en
 
 	combinedAttribution := opts.CombinedAttribution
 	checkpointVersion := CheckpointVersionBranchV1
+	if opts.CheckpointVersion != "" {
+		checkpointVersion = opts.CheckpointVersion
+	}
 	hasReview := opts.HasReview
 	hasInvestigation := opts.HasInvestigation
 	// imported is the umbrella flag: true when any session in this checkpoint

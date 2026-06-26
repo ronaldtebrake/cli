@@ -26,6 +26,9 @@ type WriteOptions struct {
 	// Strategy is the name of the strategy that created this checkpoint
 	Strategy string
 
+	// CheckpointVersion is the checkpoint metadata format for new root summaries.
+	CheckpointVersion string
+
 	// Branch is the branch name where the checkpoint was created (empty if detached HEAD)
 	Branch string
 

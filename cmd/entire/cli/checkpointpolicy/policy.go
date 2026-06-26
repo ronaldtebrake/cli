@@ -18,14 +18,27 @@ func DefaultPolicy() Policy {
 	}
 }
 
+func DefaultCheckpointVersion() string {
+	return checkpoint.CheckpointVersionBranchV1
+}
+
 func Normalize(policy Policy) Policy {
 	if policy.CheckpointVersion == "" {
-		policy.CheckpointVersion = checkpoint.CheckpointVersionBranchV1
+		policy.CheckpointVersion = DefaultCheckpointVersion()
 	}
 	if policy.CheckpointMinVersion == "" {
 		policy.CheckpointMinVersion = checkpoint.CheckpointVersionBranchV1
 	}
 	return policy
+}
+
+func CheckpointVersion(policy Policy) (string, bool) {
+	policy = Normalize(policy)
+	version, err := ParseFormat(policy.CheckpointVersion)
+	if err != nil || !CanWrite(version) {
+		return DefaultCheckpointVersion(), true
+	}
+	return policy.CheckpointVersion, false
 }
 
 func ValidatePolicy(policy Policy) error {

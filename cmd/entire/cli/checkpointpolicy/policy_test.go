@@ -15,6 +15,47 @@ func TestDefaultPolicy(t *testing.T) {
 	require.Equal(t, checkpoint.CheckpointVersionBranchV1, got.CheckpointMinVersion)
 }
 
+func TestCheckpointVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		policy       checkpointpolicy.Policy
+		wantVersion  string
+		wantFallback bool
+	}{
+		{
+			name:        "default",
+			policy:      checkpointpolicy.DefaultPolicy(),
+			wantVersion: checkpoint.CheckpointVersionBranchV1,
+		},
+		{
+			name:        "missing version",
+			policy:      checkpointpolicy.Policy{CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1},
+			wantVersion: checkpoint.CheckpointVersionBranchV1,
+		},
+		{
+			name:         "unsupported configured version",
+			policy:       checkpointpolicy.Policy{CheckpointVersion: "refs-v1", CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1},
+			wantVersion:  checkpoint.CheckpointVersionBranchV1,
+			wantFallback: true,
+		},
+		{
+			name:         "invalid configured version",
+			policy:       checkpointpolicy.Policy{CheckpointVersion: "invalid", CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1},
+			wantVersion:  checkpoint.CheckpointVersionBranchV1,
+			wantFallback: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotVersion, gotFallback := checkpointpolicy.CheckpointVersion(tt.policy)
+			require.Equal(t, tt.wantVersion, gotVersion)
+			require.Equal(t, tt.wantFallback, gotFallback)
+		})
+	}
+}
+
 func TestValidatePolicy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
