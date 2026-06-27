@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	checkpointid "github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,9 +26,10 @@ type DeepCheckpointValidation struct {
 	ExpectedTranscriptContent []string
 }
 
-// checkpointIDPattern matches a checkpoint ID in either format: a legacy
-// 12-char lowercase hex ID or a 26-char Crockford base32 ULID.
-var checkpointIDPattern = regexp.MustCompile(`^(?:[0-9a-f]{12}|[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26})$`)
+// checkpointIDPattern matches a checkpoint ID in either format (legacy 12-char
+// hex or 26-char ULID). It reuses the id package's CheckpointPattern so the
+// accepted formats can never drift from the production definition.
+var checkpointIDPattern = regexp.MustCompile(`^` + checkpointid.CheckpointPattern + `$`)
 
 // AssertFileExists asserts that at least one file matches the glob pattern
 // relative to dir.
