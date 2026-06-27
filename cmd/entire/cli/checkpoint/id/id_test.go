@@ -126,6 +126,9 @@ func TestKindOf(t *testing.T) {
 		{"legacy all digits", "012345678901", KindLegacy},
 		{"ulid", sampleULID, KindULID},
 		{"ulid all valid base32", "0123456789ABCDEFGHJKMNPQRS", KindULID},
+		// Right charset/length but the timestamp overflows (first char > 7);
+		// oklog/ulid rejects it where a plain char-class regex would not.
+		{"ulid timestamp overflow", "8123456789ABCDEFGHJKMNPQRS", KindUnknown},
 		{"uppercase hex is not legacy", "A1B2C3D4E5F6", KindUnknown},
 		{"ulid wrong length", "01KVBJCWYA4YW6J5M9GP655HZ", KindUnknown},
 		{"ulid with excluded I", "01KVBJCWYA4YW6J5M9GP655HZI", KindUnknown},

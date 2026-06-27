@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+
+	ulid "github.com/oklog/ulid/v2"
 )
 
 // CheckpointID identifies a checkpoint. It comes in two formats: a legacy
@@ -27,10 +29,13 @@ const EmptyCheckpointID CheckpointID = ""
 // CheckpointPattern for matching a checkpoint ID that may be either format.
 const Pattern = `[0-9a-f]{12}`
 
-// ULIDPattern is the regex pattern for a ULID checkpoint ID: exactly 26 Crockford
-// base32 characters (digits plus uppercase A-Z excluding I, L, O, U). Future
-// checkpoint IDs are expected to be ULIDs so they sort lexicographically by
-// creation time.
+// ULIDPattern is the regex SHAPE of a ULID checkpoint ID: 26 Crockford base32
+// characters (digits plus uppercase A-Z excluding I, L, O, U). It exists to
+// extract a candidate checkpoint ID from free text (see CheckpointPattern); it
+// is intentionally looser than the authoritative validation in KindOf/Validate,
+// which decode the value via oklog/ulid (rejecting e.g. a timestamp overflow the
+// char class alone would accept). Future checkpoint IDs are expected to be ULIDs
+// so they sort lexicographically by creation time.
 const ULIDPattern = `[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}`
 
 // CheckpointPattern matches a checkpoint ID in free text in either format
@@ -45,8 +50,17 @@ const ShortIDLength = 12
 // checkpointIDRegex validates the legacy format: exactly 12 lowercase hex characters.
 var checkpointIDRegex = regexp.MustCompile(`^` + Pattern + `$`)
 
-// ulidRegex validates the ULID format: exactly 26 Crockford base32 characters.
-var ulidRegex = regexp.MustCompile(`^` + ULIDPattern + `$`)
+// isULID reports whether s is a ULID in canonical form, decoded via oklog/ulid —
+// the same library that will generate ULIDs — so validation and generation agree
+// by construction. ParseStrict enforces the 26-char length, the Crockford
+// alphabet, and the timestamp-overflow bound (first character must be 0-7). The
+// round-trip (v.String() == s) additionally requires the canonical uppercase
+// encoding: it rejects lowercase and Crockford-normalized aliases (e.g. I/L→1,
+// O→0) that ParseStrict would otherwise accept but we never emit.
+func isULID(s string) bool {
+	v, err := ulid.ParseStrict(s)
+	return err == nil && v.String() == s
+}
 
 // Kind classifies a checkpoint ID by its storage format. The two valid kinds
 // shard differently when stored as a git ref (see ShardFor).
@@ -67,7 +81,7 @@ func KindOf(s string) Kind {
 	switch {
 	case checkpointIDRegex.MatchString(s):
 		return KindLegacy
-	case ulidRegex.MatchString(s):
+	case isULID(s):
 		return KindULID
 	default:
 		return KindUnknown
