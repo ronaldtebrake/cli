@@ -25,7 +25,9 @@ type DeepCheckpointValidation struct {
 	ExpectedTranscriptContent []string
 }
 
-var hexIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
+// checkpointIDPattern matches a checkpoint ID in either format: a legacy
+// 12-char lowercase hex ID or a 26-char Crockford base32 ULID.
+var checkpointIDPattern = regexp.MustCompile(`^(?:[0-9a-f]{12}|[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26})$`)
 
 // AssertFileExists asserts that at least one file matches the glob pattern
 // relative to dir.
@@ -161,11 +163,12 @@ func AssertCheckpointNotAdvanced(t *testing.T, s *RepoState) {
 	assert.Equal(t, s.CheckpointBefore, after, "checkpoint branch advanced unexpectedly")
 }
 
-// AssertCheckpointIDFormat asserts the checkpoint ID is 12 lowercase hex chars.
+// AssertCheckpointIDFormat asserts the checkpoint ID is a valid checkpoint ID:
+// either 12 lowercase hex chars or a 26-char Crockford base32 ULID.
 func AssertCheckpointIDFormat(t *testing.T, checkpointID string) {
 	t.Helper()
-	assert.Regexp(t, hexIDPattern, checkpointID,
-		"checkpoint ID %q should be 12 lowercase hex chars", checkpointID)
+	assert.Regexp(t, checkpointIDPattern, checkpointID,
+		"checkpoint ID %q should be 12 lowercase hex chars or a 26-char ULID", checkpointID)
 }
 
 // AssertHasCheckpointTrailer asserts the commit has an Entire-Checkpoint trailer,

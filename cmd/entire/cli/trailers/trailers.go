@@ -68,7 +68,7 @@ var (
 	taskMetadataTrailerRegex = regexp.MustCompile(MetadataTaskTrailerKey + `:\s*(.+)`)
 	baseCommitTrailerRegex   = regexp.MustCompile(BaseCommitTrailerKey + `:\s*([a-f0-9]{40})`)
 	sessionTrailerRegex      = regexp.MustCompile(SessionTrailerKey + `:\s*(.+)`)
-	checkpointTrailerRegex   = regexp.MustCompile(CheckpointTrailerKey + `:\s*(` + checkpointID.Pattern + `)(?:\s|$)`)
+	checkpointTrailerRegex   = regexp.MustCompile(CheckpointTrailerKey + `:\s*(` + checkpointID.CheckpointPattern + `)(?:\s|$)`)
 )
 
 // ParseMetadata extracts metadata dir from commit message.
