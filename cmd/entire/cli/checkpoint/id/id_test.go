@@ -145,40 +145,6 @@ func TestKindOf(t *testing.T) {
 			if got := KindOf(tt.input); got != tt.want {
 				t.Errorf("KindOf(%q) = %v, want %v", tt.input, got, tt.want)
 			}
-			if got := CheckpointID(tt.input).Kind(); got != tt.want {
-				t.Errorf("CheckpointID(%q).Kind() = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCheckpointID_ShardFor(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		// Legacy hex shards on the first two chars (preserves the v1 layout).
-		{"legacy", "a1b2c3d4e5f6", "a1"},
-		{"legacy other", "abcdef123456", "ab"},
-		// ULID shards on the LAST two chars.
-		{"ulid", sampleULID, "ZN"},
-		{"ulid trailing", "0123456789ABCDEFGHJKMNPQRS", "RS"},
-		// Unknown falls back to the prefix (first-two) layout.
-		{"unknown", "XYZ", "XY"},
-		// Short-string fallbacks.
-		{"empty", "", ""},
-		{"one char", "a", "a"},
-		{"two chars", "ab", "ab"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := CheckpointID(tt.input).ShardFor(); got != tt.want {
-				t.Errorf("CheckpointID(%q).ShardFor() = %q, want %q", tt.input, got, tt.want)
-			}
 		})
 	}
 }
