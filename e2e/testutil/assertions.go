@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -25,11 +24,6 @@ type DeepCheckpointValidation struct {
 	ExpectedPrompts           []string
 	ExpectedTranscriptContent []string
 }
-
-// checkpointIDPattern matches a checkpoint ID in either format (legacy 12-char
-// hex or 26-char ULID). It reuses the id package's CheckpointPattern so the
-// accepted formats can never drift from the production definition.
-var checkpointIDPattern = regexp.MustCompile(`^` + checkpointid.CheckpointPattern + `$`)
 
 // AssertFileExists asserts that at least one file matches the glob pattern
 // relative to dir.
@@ -166,11 +160,13 @@ func AssertCheckpointNotAdvanced(t *testing.T, s *RepoState) {
 }
 
 // AssertCheckpointIDFormat asserts the checkpoint ID is a valid checkpoint ID:
-// either 12 lowercase hex chars or a 26-char Crockford base32 ULID.
+// either 12 lowercase hex chars or a canonical 26-char ULID. It calls the
+// production validator (not a loose regex) so the test rejects exactly what
+// production rejects — e.g. a ULID-shaped but timestamp-overflowing string.
 func AssertCheckpointIDFormat(t *testing.T, checkpointID string) {
 	t.Helper()
-	assert.Regexp(t, checkpointIDPattern, checkpointID,
-		"checkpoint ID %q should be 12 lowercase hex chars or a 26-char ULID", checkpointID)
+	assert.NoErrorf(t, checkpointid.Validate(checkpointID),
+		"checkpoint ID %q should be a valid checkpoint ID (12-hex or ULID)", checkpointID)
 }
 
 // AssertHasCheckpointTrailer asserts the commit has an Entire-Checkpoint trailer,
