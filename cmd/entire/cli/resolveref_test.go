@@ -204,8 +204,11 @@ func TestResolveRepoRef(t *testing.T) {
 		var gotName string
 		c, calls := resolveTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			gotName = r.URL.Query().Get("name")
-			// A name-filtered query returns the match in the singular `repo`
-			// field, not the `repos` page array — mirror the real server.
+			// A name-filtered list returns the single match under the singular
+			// `repo` field (like org/project) — NOT the plural `repos` array,
+			// which is only populated for an unfiltered page. Reading `repos`
+			// here was the COR-699 bug, so the fixture must mirror the real
+			// server's singular field to keep that regression covered.
 			if err := writeJSON(w, &coreapi.ListProjectReposOutputBody{Repo: coreapi.NewOptRepo(coreapi.Repo{ID: ulidRepoWeb, Name: "web"})}); err != nil {
 				t.Errorf("encode repo: %v", err)
 			}

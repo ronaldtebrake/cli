@@ -172,10 +172,10 @@ func resolveProjectRef(ctx context.Context, c *coreapi.Client, ref string) (stri
 // resolveRepoRef turns a repo reference into its ULID. A ULID passes through.
 // A name requires a project scope (projectRef, itself a name or ULID) because
 // repo names are unique only within a project: the repo is resolved via the
-// server's case-insensitive by-name lookup, scoped to that project. A
-// name-filtered query returns the single match in the response's `repo`
-// field (empty when there's no match) — the `repos` array is only populated
-// for unfiltered list pages.
+// server's case-insensitive by-name lookup, scoped to that project. Like the
+// org/project endpoints, a name-filtered list returns the single match under the
+// response's singular `repo` field (the plural `repos` is only populated for an
+// unfiltered page) — reading `repos` here was the COR-699 bug.
 func resolveRepoRef(ctx context.Context, c *coreapi.Client, ref, projectRef string) (string, error) {
 	if looksLikeULID(ref) {
 		return ref, nil
