@@ -63,11 +63,13 @@ func newGrantCmd() *cobra.Command {
 	return cmd
 }
 
-// orgMemberColumns / projectGrantColumns are the human table views of the
-// two membership/grant listings.
+// orgMemberColumns / grantColumns are the human table views of the
+// membership/grant listings. Grant listings now include inherited and owner
+// grants, so GRANTEE shows a friendly name (handle/org name) with SOURCE
+// saying where the grant comes from; ID keeps the ULID for revoke.
 var (
-	orgMemberColumns    = []string{"ACCOUNT", "ROLE", "STATUS"}
-	projectGrantColumns = []string{"GRANTEE-TYPE", "GRANTEE", "ROLE"}
+	orgMemberColumns = []string{"ACCOUNT", "ROLE", "STATUS"}
+	grantColumns     = []string{"GRANTEE-TYPE", "GRANTEE", "ID", "ROLE", "SOURCE"}
 )
 
 func orgMemberRow(m coreapi.Membership) []string {
@@ -75,13 +77,22 @@ func orgMemberRow(m coreapi.Membership) []string {
 }
 
 func projectGrantRow(g coreapi.ProjectGrant) []string {
-	return []string{g.GranteeType, g.GranteeId, g.Role}
+	return []string{g.GranteeType, granteeName(g.GranteeName, g.GranteeId), g.GranteeId, g.Role, g.Source}
 }
 
 // repoGrantRow mirrors projectGrantRow; RepoGrant and ProjectGrant share the
-// grantee-type/grantee/role shape, so both reuse projectGrantColumns.
+// grantee/role/source shape, so both reuse grantColumns.
 func repoGrantRow(g coreapi.RepoGrant) []string {
-	return []string{g.GranteeType, g.GranteeId, g.Role}
+	return []string{g.GranteeType, granteeName(g.GranteeName, g.GranteeId), g.GranteeId, g.Role, g.Source}
+}
+
+// granteeName returns the friendly name when the server resolved one, falling
+// back to the ULID for grantees it couldn't label (e.g. teams).
+func granteeName(name coreapi.OptString, granteeID string) string {
+	if n := name.Or(""); n != "" {
+		return n
+	}
+	return granteeID
 }
 
 // --- org membership -------------------------------------------------------
@@ -246,7 +257,7 @@ func newGrantProjectListCmd() *cobra.Command {
 		Short: "List project members",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, projectGrantColumns, projectGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.ProjectGrant, error) {
+			return runCoreList(cmd, grantColumns, projectGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.ProjectGrant, error) {
 				projID, err := resolveProjectRef(ctx, c, args[0])
 				if err != nil {
 					return nil, err
@@ -374,7 +385,7 @@ func newGrantRepoListCmd() *cobra.Command {
 		Short: "List repo grants",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, projectGrantColumns, repoGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.RepoGrant, error) {
+			return runCoreList(cmd, grantColumns, repoGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.RepoGrant, error) {
 				repoID, err := resolveRepoRef(ctx, c, args[0], project)
 				if err != nil {
 					return nil, err

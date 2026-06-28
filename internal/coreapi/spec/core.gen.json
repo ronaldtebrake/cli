@@ -1844,17 +1844,24 @@
           "granteeId": {
             "type": "string"
           },
+          "granteeName": {
+            "type": "string"
+          },
           "granteeType": {
             "type": "string"
           },
           "role": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           }
         },
         "required": [
           "granteeType",
           "granteeId",
-          "role"
+          "role",
+          "source"
         ],
         "type": "object"
       },
@@ -1937,17 +1944,24 @@
           "granteeId": {
             "type": "string"
           },
+          "granteeName": {
+            "type": "string"
+          },
           "granteeType": {
             "type": "string"
           },
           "role": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           }
         },
         "required": [
           "granteeType",
           "granteeId",
-          "role"
+          "role",
+          "source"
         ],
         "type": "object"
       },
