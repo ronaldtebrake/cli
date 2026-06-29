@@ -61,6 +61,39 @@ func TestRepoRemoteURL(t *testing.T) {
 	}
 }
 
+func TestParseVisibility(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in      string
+		want    coreapi.SetRepoVisibilityInputBodyVisibility
+		wantErr bool
+	}{
+		{in: "public", want: coreapi.SetRepoVisibilityInputBodyVisibilityPublic},
+		{in: "private", want: coreapi.SetRepoVisibilityInputBodyVisibilityPrivate},
+		{in: "Public", wantErr: true}, // case-sensitive; the wire enum is lowercase
+		{in: "", wantErr: true},
+		{in: "world-readable", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseVisibility(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseVisibility(%q) = %q, want error", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseVisibility(%q) error = %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("parseVisibility(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRepoCreateOutput_StampsRemote(t *testing.T) {
 	t.Parallel()
 	repo := &coreapi.Repo{

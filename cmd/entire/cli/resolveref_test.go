@@ -204,8 +204,10 @@ func TestResolveRepoRef(t *testing.T) {
 		var gotName string
 		c, calls := resolveTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			gotName = r.URL.Query().Get("name")
-			if err := writeJSON(w, &coreapi.ListProjectReposOutputBody{Repos: []coreapi.Repo{{ID: ulidRepoWeb, Name: "web"}}}); err != nil {
-				t.Errorf("encode repos: %v", err)
+			// A name-filtered query returns the match in the singular `repo`
+			// field, not the `repos` page array — mirror the real server.
+			if err := writeJSON(w, &coreapi.ListProjectReposOutputBody{Repo: coreapi.NewOptRepo(coreapi.Repo{ID: ulidRepoWeb, Name: "web"})}); err != nil {
+				t.Errorf("encode repo: %v", err)
 			}
 		})
 		// Project passed as a ULID so resolveProjectRef short-circuits (no call);

@@ -30,6 +30,7 @@ func newRepoCmd() *cobra.Command {
 	cmd.AddCommand(newRepoDeleteCmd())
 	cmd.AddCommand(newRepoCloneCmd())
 	cmd.AddCommand(newRepoMirrorCmd())
+	cmd.AddCommand(newRepoVisibilityCmd())
 	return cmd
 }
 
@@ -196,6 +197,105 @@ func newRepoDeleteCmd() *cobra.Command {
 	}
 	bindRepoProjectFlag(cmd, &project)
 	addForceFlag(cmd)
+	return cmd
+}
+
+// repoVisibility is the field/JSON view shared by the visibility get/set
+// verbs. Repo is the reference the user passed (name or ULID); Visibility is
+// the server's authoritative value after the call.
+type repoVisibility struct {
+	Repo       string `json:"repo"`
+	Visibility string `json:"visibility"`
+}
+
+var visibilityColumns = []string{"REPO", "VISIBILITY"}
+
+func visibilityRow(v repoVisibility) []string {
+	return []string{v.Repo, v.Visibility}
+}
+
+// parseVisibility maps the CLI argument to the wire enum, rejecting anything
+// other than the two accepted values so a typo fails fast client-side rather
+// than as an opaque 422 from the server.
+func parseVisibility(s string) (coreapi.SetRepoVisibilityInputBodyVisibility, error) {
+	switch s {
+	case "public":
+		return coreapi.SetRepoVisibilityInputBodyVisibilityPublic, nil
+	case "private":
+		return coreapi.SetRepoVisibilityInputBodyVisibilityPrivate, nil
+	default:
+		return "", fmt.Errorf("invalid visibility %q: must be \"public\" or \"private\"", s)
+	}
+}
+
+// newRepoVisibilityCmd groups the read/write verbs for a repo's visibility.
+// "public" sets the SpiceDB public_viewer wildcard, which grants pull (read)
+// to any authenticated account but never push or manage; "private" restricts
+// the repo to explicit grantees. The data plane still requires authentication,
+// so "public" means read-only-to-any-user, not anonymous/unauthenticated.
+func newRepoVisibilityCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "visibility",
+		Short: "Get or set a repository's visibility",
+	}
+	cmd.AddCommand(newRepoVisibilityGetCmd())
+	cmd.AddCommand(newRepoVisibilitySetCmd())
+	return cmd
+}
+
+func newRepoVisibilityGetCmd() *cobra.Command {
+	var project string
+	cmd := &cobra.Command{
+		Use:   "get <repo>",
+		Short: "Show a repository's visibility (public or private)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCoreObject(cmd, visibilityColumns, visibilityRow, func(ctx context.Context, c *coreapi.Client) (*repoVisibility, error) {
+				repoID, err := resolveRepoRef(ctx, c, args[0], project)
+				if err != nil {
+					return nil, err
+				}
+				out, err := c.GetRepoVisibility(ctx, coreapi.GetRepoVisibilityParams{RepoId: repoID})
+				if err != nil {
+					return nil, err
+				}
+				return &repoVisibility{Repo: args[0], Visibility: string(out.Visibility)}, nil
+			})
+		},
+	}
+	bindRepoProjectFlag(cmd, &project)
+	return cmd
+}
+
+func newRepoVisibilitySetCmd() *cobra.Command {
+	var project string
+	cmd := &cobra.Command{
+		Use:   "set <repo> <public|private>",
+		Short: "Set a repository's visibility",
+		Long: "Set a repository's visibility.\n\n" +
+			"\"public\" grants read-only (pull) access to any authenticated Entire user; " +
+			"push and management stay restricted to grantees. \"private\" restricts the repo " +
+			"to explicit grantees. Requires manage permission on the repo.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			vis, err := parseVisibility(args[1])
+			if err != nil {
+				return err
+			}
+			return runCoreObject(cmd, visibilityColumns, visibilityRow, func(ctx context.Context, c *coreapi.Client) (*repoVisibility, error) {
+				repoID, err := resolveRepoRef(ctx, c, args[0], project)
+				if err != nil {
+					return nil, err
+				}
+				out, err := c.SetRepoVisibility(ctx, &coreapi.SetRepoVisibilityInputBody{Visibility: vis}, coreapi.SetRepoVisibilityParams{RepoId: repoID})
+				if err != nil {
+					return nil, err
+				}
+				return &repoVisibility{Repo: args[0], Visibility: string(out.Visibility)}, nil
+			})
+		},
+	}
+	bindRepoProjectFlag(cmd, &project)
 	return cmd
 }
 
