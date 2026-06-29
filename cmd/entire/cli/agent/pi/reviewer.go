@@ -50,6 +50,8 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 		scanner := bufio.NewScanner(r)
 		scanner.Buffer(make([]byte, min(1024*1024, piReviewMaxScannerBuf)), piReviewMaxScannerBuf)
 		messageIDsWithTextDelta := map[string]struct{}{}
+		messageIDsWithUsage := map[string]struct{}{}
+		tokens := reviewtypes.Tokens{}
 		finished := false
 		success := true
 
@@ -78,7 +80,7 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 						success = false
 					}
 					if env.Message.Usage != nil {
-						out <- piReviewTokens(env.Message.Usage)
+						emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage)
 					}
 					if _, sawDelta := messageIDsWithTextDelta[env.MessageID()]; !sawDelta {
 						if text := piReviewMessageText(env.Message.Content); text != "" {
@@ -97,7 +99,7 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 					success = false
 				}
 				if env.Message.Usage != nil {
-					out <- piReviewTokens(env.Message.Usage)
+					emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage)
 				}
 			case "agent_end":
 				finished = true
@@ -170,14 +172,31 @@ type piReviewUsage struct {
 	CacheWrite int `json:"cacheWrite"`
 }
 
-func piReviewTokens(usage *piReviewUsage) reviewtypes.Tokens {
+func emitPiReviewTokens(out chan<- reviewtypes.Event, env piReviewEnvelope, total *reviewtypes.Tokens, seen map[string]struct{}) {
+	if env.Message.Usage == nil || total == nil {
+		return
+	}
+	if key := env.MessageID(); key != "" {
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+	}
+	*total = addPiReviewTokens(*total, env.Message.Usage)
+	out <- *total
+}
+
+func addPiReviewTokens(total reviewtypes.Tokens, usage *piReviewUsage) reviewtypes.Tokens {
 	if usage == nil {
-		return reviewtypes.Tokens{}
+		return total
 	}
-	return reviewtypes.Tokens{
-		In:  usage.Input + usage.CacheRead + usage.CacheWrite,
-		Out: usage.Output,
-	}
+	total.In += usage.Input + usage.CacheRead + usage.CacheWrite
+	total.Out += usage.Output
+	return total
+}
+
+func piReviewTokens(usage *piReviewUsage) reviewtypes.Tokens {
+	return addPiReviewTokens(reviewtypes.Tokens{}, usage)
 }
 
 func piReviewJSONArg(raw json.RawMessage) string {

@@ -118,6 +118,57 @@ func TestPiReviewer_ParseMessageEndTextWithoutDeltas(t *testing.T) {
 	}
 }
 
+func TestPiReviewer_ParseTokensAreCumulative(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`{"type":"agent_start"}`,
+		`{"type":"message_end","id":"m1","message":{"id":"m1","role":"assistant","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5},"stopReason":"toolUse"}}`,
+		`{"type":"message_end","id":"m2","message":{"id":"m2","role":"assistant","usage":{"input":200,"output":30,"cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}`,
+		`{"type":"agent_end"}`,
+	}, "\n")
+
+	events := collectPiReviewEvents(input)
+	var tokens []reviewtypes.Tokens
+	for _, ev := range events {
+		if tok, ok := ev.(reviewtypes.Tokens); ok {
+			tokens = append(tokens, tok)
+		}
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("token events = %d, want 2: %#v", len(tokens), events)
+	}
+	if got := tokens[0]; got.In != 115 || got.Out != 50 {
+		t.Fatalf("first Tokens = %#v, want In=115 Out=50", got)
+	}
+	if got := tokens[1]; got.In != 315 || got.Out != 80 {
+		t.Fatalf("final Tokens = %#v, want In=315 Out=80", got)
+	}
+}
+
+func TestPiReviewer_ParseTokensDedupesTurnEndForSameMessage(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`{"type":"agent_start"}`,
+		`{"type":"message_end","id":"m1","message":{"id":"m1","role":"assistant","usage":{"input":10,"output":5},"stopReason":"stop"}}`,
+		`{"type":"turn_end","id":"m1","message":{"id":"m1","role":"assistant","usage":{"input":10,"output":5},"stopReason":"stop"}}`,
+		`{"type":"agent_end"}`,
+	}, "\n")
+
+	events := collectPiReviewEvents(input)
+	var tokens []reviewtypes.Tokens
+	for _, ev := range events {
+		if tok, ok := ev.(reviewtypes.Tokens); ok {
+			tokens = append(tokens, tok)
+		}
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("token events = %d, want 1: %#v", len(tokens), events)
+	}
+	if got := tokens[0]; got.In != 10 || got.Out != 5 {
+		t.Fatalf("Tokens = %#v, want In=10 Out=5", got)
+	}
+}
+
 func collectPiReviewEvents(input string) []reviewtypes.Event {
 	ch := parsePiReviewOutput(strings.NewReader(input))
 	var events []reviewtypes.Event
