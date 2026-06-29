@@ -369,7 +369,7 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion); err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, err
 	}
 	info := &strategy.CheckpointInfo{
 		CheckpointID:     checkpointID,

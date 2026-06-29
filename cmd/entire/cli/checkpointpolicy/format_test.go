@@ -18,7 +18,7 @@ func TestParseFormat(t *testing.T) {
 	}{
 		{name: "branch v1", input: "branch-v1", want: checkpointpolicy.CheckpointFormat{Family: checkpointpolicy.CheckpointFamilyBranch, Major: 1}},
 		{name: "refs v2", input: "refs-v2", want: checkpointpolicy.CheckpointFormat{Family: checkpointpolicy.CheckpointFamilyRefs, Major: 2}},
-		{name: "unknown family", input: "unknown-v1", wantErr: "unknown checkpoint family"},
+		{name: "unknown family parses", input: "unknown-v1", want: checkpointpolicy.CheckpointFormat{Family: "unknown", Major: 1}},
 		{name: "missing v", input: "branch-1", wantErr: "invalid checkpoint format"},
 		{name: "zero major", input: "branch-v0", wantErr: "invalid checkpoint major"},
 		{name: "non numeric major", input: "branch-vx", wantErr: "invalid checkpoint major"},
@@ -38,14 +38,25 @@ func TestParseFormat(t *testing.T) {
 	}
 }
 
-func TestCanReadFormat(t *testing.T) {
+func TestSupportedFormats(t *testing.T) {
 	t.Parallel()
 
 	branchV1, err := checkpointpolicy.ParseFormat(checkpoint.CheckpointVersionBranchV1)
 	require.NoError(t, err)
 	refsV1, err := checkpointpolicy.ParseFormat("refs-v1")
 	require.NoError(t, err)
+	unknownV1, err := checkpointpolicy.ParseFormat("unknown-v1")
+	require.NoError(t, err)
 
 	require.True(t, checkpointpolicy.CanRead(branchV1))
+	require.True(t, checkpointpolicy.CanWrite(branchV1))
+	require.Equal(t, checkpoint.CheckpointVersionBranchV1, branchV1.String())
+
 	require.False(t, checkpointpolicy.CanRead(refsV1))
+	require.False(t, checkpointpolicy.CanWrite(refsV1))
+	require.Negative(t, checkpointpolicy.Compare(branchV1, refsV1))
+
+	require.False(t, checkpointpolicy.CanRead(unknownV1))
+	require.False(t, checkpointpolicy.CanWrite(unknownV1))
+	require.Negative(t, checkpointpolicy.Compare(refsV1, unknownV1))
 }
