@@ -66,6 +66,12 @@ type Importer interface {
 // Importer implementation appended here — no init() / runtime registration.
 var importers = []Importer{
 	claudeImporter{},
+	cursorImporter{},
+	piImporter{},
+	factoryImporter{},
+	codexImporter{},
+	copilotImporter{},
+	geminiImporter{},
 }
 
 // All returns every supported importer, sorted by name.
