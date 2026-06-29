@@ -94,7 +94,7 @@ func runCheckpointPolicy(cmd *cobra.Command, opts checkpointPolicyOptions) error
 	}
 
 	effectivePolicy := checkpointpolicy.Normalize(state.Policy)
-	fmt.Fprintf(cmd.OutOrStdout(), "checkpoint_version: %s\n", formatCheckpointPolicyValue(state.Policy.CheckpointVersion, effectivePolicy.CheckpointVersion))
+	fmt.Fprintf(cmd.OutOrStdout(), "checkpoint_version: %s\n", formatCheckpointVersionPolicyValue(state.Policy.CheckpointVersion, checkpointpolicy.CheckpointVersion(state.Policy)))
 	fmt.Fprintf(cmd.OutOrStdout(), "checkpoint_min_version: %s\n", formatCheckpointPolicyValue(state.Policy.CheckpointMinVersion, effectivePolicy.CheckpointMinVersion))
 	fmt.Fprintf(cmd.OutOrStdout(), "source: %s\n", state.Source)
 	return nil
@@ -107,6 +107,16 @@ func hasCheckpointPolicyUpdate(checkpointVersionSet, checkpointMinVersionSet boo
 func formatCheckpointPolicyValue(configured, effective string) string {
 	if configured == "" {
 		return effective + " (default)"
+	}
+	return configured
+}
+
+func formatCheckpointVersionPolicyValue(configured, writeVersion string) string {
+	if configured == "" {
+		return writeVersion + " (default)"
+	}
+	if configured != writeVersion {
+		return fmt.Sprintf("%s (unsupported; writing %s)", configured, writeVersion)
 	}
 	return configured
 }

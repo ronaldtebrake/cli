@@ -69,6 +69,20 @@ func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 	}
 }
 
+func TestCheckpointPolicyCmd_PrintsWriteFallbackForUnsupportedConfiguredVersion(t *testing.T) {
+	dir, bareDir := setupCheckpointPolicyRepo(t)
+	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.Policy{
+		CheckpointVersion:    "refs-v1",
+		CheckpointMinVersion: "branch-v1",
+	})
+	pushCheckpointPolicyRefForCommandTest(t, dir, bareDir)
+
+	stdout, err := executeCheckpointPolicyCmd(t)
+	require.NoError(t, err)
+	require.Contains(t, stdout, "checkpoint_version: refs-v1 (unsupported; writing branch-v1)")
+	require.Contains(t, stdout, "checkpoint_min_version: branch-v1")
+}
+
 func TestCheckpointPolicyCmd_RejectsDowngradeWithoutForce(t *testing.T) {
 	dir, bareDir := setupCheckpointPolicyRepo(t)
 	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.Policy{
