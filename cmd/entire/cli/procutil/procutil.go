@@ -1,5 +1,4 @@
-// Package procutil holds helpers for terminating spawned subprocesses and
-// their descendants when a context is cancelled.
+// Package procutil holds helpers for cancelling spawned subprocesses.
 package procutil
 
 import (
@@ -7,18 +6,19 @@ import (
 	"time"
 )
 
-// terminateWaitDelay backstops the wait after ctx-cancel so Wait/Run returns
-// even if a wedged descendant keeps an output pipe open after the group kill.
+// terminateWaitDelay backstops Wait/Run after ctx-cancel so cancellation is
+// bounded even if a descendant keeps an output pipe open.
 const terminateWaitDelay = 5 * time.Second
 
-// TerminateOnCancel makes cmd and its descendants die when cmd's context is
-// cancelled, and guarantees Wait/Run returns even if a descendant keeps an
-// output pipe open. Call after building cmd, before Start/Run.
+// TerminateOnCancel configures cmd so cancellation cannot leave Wait/Run
+// blocked forever on inherited output pipes. Call after building cmd, before
+// Start/Run.
 //
-// Agent CLIs (codex, claude, ...) spawn helper grandchildren (sandbox, MCP
-// servers) that inherit the stdout pipe. exec.CommandContext's default Cancel
-// only SIGKILLs the agent itself, leaving grandchildren alive with the pipe
-// open — so a reader draining stdout to EOF blocks forever and Ctrl+C hangs.
+// On Unix, cmd starts in a new process group and context cancellation SIGKILLs
+// the whole group, so agent grandchildren (sandbox helpers, MCP servers, etc.)
+// die instead of holding stdout/stderr pipes open. On Windows, process-tree
+// killing is not implemented here; only WaitDelay bounds how long Wait/Run can
+// remain blocked after cancellation.
 func TerminateOnCancel(cmd *exec.Cmd) {
 	cmd.WaitDelay = terminateWaitDelay
 	killProcessGroupOnCancel(cmd)
