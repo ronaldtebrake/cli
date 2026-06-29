@@ -86,14 +86,14 @@ func warnOrLogCheckpointPolicyDiverged(ctx context.Context, state checkpointpoli
 }
 
 func warnIfCheckpointPolicyNeedsUpgrade(ctx context.Context, policy checkpointpolicy.Policy) {
-	if !checkpointpolicy.UnsupportedWrite(policy) && !checkpointpolicy.RequiresUpgrade(policy) {
+	if checkpointpolicy.CanSatisfyPolicy(policy) {
 		return
 	}
 	warnOrLogCheckpointPolicyUpgrade(ctx, policy, checkpointpolicy.CheckpointVersion(policy))
 }
 
 func warnOrLogCheckpointPolicyUpgrade(ctx context.Context, policy checkpointpolicy.Policy, version string) {
-	warning := checkpointpolicy.UpgradeWarning(versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version))
+	warning := checkpointpolicy.UnsupportedPolicyMessage(policy, versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version))
 	if interactive.CanPromptInteractively() {
 		fmt.Fprint(stderrWriter, warning)
 		return
