@@ -96,6 +96,13 @@ func newRepoCloneCmd() *cobra.Command {
 			// A full entire:// clone URL already embeds the cluster host (it's what
 			// --cluster would otherwise resolve to), so pass it verbatim to git clone
 			// — no mirror lookup or cluster resolution. --cluster is irrelevant here.
+			//
+			// Deliberately NOT run through validateClusterHost: this is a raw URL the
+			// user typed, forwarded to `git clone` exactly as given (the whole point
+			// of this branch), so it's equivalent to running `git clone entire://…`
+			// directly. The validateClusterHost guard applies on the shorthand path
+			// where we *synthesize* the URL from a --cluster flag or an API-supplied
+			// host — values that flow into the STS audience under our own construction.
 			if isEntireCloneURL(ref) {
 				return runGitClone(cmd.Context(), cmd, ref, targetDir)
 			}
