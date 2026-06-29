@@ -56,17 +56,6 @@ func parseMirrorCloneRef(ref string) (provider, owner, repo string, err error) {
 	return mirrorCloneProviderGitHub, owner, repo, nil
 }
 
-// newCloneAliasCmd is the top-level `entire clone` alias for `entire repo
-// clone`. Cobra forbids attaching one command to two parents, so this builds a
-// fresh clone command and adds the control-plane flags (--json,
-// --insecure-http-auth) the repo group otherwise supplies to its children as
-// persistent flags.
-func newCloneAliasCmd() *cobra.Command {
-	cmd := newRepoCloneCmd()
-	addControlPlaneFlags(cmd)
-	return cmd
-}
-
 func newRepoCloneCmd() *cobra.Command {
 	var cluster string
 	cmd := &cobra.Command{
