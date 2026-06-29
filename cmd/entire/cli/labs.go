@@ -41,6 +41,11 @@ var experimentalCommands = []experimentalCommandInfo{
 		Summary:     "Aggregate token usage across committed checkpoints",
 	},
 	{
+		CommandPath: []string{"session", "tokens"},
+		Invocation:  "entire session tokens",
+		Summary:     "Show token usage and recommendations for a session",
+	},
+	{
 		CommandPath: []string{"org"},
 		Invocation:  "entire org",
 		Summary:     "Manage Entire organizations (create, list)",
@@ -114,6 +119,7 @@ Try:
   entire investigate --help
   entire tokens --help
   entire tokens profile --help
+  entire session tokens --help
   entire org --help
   entire project --help
   entire repo --help
