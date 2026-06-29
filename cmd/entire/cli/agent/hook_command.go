@@ -97,7 +97,7 @@ func WrapWindowsProductionJSONWarningHookCommand(command string, format WarningF
 func WrapWindowsProductionPlainTextWarningHookCommand(command string, format WarningFormat) string {
 	return fmt.Sprintf(
 		`cmd.exe /d /s /c "where.exe entire >nul 2>nul || (echo %s & exit /b 0) & %s"`,
-		escapeWindowsCMD(MissingEntireWarning(format)),
+		escapeWindowsCMD(windowsPlainTextWarning(format)),
 		command,
 	)
 }
@@ -157,6 +157,13 @@ func escapeWindowsCMD(s string) string {
 		`<`, `^<`,
 		`>`, `^>`,
 		`"`, `^"`,
+		`(`, `^(`,
+		`)`, `^)`,
+		`%`, `^%`,
 	)
 	return replacer.Replace(s)
+}
+
+func windowsPlainTextWarning(format WarningFormat) string {
+	return strings.Join(strings.Fields(MissingEntireWarning(format)), " ")
 }

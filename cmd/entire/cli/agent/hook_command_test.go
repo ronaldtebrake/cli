@@ -90,6 +90,26 @@ func TestWrapWindowsProductionSilentHookCommand(t *testing.T) {
 	}
 }
 
+func TestWrapWindowsProductionPlainTextWarningHookCommandUsesSingleLineWarning(t *testing.T) {
+	t.Parallel()
+
+	command := WrapWindowsProductionPlainTextWarningHookCommand("entire hooks codex session-start", WarningFormatMultiLine)
+
+	if strings.Contains(command, "\n") {
+		t.Fatalf("windows wrapper should keep warning command single-line, got %q", command)
+	}
+}
+
+func TestEscapeWindowsCMD_EscapesCmdBlockMetacharacters(t *testing.T) {
+	t.Parallel()
+
+	got := escapeWindowsCMD(`^&|<>"()%`)
+	want := `^^^&^|^<^>^"^(^)^%`
+	if got != want {
+		t.Fatalf("escapeWindowsCMD() = %q, want %q", got, want)
+	}
+}
+
 func TestMissingEntireWarning(t *testing.T) {
 	t.Parallel()
 
