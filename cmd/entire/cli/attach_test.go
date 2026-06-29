@@ -1560,9 +1560,51 @@ func TestAttach_WarnsOnEmptyTranscriptMetadata_Review(t *testing.T) {
 	}
 }
 
+// TestAttach_EmptyMetadataReviewWithOverride_NoEmptyPromptWarning: when a
+// pending-review marker supplies ReviewPromptOverride, the review prompt is
+// NOT empty even with an unparseable transcript, so the review-specific
+// warning must be suppressed (the general "no prompts parsed" warning still
+// fires).
+func TestAttach_EmptyMetadataReviewWithOverride_NoEmptyPromptWarning(t *testing.T) {
+	setupAttachTestRepo(t)
+
+	sessionID := "test-attach-empty-meta-review-override"
+	setupClaudeTranscript(t, sessionID, `{"type":"assistant","message":{"role":"assistant","content":"hi"},"uuid":"a1"}
+`)
+
+	var out, errOut bytes.Buffer
+	if err := runAttach(context.Background(), &out, &errOut, sessionID, agent.AgentNameClaudeCode, attachOptions{
+		Force:                true,
+		Review:               true,
+		ReviewPromptOverride: "review the auth module for security issues",
+	}); err != nil {
+		t.Fatalf("runAttach --review with override should not fail: %v", err)
+	}
+
+	if !strings.Contains(errOut.String(), "no user prompts were parsed") {
+		t.Errorf("expected general empty-transcript warning on stderr, got: %q", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "review prompt will be empty") {
+		t.Errorf("review-empty warning must be suppressed when an override prompt is set, got: %q", errOut.String())
+	}
+
+	// The override must be recorded as the review prompt.
+	store, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || state.ReviewPrompt != "review the auth module for security issues" {
+		t.Errorf("expected override recorded as review prompt; got state=%+v", state)
+	}
+}
+
 // TestAttachSummaryLine covers the post-attach "Captured: …" footer builder:
-// every field present, the token segment omitted when usage is nil, and the
-// empty result when nothing is known.
+// every field present, the token segment omitted when usage is nil or zero,
+// and the empty result when nothing is known.
 func TestAttachSummaryLine(t *testing.T) {
 	t.Parallel()
 
@@ -1576,6 +1618,13 @@ func TestAttachSummaryLine(t *testing.T) {
 	if got, want := attachSummaryLine(transcriptMetadata{TurnCount: 1, Model: "m"}, nil),
 		"1 turn · m"; got != want {
 		t.Errorf("attachSummaryLine(nil tokens) = %q, want %q", got, want)
+	}
+
+	// non-nil but all-zero token usage: token segment still omitted (never
+	// render "0 tokens").
+	if got, want := attachSummaryLine(transcriptMetadata{TurnCount: 2, Model: "m"}, &agent.TokenUsage{}),
+		"2 turns · m"; got != want {
+		t.Errorf("attachSummaryLine(zero tokens) = %q, want %q", got, want)
 	}
 
 	// Nothing known: empty string (caller skips the line entirely).

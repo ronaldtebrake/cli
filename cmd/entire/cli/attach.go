@@ -399,7 +399,10 @@ func runAttach(ctx context.Context, w, errW io.Writer, sessionID string, agentNa
 func amendOrPrintTrailer(logCtx context.Context, w, errW io.Writer, headCommit *object.Commit, checkpointIDStr string, force bool) {
 	if err := promptAmendCommit(logCtx, w, headCommit, checkpointIDStr, force); err != nil {
 		logging.Warn(logCtx, "failed to amend commit", "error", err)
-		fmt.Fprintf(errW, "Could not amend the commit automatically (%v).\n", err)
+		// promptAmendCommit wraps the full multi-line `git commit --amend`
+		// output into the error; keep the stderr note to the first line so it
+		// stays brief. The full error is preserved in the debug log above.
+		fmt.Fprintf(errW, "Could not amend the commit automatically (%s).\n", firstLine(err.Error()))
 		fmt.Fprintf(w, "\nCopy to your commit message to attach:\n\n  Entire-Checkpoint: %s\n", checkpointIDStr)
 	}
 }
@@ -415,7 +418,10 @@ func warnEmptyTranscriptMetadata(errW io.Writer, agentName types.AgentName, meta
 		return
 	}
 	fmt.Fprintf(errW, "warning: no user prompts were parsed from this transcript; the checkpoint will have no recorded prompt. Verify the --agent value (got %q) and session ID.\n", agentName)
-	if opts.Review {
+	// Only warn about an empty review prompt when nothing will supply one. A
+	// pending-review marker's ReviewPromptOverride is still recorded as the
+	// review prompt via reviewPromptForAttach even with no parsed transcript prompt.
+	if opts.Review && opts.ReviewPromptOverride == "" {
 		fmt.Fprintln(errW, "warning: --review was set, but with no parsed prompt the review prompt will be empty.")
 	}
 }
@@ -443,8 +449,8 @@ func attachSummaryLine(meta transcriptMetadata, tokenUsage *agent.TokenUsage) st
 	if meta.Model != "" {
 		parts = append(parts, meta.Model)
 	}
-	if tokenUsage != nil {
-		parts = append(parts, formatTokenCount(totalTokens(tokenUsage))+" tokens")
+	if total := totalTokens(tokenUsage); total > 0 {
+		parts = append(parts, formatTokenCount(total)+" tokens")
 	}
 	return strings.Join(parts, " · ")
 }
