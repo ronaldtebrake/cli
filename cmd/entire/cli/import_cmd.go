@@ -52,6 +52,10 @@ not rewindable.`, imp.AgentType()),
 			}
 			defer repo.Close()
 
+			if err := ensureCheckpointPolicyAllowsCheckpointData(ctx, repo); err != nil {
+				return err
+			}
+
 			// Load repo/user-configured redaction (opt-in PII, custom_redactions,
 			// redactor packs) before any checkpoint write. Imported transcripts
 			// are redacted with redact.JSONLBytes, which honors this config; without

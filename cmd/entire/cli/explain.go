@@ -686,6 +686,10 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 			stopLoad(false)
 			return fmt.Errorf("cannot generate a summary for imported checkpoint %s: imported history is read-only", fullCheckpointID)
 		}
+		if err := ensureCheckpointPolicyAllowsCheckpointData(ctx, lookup.repo); err != nil {
+			stopLoad(false)
+			return err
+		}
 		stopLoad(false) // generation prints its own progress to w/errW
 		writeStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
 		if openErr != nil {

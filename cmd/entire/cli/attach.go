@@ -255,7 +255,10 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return nil
 	}
 
-	checkpointVersion := committedCheckpointVersion(ctx, repo)
+	checkpointVersion, err := checkpointVersionForNewCheckpoint(ctx, repo)
+	if err != nil {
+		return err
+	}
 
 	// Resolve agent and transcript path.
 	ag, transcriptPath, err := resolveAgentAndTranscript(logCtx, w, sessionID, agentName, existingState)

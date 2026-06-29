@@ -69,7 +69,7 @@ func TestAttach_TranscriptNotFound(t *testing.T) {
 	}
 }
 
-func TestAttachUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
+func TestAttachBlocksWhenPolicyWriteUnsupported(t *testing.T) {
 	setupAttachTestRepo(t)
 
 	repoRoot := mustGetwd(t)
@@ -77,12 +77,8 @@ func TestAttachUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := checkpointpolicy.WriteLocal(context.Background(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: "branch-v1",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { _ = repo.Close() })
+	writeUnsupportedCheckpointPolicyForCLITest(t, repo)
 
 	sessionID := "test-attach-policy-unsupported"
 	setupClaudeTranscript(t, sessionID, `{"type":"user","message":{"role":"user","content":"create a file"},"uuid":"uuid-1"}
@@ -91,8 +87,8 @@ func TestAttachUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 
 	var out bytes.Buffer
 	err = runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, attachOptions{Force: true})
-	if err != nil {
-		t.Fatalf("runAttach failed: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "checkpoint policy cannot be satisfied by this Entire CLI") {
+		t.Fatalf("runAttach error = %v, want unsupported checkpoint policy", err)
 	}
 	stateStore, err := session.NewStateStore(context.Background())
 	if err != nil {
@@ -102,15 +98,8 @@ func TestAttachUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state == nil || state.LastCheckpointID.IsEmpty() {
-		t.Fatalf("expected attach to record checkpoint state, got %+v", state)
-	}
-	summary, err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Read(context.Background(), state.LastCheckpointID)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if summary.CheckpointVersion != checkpointpolicy.DefaultCheckpointVersion() {
-		t.Fatalf("CheckpointVersion = %q, want %q", summary.CheckpointVersion, checkpointpolicy.DefaultCheckpointVersion())
+	if state != nil {
+		t.Fatalf("expected attach not to record checkpoint state, got %+v", state)
 	}
 }
 
@@ -1503,6 +1492,17 @@ func TestAttachCmd_ReviewAutoDetectsAgent(t *testing.T) {
 	}
 	if state.AgentType != agent.AgentTypeGemini {
 		t.Errorf("AgentType = %q, want %q (auto-detect should have found Gemini)", state.AgentType, agent.AgentTypeGemini)
+	}
+}
+
+func writeUnsupportedCheckpointPolicyForCLITest(t *testing.T, repo *git.Repository) {
+	t.Helper()
+	_, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
+		CheckpointVersion:    "refs-v1",
+		CheckpointMinVersion: "branch-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
