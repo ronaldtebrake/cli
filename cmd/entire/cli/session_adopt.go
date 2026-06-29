@@ -60,7 +60,7 @@ session state file to the current worktree and requires --force or --yes.`,
 
 	cmd.Flags().StringVar(&opts.FromWorktree, "from", "", "source worktree that already tracks the session")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "replace an existing local state file for the same session")
-	cmd.Flags().BoolVar(&opts.Force, "yes", false, "replace an existing local state file for the same session")
+	cmd.Flags().BoolVar(&opts.Force, "yes", false, "confirm same-store adoption and replacement without prompting")
 
 	return cmd
 }

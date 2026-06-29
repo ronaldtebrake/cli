@@ -22,6 +22,32 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 )
 
+func TestSessionAdopt_HelpDistinguishesForceAndYes(t *testing.T) {
+	cmd := newAdoptCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("expected help to render without error, got: %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"--force",
+		"replace an existing local state file for the same session",
+		"--yes",
+		"confirm same-store adoption and replacement without prompting",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "replace an existing local state file for the same session") != 1 {
+		t.Fatalf("--force and --yes should not share replacement help text:\n%s", out)
+	}
+}
+
 func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetRepo := setupAdoptRepo(t)
