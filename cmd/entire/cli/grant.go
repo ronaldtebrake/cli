@@ -301,30 +301,48 @@ func newGrantProjectRemoveCmd() *cobra.Command {
 }
 
 // revokeProjectGrantee revokes a grantee (provider:handle or account ULID) from
-// a resolved project. A ULID grantee takes the typed-id route directly; a
-// handle is resolved to its provider account first and takes the by-provider
-// route. projectRef is the user's original (pre-resolution) project ref, used
-// only for the success message.
+// a resolved project. projectRef is the user's original (pre-resolution) project
+// ref, used only for the success message.
 func revokeProjectGrantee(ctx context.Context, cmd *cobra.Command, c *coreapi.Client, projID, projectRef, grantee string) error {
-	if looksLikeULID(grantee) {
-		return revokeGrant(cmd, "Revoked", fmt.Sprintf("account %s from project %s", grantee, projectRef), func() error {
+	return revokeGrantee(ctx, cmd, c, "project", projectRef, grantee,
+		func() error {
 			return c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
 				ProjectId:   projID,
 				GranteeType: "account",
 				GranteeId:   grantee,
 			})
+		},
+		func(provider, providerUserID string) error {
+			return c.RevokeProjectAccessByProvider(ctx, coreapi.RevokeProjectAccessByProviderParams{
+				ProjectId:      projID,
+				Provider:       provider,
+				ProviderUserId: providerUserID,
+			})
 		})
+}
+
+// revokeGrantee performs the shared grantee-revocation routing for projects and
+// repos: a ULID grantee takes the typed-id route (revokeByID); a provider:handle
+// is resolved to its provider account first and takes the by-provider route
+// (revokeByProvider). target ("project"/"repo") and ref name the grant in the
+// success message.
+func revokeGrantee(
+	ctx context.Context,
+	cmd *cobra.Command,
+	c *coreapi.Client,
+	target, ref, grantee string,
+	revokeByID func() error,
+	revokeByProvider func(provider, providerUserID string) error,
+) error {
+	if looksLikeULID(grantee) {
+		return revokeGrant(cmd, "Revoked", fmt.Sprintf("account %s from %s %s", grantee, target, ref), revokeByID)
 	}
 	provider, providerUserID, err := resolveGranteeProvider(ctx, c, grantee)
 	if err != nil {
 		return err
 	}
-	return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s from project %s", grantee, projectRef), func() error {
-		return c.RevokeProjectAccessByProvider(ctx, coreapi.RevokeProjectAccessByProviderParams{
-			ProjectId:      projID,
-			Provider:       provider,
-			ProviderUserId: providerUserID,
-		})
+	return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s from %s %s", grantee, target, ref), func() error {
+		return revokeByProvider(provider, providerUserID)
 	})
 }
 
@@ -432,30 +450,24 @@ func newGrantRepoRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-// revokeRepoGrantee mirrors revokeProjectGrantee for repos: a ULID grantee
-// takes the typed-id revoke route, a provider:handle is resolved first and takes
-// the by-provider route. repoRef is the user's original repo ref, for messaging.
+// revokeRepoGrantee mirrors revokeProjectGrantee for repos. repoRef is the
+// user's original repo ref, for messaging.
 func revokeRepoGrantee(ctx context.Context, cmd *cobra.Command, c *coreapi.Client, repoID, repoRef, grantee string) error {
-	if looksLikeULID(grantee) {
-		return revokeGrant(cmd, "Revoked", fmt.Sprintf("account %s from repo %s", grantee, repoRef), func() error {
+	return revokeGrantee(ctx, cmd, c, "repo", repoRef, grantee,
+		func() error {
 			return c.RevokeRepoAccess(ctx, coreapi.RevokeRepoAccessParams{
 				RepoId:      repoID,
 				GranteeType: "account",
 				GranteeId:   grantee,
 			})
+		},
+		func(provider, providerUserID string) error {
+			return c.RevokeRepoAccessByProvider(ctx, coreapi.RevokeRepoAccessByProviderParams{
+				RepoId:         repoID,
+				Provider:       provider,
+				ProviderUserId: providerUserID,
+			})
 		})
-	}
-	provider, providerUserID, err := resolveGranteeProvider(ctx, c, grantee)
-	if err != nil {
-		return err
-	}
-	return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s from repo %s", grantee, repoRef), func() error {
-		return c.RevokeRepoAccessByProvider(ctx, coreapi.RevokeRepoAccessByProviderParams{
-			RepoId:         repoID,
-			Provider:       provider,
-			ProviderUserId: providerUserID,
-		})
-	})
 }
 
 // revokeGrant runs a grant-removal API call idempotently. A 404 means the
