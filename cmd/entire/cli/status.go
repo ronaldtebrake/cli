@@ -104,8 +104,16 @@ func runStatus(ctx context.Context, w io.Writer, detailed, jsonOutput bool) erro
 	if s.Enabled {
 		writeActiveSessions(ctx, w, sty)
 	}
+	writeAgentHelpHint(w, sty)
 
 	return nil
+}
+
+// writeAgentHelpHint prints a one-line pointer at `entire agent-help` for coding
+// agents that have no context-injection channel (Cursor, Copilot CLI, Factory
+// Droid) and so discover entire's surface only by reading command output.
+func writeAgentHelpHint(w io.Writer, sty statusStyles) {
+	fmt.Fprintln(w, sty.render(sty.dim, "Agents: run `entire agent-help` for machine-readable usage."))
 }
 
 // runStatusDetailed shows the effective status plus detailed status for each settings file.
@@ -139,6 +147,7 @@ func runStatusDetailed(ctx context.Context, w io.Writer, sty statusStyles, setti
 	if effectiveSettings.Enabled {
 		writeActiveSessions(ctx, w, sty)
 	}
+	writeAgentHelpHint(w, sty)
 
 	return nil
 }

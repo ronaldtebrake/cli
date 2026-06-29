@@ -55,7 +55,16 @@ Experimental command families advertised through `entire labs`:
 
 Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
 `login`, `logout`, `clean`, `version`, `dispatch`, `activity`, `help`,
-`configure`.
+`configure`, `agent-help`.
+
+`agent-help` renders machine-readable, agent-facing usage live from the Cobra
+command tree (so it always matches the installed binary): bare prints a
+"when to use entire / which subcommand" map; `agent-help <command>` drills into
+one command's current flags; `--json` emits structured output. It is the single
+source of truth the first-turn context injection and the `--agent-help-skill`
+skill point agents at, instead of enumerating a surface that goes stale.
+Hidden commands opt into being advertised here by setting
+`Annotations[agentHelpAnnotation] = "true"` (e.g. `trail`).
 
 Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
 `resume` → `session resume`, `attach` → `session attach`, `explain` →

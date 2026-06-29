@@ -46,8 +46,11 @@ func newTrailCmd() *cobra.Command {
 		Use:    "trail",
 		Short:  "Manage trails for your branches",
 		Hidden: true,
-		Args:   cobra.NoArgs,
-		Long:   "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it.",
+		// Hidden from root help while the surface matures, but advertised to
+		// coding agents through `entire agent-help` so they can discover it.
+		Annotations: map[string]string{agentHelpAnnotation: "true"},
+		Args:        cobra.NoArgs,
+		Long:        "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},

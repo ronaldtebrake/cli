@@ -210,6 +210,36 @@ func TestRunStatus_Enabled(t *testing.T) {
 	}
 }
 
+// `entire status` surfaces the agent-help pointer for agents on transports
+// without context injection (Cursor / Copilot / Droid), but only once entire is
+// set up — not for not-set-up or not-a-git-repo states.
+func TestRunStatus_ShowsAgentHelpHintWhenSetUp(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	var stdout bytes.Buffer
+	if err := runStatus(context.Background(), &stdout, false, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "entire agent-help") {
+		t.Errorf("expected agent-help hint in status output, got: %s", stdout.String())
+	}
+}
+
+func TestRunStatus_NoAgentHelpHintWhenNotSetUp(t *testing.T) {
+	setupTestRepo(t)
+
+	var stdout bytes.Buffer
+	if err := runStatus(context.Background(), &stdout, false, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	if strings.Contains(stdout.String(), "entire agent-help") {
+		t.Errorf("agent-help hint should not appear when not set up, got: %s", stdout.String())
+	}
+}
+
 func TestRunStatus_Disabled(t *testing.T) {
 	setupTestRepo(t)
 	writeSettings(t, testSettingsDisabled)

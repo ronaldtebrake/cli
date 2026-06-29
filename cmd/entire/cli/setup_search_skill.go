@@ -92,43 +92,11 @@ func scaffoldSearchSkill(ctx context.Context, ag agent.Agent) (searchSkillScaffo
 }
 
 func writeManagedSearchSkill(targetPath, relPath string, content []byte) (searchSkillScaffoldResult, error) {
-	existingData, err := os.ReadFile(targetPath) //nolint:gosec // target path is derived from repo root + fixed relative path
-	if err == nil {
-		if !isManagedSearchSkill(existingData) {
-			return searchSkillScaffoldResult{
-				Status:  searchSkillSkippedConflict,
-				RelPath: relPath,
-			}, nil
-		}
-		if bytes.Equal(existingData, content) {
-			return searchSkillScaffoldResult{
-				Status:  searchSkillUnchanged,
-				RelPath: relPath,
-			}, nil
-		}
-		if err := os.WriteFile(targetPath, content, 0o600); err != nil {
-			return searchSkillScaffoldResult{}, fmt.Errorf("failed to update managed search skill: %w", err)
-		}
-		return searchSkillScaffoldResult{
-			Status:  searchSkillUpdated,
-			RelPath: relPath,
-		}, nil
+	res, err := writeManagedScaffold(targetPath, relPath, content, isManagedSearchSkill)
+	if err != nil {
+		return searchSkillScaffoldResult{}, err
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return searchSkillScaffoldResult{}, fmt.Errorf("failed to read search skill: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
-		return searchSkillScaffoldResult{}, fmt.Errorf("failed to create search skill directory: %w", err)
-	}
-	if err := os.WriteFile(targetPath, content, 0o600); err != nil {
-		return searchSkillScaffoldResult{}, fmt.Errorf("failed to write search skill: %w", err)
-	}
-
-	return searchSkillScaffoldResult{
-		Status:  searchSkillCreated,
-		RelPath: relPath,
-	}, nil
+	return searchSkillScaffoldResult{Status: searchSkillScaffoldStatus(res.Status), RelPath: res.RelPath}, nil
 }
 
 func isManagedSearchSkill(data []byte) bool {
