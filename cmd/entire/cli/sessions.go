@@ -164,6 +164,7 @@ func newSessionsCmd() *cobra.Command {
 Commands:
   list     List all sessions across all worktrees
   info     Show detailed information for a specific session
+  tokens   Show token usage and optimization recommendations
   stop     Stop one or more active sessions
   current  Show the active session for the current worktree
   attach   Attach an existing agent session
@@ -173,6 +174,7 @@ Examples:
   entire session list                      List all sessions
   entire session info <session-id>         Show session details
   entire session info <session-id> --json  Output as JSON
+  entire session tokens <session-id>       Show token usage
   entire session stop                      Interactive stop
   entire session current                   Active session for cwd
   entire session attach <session-id>       Attach an external session
@@ -187,6 +189,7 @@ Examples:
 
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newInfoCmd())
+	cmd.AddCommand(newTokensCmd())
 	cmd.AddCommand(newStopCmd())
 	cmd.AddCommand(newSessionCurrentCmd())
 	cmd.AddCommand(newAttachCmd())
@@ -306,11 +309,11 @@ func sessionWorktreeLabel(s *strategy.SessionState) string {
 // sessionPhaseLabel returns the display status for a session.
 func sessionPhaseLabel(s *strategy.SessionState) string {
 	if s.EndedAt != nil {
-		return "ended"
+		return string(session.PhaseEnded)
 	}
 	status := string(s.Phase)
 	if status == "" {
-		return "idle"
+		return string(session.PhaseIdle)
 	}
 	return status
 }
@@ -564,6 +567,7 @@ type sessionInfoJSON struct {
 	Agent          string         `json:"agent"`
 	Model          string         `json:"model,omitempty"`
 	Status         string         `json:"status"`
+	Branch         string         `json:"branch,omitempty"`
 	WorktreeID     string         `json:"worktree_id,omitempty"`
 	WorktreePath   string         `json:"worktree_path,omitempty"`
 	StartedAt      time.Time      `json:"started_at"`
@@ -597,6 +601,7 @@ func buildSessionInfoJSON(state *strategy.SessionState, status string) sessionIn
 		Agent:          agentLabel,
 		Model:          state.ModelName,
 		Status:         status,
+		Branch:         state.Branch,
 		WorktreeID:     state.WorktreeID,
 		WorktreePath:   state.WorktreePath,
 		StartedAt:      state.StartedAt,
@@ -868,7 +873,7 @@ func stopSessionAndPrint(ctx context.Context, cmd *cobra.Command, state *strateg
 	lastCheckpointID := state.LastCheckpointID
 	stepCount := state.StepCount
 
-	if err := markSessionEnded(ctx, nil, sessionID); err != nil {
+	if _, err := markSessionEnded(ctx, nil, sessionID, nil); err != nil {
 		return fmt.Errorf("failed to stop session %s: %w", sessionID, err)
 	}
 

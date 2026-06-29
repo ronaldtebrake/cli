@@ -49,9 +49,12 @@ func (s *ManualCommitStrategy) listCheckpoints(ctx context.Context) ([]Checkpoin
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 
-	committed, err := store.ListCommitted(ctx)
+	committed, err := store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list committed checkpoints: %w", err)
 	}
@@ -68,9 +71,12 @@ func (s *ManualCommitStrategy) getCheckpointLog(ctx context.Context, checkpointI
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 
-	summary, err := cpkg.ReadCommittedCheckpoint(ctx, store, checkpointID)
+	summary, err := cpkg.ReadCheckpoint(ctx, store, checkpointID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}
@@ -99,7 +105,18 @@ type condenseOpts struct {
 	allAgentFiles    map[string]struct{} // Union of all sessions' FilesTouched for cross-session exclusion (nil = single-session)
 }
 
-var redactSessionJSONLBytes = redact.JSONLBytes
+// redactSessionJSONLBytes runs the 7-layer redaction pipeline over a
+// session transcript at post-commit condensation. OPF is intentionally
+// NOT included here — it runs exclusively in the pre-push rewrite path
+// (strategy/manual_commit_opf_rewrite.go), which re-redacts the
+// 7-layer blobs and produces 8-layer commits before the push.
+//
+// Exposed as a var so tests can inject deterministic success/error
+// returns. The signature still takes a context so the var can be
+// re-wired to JSONLBytesWithPrivacyFilter from tests that need OPF.
+var redactSessionJSONLBytes = func(_ context.Context, b []byte) (redact.RedactedBytes, error) {
+	return redact.JSONLBytes(b)
+}
 
 // checkpointStepCount returns the number of user prompts attributed to the
 // checkpoint being written: the turns counted since the current window's base.
@@ -118,7 +135,7 @@ func checkpointStepCount(s *SessionState) int {
 // CondenseSession condenses a session's shadow branch to permanent storage.
 // checkpointID is the 12-hex-char value from the Entire-Checkpoint trailer.
 // Metadata is stored at sharded path: <checkpoint_id[:2]>/<checkpoint_id[2:]>/
-// Uses checkpoint.GitStore.WriteCommitted for the git operations.
+// Uses checkpoint.PersistentStore.Write with a checkpoint.Session request for persistent storage.
 //
 // For mid-session commits (no Stop/SaveStep called yet), the shadow branch may not exist.
 // In this case, data is extracted from the live transcript instead.
@@ -130,6 +147,9 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	}
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	condenseStart := time.Now()
+	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
+		return nil, err
+	}
 
 	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
 	ref, hasShadowBranch := resolveShadowRef(repo, shadowBranchName, o.shadowRef)
@@ -160,6 +180,10 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	// while keeping checkpoint metadata scoped to CheckpointTranscriptStart.
 	if backfillUsage := sessionStateBackfillTokenUsage(ctx, ag, state.AgentType, sessionData.Transcript, sessionData.TokenUsage); backfillUsage != nil {
 		state.TokenUsage = backfillUsage
+	}
+
+	if !hasTokenUsageData(sessionData.TokenUsage) && hasTokenUsageData(state.CheckpointTokenUsage) {
+		sessionData.TokenUsage = accumulateTokenUsage(nil, state.CheckpointTokenUsage)
 	}
 
 	// Backfill the model from the transcript for agents that don't report it via
@@ -198,7 +222,10 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		return skipped, nil
 	}
 
-	store := s.getCheckpointStore(ctx, repo)
+	store, err := s.getPersistentStore(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get author info
 	authorName, authorEmail := GetGitAuthorFromRepo(repo)
@@ -231,9 +258,11 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		summary = generateSummary(ctx, redactedTranscript, sessionData.FilesTouched, state)
 	}
 
+	// Post-commit emits 7-layer-only blobs. OPF runs later in the
+	// pre-push rewrite path, never here.
 	skillEvents := mergeSkillEvents(state.SkillEvents, withSkillEventTurnID(sessionData.SkillEvents, state.TurnID))
 
-	writeOpts := cpkg.WriteCommittedOptions{
+	writeOpts := cpkg.WriteOptions{
 		CheckpointID:                checkpointID,
 		SessionID:                   state.SessionID,
 		Strategy:                    StrategyNameManualCommit,
@@ -254,7 +283,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		TokenUsage:                  sessionData.TokenUsage,
 		SkillEvents:                 skillEvents,
 		SessionMetrics:              buildSessionMetrics(state),
-		InitialAttribution:          attribution,
+		Attribution:                 attribution,
 		PromptAttributionsJSON:      marshalPromptAttributionsIncludingPending(state),
 		Summary:                     summary,
 		Kind:                        string(state.Kind),
@@ -268,7 +297,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	writeV1Start := time.Now()
 	writeCtx, writeCommittedSpan := perf.Start(ctx, "write_committed_v1")
-	if err := store.WriteCommitted(writeCtx, writeOpts); err != nil {
+	if err := store.Write(writeCtx, cpkg.Session(writeOpts)); err != nil {
 		writeCommittedSpan.RecordError(err)
 		writeCommittedSpan.End()
 		return nil, fmt.Errorf("failed to write checkpoint metadata: %w", err)
@@ -281,10 +310,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	// persistEventMetadataToState) so two checkpoints with no prompt between them
 	// report the same count instead of the second showing 0.
 	state.PromptWindowResetPending = true
-
-	// Mirror the committed write to refs.Mirror when configured (best-effort;
-	// failures are logged, not fatal).
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	logging.Debug(logCtx, "condense timings",
 		slog.String("session_id", state.SessionID),
@@ -361,7 +386,7 @@ func redactSessionTranscript(ctx context.Context, transcript []byte) (redact.Red
 		return redact.RedactedBytes{}, time.Since(start), nil
 	}
 
-	redacted, err := redactSessionJSONLBytes(transcript)
+	redacted, err := redactSessionJSONLBytes(ctx, transcript)
 	if err != nil {
 		span.RecordError(err)
 		return redact.RedactedBytes{}, time.Since(start), fmt.Errorf("failed to redact transcript secrets: %w", err)
@@ -515,7 +540,7 @@ func generateSummary(ctx context.Context, redactedTranscript redact.RedactedByte
 // The return type is the summarize.Generator interface rather than the concrete
 // adapter pointer so callers can't accidentally hold a non-nil interface that
 // wraps a nil pointer (the classic Go nil-interface footgun).
-func buildSummaryGenerator(ctx context.Context) summarize.Generator { //nolint:ireturn,nolintlint // interface return is intentional for provider abstraction and nil-safety; nolintlint flagged as "unused" under some linter versions but ireturn fires in others
+func buildSummaryGenerator(ctx context.Context) summarize.Generator {
 	s, err := settings.Load(ctx)
 	if err != nil {
 		// Warn (not Debug): this is the auto-summarize hot path on every commit.
@@ -567,7 +592,7 @@ func buildSummaryGenerator(ctx context.Context) summarize.Generator { //nolint:i
 // marshalPromptAttributionsIncludingPending builds the complete prompt attribution slice
 // (including PendingPromptAttribution for mid-turn commits) and encodes it to JSON.
 // This must stay consistent with the slice used by calculateSessionAttributions so the
-// persisted diagnostics match the computed InitialAttribution.
+// persisted diagnostics match the computed Attribution.
 func marshalPromptAttributionsIncludingPending(state *SessionState) json.RawMessage {
 	pas := make([]PromptAttribution, len(state.PromptAttributions), len(state.PromptAttributions)+1)
 	copy(pas, state.PromptAttributions)
@@ -662,7 +687,7 @@ type attributionOpts struct {
 	allAgentFiles         map[string]struct{} // Union of all sessions' FilesTouched (nil = single-session)
 }
 
-func calculateSessionAttributions(ctx context.Context, repo *git.Repository, shadowRef *plumbing.Reference, sessionData *ExtractedSessionData, state *SessionState, opts ...attributionOpts) *cpkg.InitialAttribution {
+func calculateSessionAttributions(ctx context.Context, repo *git.Repository, shadowRef *plumbing.Reference, sessionData *ExtractedSessionData, state *SessionState, opts ...attributionOpts) *cpkg.Attribution {
 	// Calculate initial attribution using accumulated prompt attribution data.
 	// This uses user edits captured at each prompt start (before agent works),
 	// plus any user edits after the final checkpoint (shadow → head).
@@ -1214,6 +1239,7 @@ func (s *ManualCommitStrategy) CondenseSessionByID(ctx context.Context, sessionI
 		)
 
 		state.StepCount = 0
+		state.CheckpointTokenUsage = nil
 		state.CheckpointTranscriptStart = result.TotalTranscriptLines
 		state.CheckpointTranscriptSize = int64(len(result.Transcript))
 		state.Phase = session.PhaseIdle
@@ -1328,6 +1354,7 @@ func (s *ManualCommitStrategy) CondenseAndMarkFullyCondensed(ctx context.Context
 		}
 
 		state.StepCount = 0
+		state.CheckpointTokenUsage = nil
 		state.CheckpointTranscriptStart = result.TotalTranscriptLines
 		state.LastCheckpointID = checkpointID
 		state.LastCheckpointCommitHash = state.BaseCommit

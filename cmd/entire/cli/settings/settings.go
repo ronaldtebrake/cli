@@ -15,10 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/internal/flock"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/redact"
 )
 
 const (
@@ -96,7 +98,8 @@ type EntireSettings struct {
 	ReviewDefaultProfile string `json:"review_default_profile,omitempty"`
 
 	// Deprecated: legacy pre-profile review settings. Kept so old config files
-	// still parse, but `entire review` no longer reads this field.
+	// still parse. `entire review` reads this only as a compatibility fallback
+	// when no review_profiles are configured, exposing it as the general profile.
 	Review map[string]ReviewConfig `json:"review,omitempty"`
 
 	// ReviewFixAgent is a legacy saved fix-agent preference. The `entire review
@@ -154,9 +157,28 @@ type ClonePreferences struct {
 	ReviewDefaultProfile string                         `json:"review_default_profile,omitempty"`
 
 	// Deprecated: legacy pre-profile review settings. Kept so old preference
-	// files parse, but new review setup writes ReviewProfiles instead.
+	// files parse. New review setup writes ReviewProfiles instead, while
+	// `entire review` may read Review as a fallback when profiles are absent.
 	Review         map[string]ReviewConfig `json:"review,omitempty"`
 	ReviewFixAgent string                  `json:"review_fix_agent,omitempty"`
+
+	// ReviewMigrationDismissed records that the user declined the one-shot
+	// migration of review keys from project settings to clone-local prefs.
+	// Once true, `entire review` stops prompting on every invocation; the
+	// user can re-enable by editing this file or deleting the key.
+	ReviewMigrationDismissed bool `json:"review_migration_dismissed,omitempty"`
+
+	// TrailsEnabled caches whether trails are enabled for this repository on the
+	// API. Pointer shape distinguishes "unknown/not refreshed yet" (nil) from a
+	// definitive false. This is clone-local and not committed so hook-time agent
+	// context injection can avoid network/auth work on the prompt path.
+	TrailsEnabled *bool `json:"trails_enabled,omitempty"`
+
+	// Freshness and scope for TrailsEnabled.
+	TrailsEnabledCheckedAt *time.Time `json:"trails_enabled_checked_at,omitempty"`
+	TrailsEnabledRepoKey   string     `json:"trails_enabled_repo_key,omitempty"`
+	TrailsEnabledAPIBase   string     `json:"trails_enabled_api_base,omitempty"`
+	TrailsEnabledAuthKey   string     `json:"trails_enabled_auth_key,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
@@ -216,6 +238,10 @@ type RedactionSettings struct {
 	// "[REDACTED_<LABEL>]" token used by PII. Failed regex compilations are
 	// logged via slog.Warn and the rule is skipped.
 	CustomRedactions map[string]string `json:"custom_redactions,omitempty"`
+
+	// OpenAIPrivacyFilter is the optional 8th redaction layer (opt-in).
+	// See docs/security-and-privacy.md.
+	OpenAIPrivacyFilter *OPFSettings `json:"openai_privacy_filter,omitempty"`
 }
 
 // PIISettings configures PII detection categories.
@@ -227,6 +253,35 @@ type PIISettings struct {
 	Address        *bool             `json:"address,omitempty"`
 	CustomPatterns map[string]string `json:"custom_patterns,omitempty"`
 }
+
+// OPFSettings configures the optional OpenAI Privacy Filter detection layer.
+// Disabled by default. Runs only at condensation/export boundaries — see
+// docs/security-and-privacy.md.
+//
+// There is intentionally no "on_failure" field: warn-only is the only mode
+// the runtime currently supports, and DisallowUnknownFields will reject any
+// future user who tries to set it. Adding the field again should land in
+// lockstep with the runtime enforcement.
+type OPFSettings struct {
+	Enabled        bool            `json:"enabled,omitempty"`
+	Categories     map[string]bool `json:"categories,omitempty"`
+	Command        string          `json:"command,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+
+	// PromptDefault controls whether the pre-push hook asks the user
+	// before running OPF. "" (default) and "ask" both surface the
+	// interactive prompt; "never" skips OPF and pushes 7-layer content;
+	// "always" runs without asking. ENTIRE_OPF=yes|no on the push
+	// invocation overrides this setting per-push.
+	PromptDefault string `json:"prompt_default,omitempty"`
+}
+
+// Valid PromptDefault values. Empty == OPFPromptAsk.
+const (
+	OPFPromptAsk    = "ask"
+	OPFPromptNever  = "never"
+	OPFPromptAlways = "always"
+)
 
 // GetCommitLinking returns the effective commit linking mode.
 // Returns the explicit value if set, otherwise defaults to "prompt"
@@ -249,10 +304,10 @@ func (s *EntireSettings) SummaryTimeoutValue() time.Duration {
 }
 
 // ReviewProfileConfig is a named review setup. The profile-level Task is the
-// canonical task every worker agent is asked to run; per-agent ReviewConfig
+// canonical task every reviewer agent is asked to run; per-agent ReviewConfig
 // entries adapt that task to agent-specific mechanics such as slash commands
-// or additional instructions. Master names the agent that consolidates worker
-// outputs into the final report.
+// or additional instructions. Judge names the single agent that consolidates
+// the reviewers' reports into the final verdict in a closing round.
 //
 // Example:
 //
@@ -261,35 +316,33 @@ func (s *EntireSettings) SummaryTimeoutValue() time.Duration {
 //	    "task": "Review this change for auth, injection, secrets, and privilege-boundary bugs.",
 //	    "agents": {
 //	      "claude-sonnet": {"agent": "claude-code", "model": "sonnet", "skills": ["/security-review"]},
-//	      "claude-opus": {"agent": "claude-code", "model": "opus", "skills": ["/security-review"]},
 //	      "codex": {"model": "gpt-5-codex", "skills": ["/review"], "prompt": "Focus on security."}
 //	    },
-//	    "master": "claude-sonnet"
+//	    "judge": {"agent": "claude-code", "model": "opus"}
 //	  }
 //	}
 //
-// MasterModel is an optional model hint passed to the master agent's text
-// generation API.
 // ReviewProfileConfig is intentionally small: the review package owns built-in
 // default task text for conventional profile names like "general".
 type ReviewProfileConfig struct {
 	Task   string                  `json:"task,omitempty"`
 	Agents map[string]ReviewConfig `json:"agents,omitempty"`
-	// Master is the legacy master selector: a worker key in Agents that also
-	// writes the final report. Superseded by MasterAgent; still honored when
-	// MasterAgent is empty.
-	Master string `json:"master,omitempty"`
-	// MasterAgent, when set, is a standalone master (judge): it synthesizes the
-	// workers' reports and is NOT required to be one of the worker slots. Takes
-	// precedence over Master.
-	MasterAgent string `json:"master_agent,omitempty"`
-	// MasterModel is the model for the master (applies to either form).
-	MasterModel string `json:"master_model,omitempty"`
+	// Judge is the single agent (plus optional model) that consolidates the
+	// reviewers' reports into the final verdict. It is optional: a
+	// one-reviewer profile needs no judge (the lone report is the result),
+	// and a multi-reviewer profile with no judge set falls back to an
+	// auto-selected reviewer that can write a verdict.
+	Judge *ReviewConfig `json:"judge,omitempty"`
+	// Output selects where the final review verdict is delivered: "local"
+	// (printed and saved to the local review manifest — the default) or
+	// "trail" (additionally posted to the branch's trail as a finding via
+	// the data API). Empty means local.
+	Output string `json:"output,omitempty"`
 }
 
 // IsZero reports whether the profile is effectively unset.
 func (c ReviewProfileConfig) IsZero() bool {
-	return c.Task == "" && len(c.Agents) == 0 && c.Master == "" && c.MasterModel == ""
+	return c.Task == "" && len(c.Agents) == 0 && (c.Judge == nil || c.Judge.IsZero())
 }
 
 // ReviewConfig holds one worker's configuration within a review profile.
@@ -325,17 +378,6 @@ type ReviewConfig struct {
 // IsZero reports whether the config is effectively unset.
 func (c ReviewConfig) IsZero() bool {
 	return c.Agent == "" && c.Model == "" && len(c.Skills) == 0 && c.Prompt == ""
-}
-
-// ReviewConfigFor returns the configured review config for the given agent.
-// Returns a zero-value config when the agent has no entry; callers should
-// check IsZero (or the individual fields) to decide whether configuration
-// is present.
-func (s *EntireSettings) ReviewConfigFor(agentName string) ReviewConfig {
-	if s == nil {
-		return ReviewConfig{}
-	}
-	return s.Review[agentName]
 }
 
 // InvestigateConfig holds the configuration for `entire investigate`.
@@ -558,6 +600,25 @@ func SaveProjectRaw(path string, raw map[string]json.RawMessage) error {
 	return nil
 }
 
+// SaveLocalRaw writes a generic JSON object back to .entire/settings.local.json
+// atomically (temp file + rename). Mirrors SaveProjectRaw for the per-developer
+// overrides file; the only difference is the error wording, which says "local
+// settings" so failure messages match the file actually being written.
+//
+// Pair with LoadLocalRaw for read-modify-write flows that target the local
+// override (e.g. persisting an interactive prompt's "always" choice without
+// touching the project-wide settings file).
+func SaveLocalRaw(path string, raw map[string]json.RawMessage) error {
+	data, err := jsonutil.MarshalIndentWithNewline(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal local settings: %w", err)
+	}
+	if err := jsonutil.WriteFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("writing local settings: %w", err)
+	}
+	return nil
+}
+
 // ClonePreferencesPath returns the clone-local preferences path in the git common dir.
 func ClonePreferencesPath(ctx context.Context) (string, error) {
 	commonDir, err := session.GetGitCommonDir(ctx)
@@ -585,6 +646,15 @@ func SaveClonePreferences(ctx context.Context, prefs *ClonePreferences) error {
 	return saveClonePreferencesToFile(prefs, path)
 }
 
+// ModifyClonePreferences runs a read-modify-write under the preferences lock.
+func ModifyClonePreferences(ctx context.Context, fn func(*ClonePreferences) error) error {
+	path, err := ClonePreferencesPath(ctx)
+	if err != nil {
+		return err
+	}
+	return modifyClonePreferencesFile(path, fn)
+}
+
 // LoadFromBytes parses settings from raw JSON bytes without merging local overrides.
 // Use this when you have settings content from a non-file source (e.g., git show).
 func LoadFromBytes(data []byte) (*EntireSettings, error) {
@@ -593,6 +663,11 @@ func LoadFromBytes(data []byte) (*EntireSettings, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(s); err != nil {
 		return nil, fmt.Errorf("parsing settings: %w", err)
+	}
+	if s.Redaction != nil {
+		if err := validateOPFSettings(s.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -626,6 +701,12 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 	// SummaryGeneration is NOT validated here — individual files may
 	// legitimately contain only a model (provider comes from another file).
 	// Validation happens after merge in Load().
+
+	if settings.Redaction != nil {
+		if err := validateOPFSettings(settings.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
+	}
 
 	return settings, nil
 }
@@ -678,12 +759,55 @@ func saveClonePreferencesToFile(prefs *ClonePreferences, filePath string) error 
 	return nil
 }
 
+// mergeReviewProfiles overlays src review profiles onto base by name, returning
+// a new map. A profile from a higher-precedence layer (src) overrides the
+// same-named one from a lower layer (base), but profiles unique to each layer
+// are all preserved. This lets a team keep shared profiles in
+// .entire/settings.json while individuals add or override profiles in
+// clone-local preferences or .entire/settings.local.json, without one layer
+// hiding the others' profiles.
+//
+// Neither input map is mutated: callers (and the maps they own, e.g. a freshly
+// loaded ClonePreferences) can rely on their maps being left untouched. The
+// result is always a fresh, non-nil map (empty when both inputs are empty), so
+// callers never receive nil from a non-nil input.
+func mergeReviewProfiles(base, src map[string]ReviewProfileConfig) map[string]ReviewProfileConfig {
+	out := make(map[string]ReviewProfileConfig, len(base)+len(src))
+	for name, cfg := range base {
+		out[name] = cfg
+	}
+	for name, cfg := range src {
+		out[name] = cfg
+	}
+	return out
+}
+
+func modifyClonePreferencesFile(filePath string, fn func(*ClonePreferences) error) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
+		return fmt.Errorf("creating preferences directory: %w", err)
+	}
+	release, err := flock.Acquire(filePath + ".lock")
+	if err != nil {
+		return fmt.Errorf("lock preferences file: %w", err)
+	}
+	defer release()
+
+	prefs, err := loadClonePreferencesFromFile(filePath)
+	if err != nil {
+		return err
+	}
+	if err := fn(prefs); err != nil {
+		return err
+	}
+	return saveClonePreferencesToFile(prefs, filePath)
+}
+
 func applyClonePreferences(settings *EntireSettings, prefs *ClonePreferences) {
 	if prefs == nil {
 		return
 	}
 	if prefs.ReviewProfiles != nil {
-		settings.ReviewProfiles = prefs.ReviewProfiles
+		settings.ReviewProfiles = mergeReviewProfiles(settings.ReviewProfiles, prefs.ReviewProfiles)
 	}
 	if prefs.ReviewDefaultProfile != "" {
 		settings.ReviewDefaultProfile = prefs.ReviewDefaultProfile
@@ -732,7 +856,9 @@ func mergeJSON(settings *EntireSettings, data []byte) error {
 		if err := json.Unmarshal(profilesRaw, &profiles); err != nil {
 			return fmt.Errorf("parsing review_profiles field: %w", err)
 		}
-		settings.ReviewProfiles = profiles
+		// Merge per-profile so a local override file adds to / overrides shared
+		// profiles by name rather than replacing the whole set.
+		settings.ReviewProfiles = mergeReviewProfiles(settings.ReviewProfiles, profiles)
 	}
 	if reviewRaw, ok := raw["review"]; ok {
 		var review map[string]ReviewConfig
@@ -974,7 +1100,83 @@ func mergeRedaction(dst *RedactionSettings, data json.RawMessage) error {
 			}
 		}
 	}
+	if opfRaw, ok := raw["openai_privacy_filter"]; ok {
+		if dst.OpenAIPrivacyFilter == nil {
+			dst.OpenAIPrivacyFilter = &OPFSettings{}
+		}
+		if err := mergeOPFSettings(dst.OpenAIPrivacyFilter, opfRaw); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateOPFSettings rejects unknown category names so typos surface at
+// parse time. Silent zero-detection of a privacy category is effectively
+// a correctness bug — the user thinks they're protected but they're not.
+func validateOPFSettings(opf *OPFSettings) error {
+	if opf == nil {
+		return nil
+	}
+	for name := range opf.Categories {
+		if !redact.IsKnownOPFCategory(name) {
+			return fmt.Errorf("openai_privacy_filter.categories has unknown key %q (see docs/security-and-privacy.md for the supported set)", name)
+		}
+	}
+	if opf.TimeoutSeconds < 0 {
+		return fmt.Errorf("openai_privacy_filter.timeout_seconds must be greater than or equal to 0 (got %d)", opf.TimeoutSeconds)
+	}
+	switch opf.PromptDefault {
+	case "", OPFPromptAsk, OPFPromptNever, OPFPromptAlways:
+		// ok
+	default:
+		return fmt.Errorf("openai_privacy_filter.prompt_default must be one of %q, %q, %q (got %q)",
+			OPFPromptAsk, OPFPromptNever, OPFPromptAlways, opf.PromptDefault)
+	}
+	return nil
+}
+
+// mergeOPFSettings merges OPF overrides into existing OPFSettings. Only
+// fields present in the override JSON are applied; missing fields preserve
+// the base value.
+func mergeOPFSettings(dst *OPFSettings, data json.RawMessage) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing openai_privacy_filter: %w", err)
+	}
+	if v, ok := raw["enabled"]; ok {
+		if err := json.Unmarshal(v, &dst.Enabled); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.enabled: %w", err)
+		}
+	}
+	if v, ok := raw["categories"]; ok {
+		var cats map[string]bool
+		if err := json.Unmarshal(v, &cats); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.categories: %w", err)
+		}
+		if dst.Categories == nil {
+			dst.Categories = make(map[string]bool, len(cats))
+		}
+		for k, b := range cats {
+			dst.Categories[k] = b
+		}
+	}
+	if v, ok := raw["command"]; ok {
+		if err := json.Unmarshal(v, &dst.Command); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.command: %w", err)
+		}
+	}
+	if v, ok := raw["timeout_seconds"]; ok {
+		if err := json.Unmarshal(v, &dst.TimeoutSeconds); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.timeout_seconds: %w", err)
+		}
+	}
+	if v, ok := raw["prompt_default"]; ok {
+		if err := json.Unmarshal(v, &dst.PromptDefault); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.prompt_default: %w", err)
+		}
+	}
+	return validateOPFSettings(dst)
 }
 
 // mergePIISettings merges PII overrides into existing PIISettings.
@@ -1035,7 +1237,7 @@ func IsSetUp(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(settingsFileAbs)
+	_, err = os.Lstat(settingsFileAbs)
 	return err == nil
 }
 
@@ -1066,16 +1268,6 @@ func IsSetUpAndEnabled(ctx context.Context) bool {
 		return false
 	}
 	return s.Enabled
-}
-
-// MirrorsToV1CustomRef reports whether the v1 custom-ref mirror is opted in.
-// Returns false if settings cannot be loaded.
-func MirrorsToV1CustomRef(ctx context.Context) bool {
-	s, err := Load(ctx)
-	if err != nil {
-		return false
-	}
-	return s.MirrorsToV1CustomRef()
 }
 
 // IsFilteredFetchesEnabled checks if filtered fetches should be used.
@@ -1157,24 +1349,6 @@ func (s *EntireSettings) GetCheckpointRemote() *CheckpointRemoteConfig {
 		return nil
 	}
 	return &CheckpointRemoteConfig{Provider: provider, Repo: repo}
-}
-
-// MirrorsToV1CustomRef reports whether checkpoints_version opts into mirroring
-// committed metadata to the v1 custom ref (refs/entire/checkpoints/v1.1). v1
-// remains the source of truth; the v1 custom ref is a local-only mirror.
-// Returns false when unset or set to any other value.
-func (s *EntireSettings) MirrorsToV1CustomRef() bool {
-	if s.StrategyOptions == nil {
-		return false
-	}
-	return isV1CustomRefValue(s.StrategyOptions["checkpoints_version"])
-}
-
-// isV1CustomRefValue reports whether a checkpoints_version value selects the v1
-// custom ref. Only the JSON string "1.1" opts in; numeric values remain plain v1.
-func isV1CustomRefValue(val any) bool {
-	s, ok := val.(string)
-	return ok && s == "1.1"
 }
 
 // IsFilteredFetchesEnabled checks if fetches should use --filter=blob:none.

@@ -352,11 +352,9 @@ func renderRepoChart(w io.Writer, sty activityStyles, repos []repoContribution) 
 	}
 
 	for _, r := range display {
-		name := r.Repo
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen-1] + "…"
-		}
-		name = fmt.Sprintf("%-*s", maxNameLen, name)
+		// padOrTruncate is rune-aware; truncating r.Repo with a byte slice
+		// could split a multi-byte rune and emit invalid UTF-8.
+		name := padOrTruncate(r.Repo, maxNameLen)
 
 		bar := renderAgentBar(sty, r.Agents, maxCount, barWidth)
 		count := fmt.Sprintf("%*d", countWidth, r.Total)

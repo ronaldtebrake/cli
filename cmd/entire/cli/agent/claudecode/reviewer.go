@@ -38,9 +38,7 @@ func NewReviewer() *reviewtypes.ReviewerTemplate {
 func buildReviewCmd(ctx context.Context, cfg reviewtypes.RunConfig) *exec.Cmd {
 	prompt := review.ComposeReviewPrompt(cfg)
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
-	}
+	args = review.AppendModelFlag(args, cfg.Model)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = review.AppendReviewEnv(os.Environ(), "claude-code", cfg, prompt)
 	return cmd

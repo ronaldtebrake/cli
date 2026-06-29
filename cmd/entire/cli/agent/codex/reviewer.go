@@ -36,9 +36,7 @@ func buildCodexReviewCmd(ctx context.Context, cfg reviewtypes.RunConfig) *exec.C
 	promptCfg := cfg
 	promptCfg.Skills = expandCodexBuiltinReview(cfg.Skills)
 	args := []string{codexExecCommand, "--skip-git-repo-check", "--json"}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
-	}
+	args = review.AppendModelFlag(args, cfg.Model)
 	args = append(args, "-")
 	prompt := review.ComposeReviewPrompt(promptCfg)
 	cmd := exec.CommandContext(ctx, "codex", args...)

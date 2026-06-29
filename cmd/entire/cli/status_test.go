@@ -29,10 +29,7 @@ func TestResolveWorktreeBranch_RegularRepo(t *testing.T) {
 		dir = resolved
 	}
 
-	_, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	testutil.InitRepo(t, dir)
 
 	// Read the default branch name directly from HEAD to avoid hard-coding it
 	headData, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD"))
@@ -53,9 +50,10 @@ func TestResolveWorktreeBranch_DetachedHEAD(t *testing.T) {
 		dir = resolved
 	}
 
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
-		t.Fatalf("git init: %v", err)
+		t.Fatalf("git open: %v", err)
 	}
 
 	// Create a commit so we can detach HEAD
@@ -890,6 +888,21 @@ func TestTotalTokens_DeepSubagentNesting(t *testing.T) {
 	// 100+50 + 200+100 + 50+25 = 525
 	if got := totalTokens(tu); got != 525 {
 		t.Errorf("totalTokens() = %d, want 525 (deep nesting)", got)
+	}
+}
+
+func TestTotalTokens_SaturatesOverflow(t *testing.T) {
+	t.Parallel()
+
+	maxInt := int(^uint(0) >> 1)
+	tu := &agent.TokenUsage{
+		InputTokens: maxInt,
+		SubagentTokens: &agent.TokenUsage{
+			OutputTokens: 1,
+		},
+	}
+	if got := totalTokens(tu); got != maxInt {
+		t.Errorf("totalTokens() = %d, want %d", got, maxInt)
 	}
 }
 
@@ -1891,7 +1904,7 @@ func writeStatusHeadCheckpoint(t *testing.T, hasReview, hasInvestigation bool) {
 	}
 	cpID := id.MustCheckpointID(cpHex)
 	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
-	if err := store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+	if err := store.Write(context.Background(), checkpoint.Session{
 		CheckpointID:     cpID,
 		SessionID:        "status-test-session",
 		Strategy:         "manual-commit",

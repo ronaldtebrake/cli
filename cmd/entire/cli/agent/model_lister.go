@@ -13,7 +13,7 @@ type ModelInfo struct {
 }
 
 // ModelLister is an optional capability for agents that can advertise the
-// models usable with `entire inspect --model`.
+// models usable with `entire review --model`.
 //
 // claude-code advertises a small curated list of real, valid aliases
 // (opus/sonnet/haiku). Agents whose CLI has no enumeration command do not

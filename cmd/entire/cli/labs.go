@@ -9,41 +9,66 @@ import (
 )
 
 type experimentalCommandInfo struct {
-	Name       string
-	Invocation string
-	Summary    string
+	CommandPath []string
+	Invocation  string
+	Summary     string
 }
 
 var experimentalCommands = []experimentalCommandInfo{
 	{
-		Name:       "inspect",
-		Invocation: "entire inspect",
-		Summary:    "Run a multi-agent crew against the current branch (aliased as 'entire review')",
+		CommandPath: []string{"review"},
+		Invocation:  "entire review",
+		Summary:     "Run a multi-agent review against the current branch",
 	},
 	{
-		Name:       "investigate",
-		Invocation: "entire investigate",
-		Summary:    "Run a multi-agent investigation against a topic, issue, or seed doc",
+		CommandPath: []string{"investigate"},
+		Invocation:  "entire investigate",
+		Summary:     "Run a multi-agent investigation against a topic, issue, or seed doc",
 	},
 	{
-		Name:       "org",
-		Invocation: "entire org",
-		Summary:    "Manage Entire organizations (create, list)",
+		CommandPath: []string{"import", "claude-code"},
+		Invocation:  "entire import claude-code",
+		Summary:     "Import existing Claude Code transcripts as local, read-only history",
 	},
 	{
-		Name:       "project",
-		Invocation: "entire project",
-		Summary:    "Manage Entire projects (create, list)",
+		CommandPath: []string{"tokens"},
+		Invocation:  "entire tokens",
+		Summary:     "Analyze experimental token usage diagnostics",
 	},
 	{
-		Name:       "repo",
-		Invocation: "entire repo",
-		Summary:    "Manage Entire repositories (create, list, get, delete)",
+		CommandPath: []string{"tokens", "profile"},
+		Invocation:  "entire tokens profile",
+		Summary:     "Aggregate token usage across committed checkpoints",
 	},
 	{
-		Name:       "grant",
-		Invocation: "entire grant",
-		Summary:    "Manage access grants and org membership (org, project, repo)",
+		CommandPath: []string{"org"},
+		Invocation:  "entire org",
+		Summary:     "Manage Entire organizations (create, list)",
+	},
+	{
+		CommandPath: []string{"project"},
+		Invocation:  "entire project",
+		Summary:     "Manage Entire projects (create, list)",
+	},
+	{
+		CommandPath: []string{"repo"},
+		Invocation:  "entire repo",
+		Summary:     "Manage Entire repositories (create, list, get, delete)",
+	},
+	{
+		CommandPath: []string{"grant"},
+		Invocation:  "entire grant",
+		Summary:     "Manage access grants and org membership (org, project, repo)",
+	},
+	{
+		CommandPath: []string{"blame"},
+		Invocation:  "entire blame",
+		Summary:     "Show which lines came from Entire checkpoints",
+	},
+	{
+		CommandPath: []string{"why"},
+		Invocation:  "entire why",
+		Summary:     "Show why a line exists (commit, checkpoint, prompt, session)",
 	},
 }
 
@@ -58,7 +83,7 @@ func newLabsCmd() *cobra.Command {
 			}
 			err := fmt.Errorf("unknown labs topic %q", args[0])
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"%v\n\nRun `entire labs` to see available experimental commands, or run `entire inspect --help` for command-specific help.\n",
+				"%v\n\nRun `entire labs` to see available experimental commands, or run `entire review --help` for command-specific help.\n",
 				err)
 			return NewSilentError(err)
 		},
@@ -85,12 +110,16 @@ to try now, but details may change based on feedback.
 Available experimental commands:
 ` + renderExperimentalCommands(experimentalCommands) + `
 Try:
-  entire inspect --help
+  entire review --help
   entire investigate --help
+  entire tokens --help
+  entire tokens profile --help
   entire org --help
   entire project --help
   entire repo --help
   entire grant --help
+  entire blame --help
+  entire why --help
 `
 }
 

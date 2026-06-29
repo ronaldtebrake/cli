@@ -8,14 +8,18 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -29,6 +33,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
+	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
@@ -61,6 +66,13 @@ type Deps struct {
 	// per-agent reviewer packages import review (for ComposeReviewPrompt /
 	// AppendReviewEnv), so review/cmd.go cannot import them back.
 	ReviewerFor func(agentName string) reviewtypes.AgentReviewer
+
+	// PostReviewToTrail posts the final review verdict to the current branch's
+	// trail as a finding (the "trail" output destination). Injected from the cli
+	// package because the data API + auth live there. It prints its own success
+	// line to out. nil when trail delivery is unavailable (e.g. tests), in which
+	// case the run falls back to local output with a notice.
+	PostReviewToTrail func(ctx context.Context, out io.Writer, profileName, verdict string) error
 }
 
 // NewCommand returns the `entire review` cobra command wired with the
@@ -79,59 +91,59 @@ func NewCommand(deps Deps) *cobra.Command {
 	var listAgents bool
 	var listProfiles bool
 	var setAgents []string
-	var setMaster string
+	var setJudge string
+	var setOutput string
+	var setLocal bool
+	var reviewTimeout time.Duration
 	var setTask string
 	var setModels []string
 	var setSlots []string
 
 	cmd := &cobra.Command{
-		Use: "inspect",
-		// `review` shipped on main as the hidden labs command, so keep it as an
-		// alias. `scout` only existed on this branch, so it is not aliased.
-		Aliases: []string{"review"},
+		Use: "review",
 		// Hidden from `entire help` while the feature is still maturing —
-		// users who know about it can still run `entire inspect` / `entire
-		// inspect --help` and the command works normally.
+		// users who know about it can still run `entire review` / `entire
+		// review --help` and the command works normally.
 		Hidden: true,
-		Short:  "Run a multi-agent crew against the current branch",
-		Long: `Run a multi-agent crew against the current branch: several worker
-agents inspect the change in parallel, then a master agent synthesizes their
-reports into a final verdict. Crews are saved as named profiles in Entire
-settings and clone-local preferences. On first run, guided setup writes a
-profile and asks before starting agents.
-
-Labs entry: inspect is experimental. We are actively refining it based on user
-feedback.
-
-The session is recorded as part of the next checkpoint, so the metadata is
-permanently attached to the commit it covers.
+		Short:  "Run a multi-agent review against the current branch",
+		Long: `Run a multi-agent review against the current branch: several reviewer
+agents review the change in parallel, then a single judge consolidates their
+reports into the final verdict in a closing round. Reviews are saved as named
+profiles in Entire settings and clone-local preferences. On first run, guided
+setup writes a profile and asks before starting agents.
 
 Flags:
-  --configure    set up a crew profile (shows available agents + profiles).
+  --configure    set up a review profile (shows available agents + profiles).
                  With --set-* flags it writes the profile non-interactively;
                  otherwise it opens the wizard (interactive) without starting agents.
-  --set-agents   with --configure: comma-separated worker agents for the profile
-  --set-master   with --configure: master agent that writes the final report
+  --set-agents   with --configure: comma-separated reviewer agents for the profile
+  --set-judge    with --configure: the consolidating judge as agent[=model]
+  --set-output   with --configure: where the verdict goes: local (default) or trail
+  --local        with --configure: save to .entire/settings.local.json (just you)
+                 instead of .entire/settings.json (shared). Interactive setup asks.
   --set-task     with --configure: the profile's canonical task text
-  --set-model    with --configure: per-worker model as agent=model (repeatable)
-  --set-slot     with --configure: a worker slot as agent[=model] (repeatable;
+  --set-model    with --configure: per-reviewer model as agent=model (repeatable)
+  --set-slot     with --configure: a reviewer slot as agent[=model] (repeatable;
                  the same agent/model may repeat to run it multiple times)
   --edit         re-open the advanced profile skill picker
   --findings     browse local findings
-  --agent NAME   run only one worker from the selected profile
-  --list         list configured inspect profiles (their workers and master)
-  --agents       list the worker agents you can pass to --agent for the profile
-  --model NAME   override the model for the --agent worker (requires --agent)
+  --agent NAME   run only one reviewer from the selected profile
+  --list         list configured review profiles (their reviewers and judge)
+  --agents       list the reviewer agents you can pass to --agent for the profile
+  --model NAME   override the model for the --agent reviewer (requires --agent)
   --models       list the models each agent advertises (optionally --agent NAME)
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
+  --timeout DUR  max time each reviewer may run before it's cancelled and
+                 marked failed (default 10m; 0 disables). Siblings and the
+                 judge proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
                  Default: first existing of origin/HEAD, origin/main,
                  origin/master, main, master.
 
-Aliased as 'entire review'. To tag an already-finished session as a review,
-use 'entire attach --review <id>'.`,
+To tag an already-finished session as a review, use
+'entire attach --review <id>'.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts at most one argument, received %d", len(args))
@@ -172,7 +184,7 @@ use 'entire attach --review <id>'.`,
 				return errors.New("--configure, --edit, and --findings are mutually exclusive")
 			}
 			if modelOverride != "" && agentOverride == "" {
-				return errors.New("--model requires --agent (the model applies to a single worker)")
+				return errors.New("--model requires --agent (the model applies to a single reviewer)")
 			}
 			profileName := profileOverride
 			if len(args) == 1 {
@@ -181,52 +193,73 @@ use 'entire attach --review <id>'.`,
 			if configure {
 				return runReviewConfigure(ctx, cmd, profileName, reviewConfigureOptions{
 					Agents: setAgents,
-					Master: setMaster,
+					Judge:  setJudge,
+					Output: setOutput,
+					Local:  setLocal,
 					Task:   setTask,
 					Models: setModels,
 					Slots:  setSlots,
 				}, deps)
 			}
 			if edit {
-				_, err := RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
-				return err
+				return RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
 			}
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
 			}
-			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, deps)
+			// --timeout 0 disables the per-reviewer bound. The RunConfig zero
+			// value means "use the default", so translate an explicit 0 to a
+			// negative disable sentinel. (The flag defaults to 10m, so the value is
+			// only 0 when the user passed --timeout 0.)
+			timeoutArg := reviewTimeout
+			if timeoutArg == 0 {
+				timeoutArg = -1
+			}
+			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, timeoutArg, deps)
 		},
 	}
 	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
-	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: worker agents for the profile (comma-separated)")
-	cmd.Flags().StringVar(&setMaster, "set-master", "", "with --configure: master agent that writes the final report")
+	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: reviewer agents for the profile (comma-separated)")
+	cmd.Flags().StringVar(&setJudge, "set-judge", "", "with --configure: the consolidating judge as agent[=model]")
+	cmd.Flags().StringVar(&setOutput, "set-output", "", "with --configure: where the verdict is delivered (local or trail)")
+	cmd.Flags().BoolVar(&setLocal, "local", false, "with --configure: save the profile to .entire/settings.local.json (per-developer) instead of .entire/settings.json")
 	cmd.Flags().StringVar(&setTask, "set-task", "", "with --configure: the profile's canonical task text")
-	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-worker model as agent=model (repeatable)")
-	cmd.Flags().StringArrayVar(&setSlots, "set-slot", nil, "with --configure: a worker slot as agent[=model] (repeatable; same agent/model may repeat)")
+	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-reviewer model as agent=model (repeatable)")
+	cmd.Flags().StringArrayVar(&setSlots, "set-slot", nil, "with --configure: a reviewer slot as agent[=model] (repeatable; same agent/model may repeat)")
 	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the advanced review profile skill picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
-	cmd.Flags().BoolVar(&listAgents, "agents", false, "list the worker agents you can pass to --agent for the selected profile")
+	cmd.Flags().BoolVar(&listAgents, "agents", false, "list the reviewer agents you can pass to --agent for the selected profile")
 	cmd.Flags().BoolVar(&listModels, "models", false, "list the models each review agent advertises (optionally filtered by --agent)")
-	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured inspect profiles (workers and master)")
-	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile")
-	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent worker (requires --agent)")
+	cmd.Flags().BoolVar(&listProfiles, "list", false, "list configured review profiles (reviewers and judge)")
+	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured reviewer from the selected profile")
+	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent reviewer (requires --agent)")
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
+	cmd.Flags().DurationVar(&reviewTimeout, "timeout", defaultReviewerTimeout, "max time each reviewer may run before it is cancelled and marked failed (0 disables)")
+	// The listing modes and the action modes each select a distinct command
+	// behavior; combining them silently runs one and drops the rest, so reject
+	// the combination up front with a clear cobra error.
+	cmd.MarkFlagsMutuallyExclusive("configure", "edit", "findings", "list", "agents", "models")
 	return cmd
 }
 
 // reviewConfigureOptions carries the non-interactive `--configure` inputs.
 type reviewConfigureOptions struct {
-	Agents []string // worker agent names (--set-agents)
-	Master string   // master agent (--set-master)
+	Agents []string // reviewer agent names (--set-agents)
+	Judge  string   // consolidating judge as "agent[=model]" (--set-judge)
+	Output string   // output destination: local|trail (--set-output)
+	Local  bool     // save to local settings file instead of project (--local)
 	Task   string   // profile task text (--set-task)
-	Models []string // per-worker "agent=model" entries (--set-model)
-	Slots  []string // worker slots as "agent[=model]" entries (--set-slot)
+	Models []string // per-reviewer "agent=model" entries (--set-model)
+	Slots  []string // reviewer slots as "agent[=model]" entries (--set-slot)
 }
 
 func (o reviewConfigureOptions) scripted() bool {
-	return len(o.Agents) > 0 || o.Master != "" || o.Task != "" || len(o.Models) > 0 || len(o.Slots) > 0
+	// Local selects the destination only; by itself it must not force the
+	// non-interactive/scripted path. `entire review --configure --local` should
+	// still run the guided picker and preselect the local settings file.
+	return len(o.Agents) > 0 || o.Judge != "" || o.Output != "" || o.Task != "" || len(o.Models) > 0 || len(o.Slots) > 0
 }
 
 func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride string, opts reviewConfigureOptions, deps Deps) error {
@@ -246,6 +279,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 	profileName := strings.TrimSpace(profileOverride)
 	if profileName == "" {
 		profileName = strings.TrimSpace(s.ReviewDefaultProfile)
@@ -255,7 +289,8 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
 
-	// Scripted path: build + save the profile from --set-* flags, no TUI.
+	// Scripted path: build + save the profile from --set-* flags, no TUI. The
+	// destination is the --local flag (default: project settings).
 	if opts.scripted() {
 		profile, buildErr := buildConfiguredProfile(ctx, profileName, opts, s, deps)
 		if buildErr != nil {
@@ -263,11 +298,15 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 			fmt.Fprintln(cmd.ErrOrStderr(), buildErr.Error())
 			return silentErr(buildErr)
 		}
-		if err := saveReviewProfile(ctx, profileName, profile, true); err != nil {
+		scope := reviewScopeProject
+		if opts.Local {
+			scope = reviewScopeLocal
+		}
+		if err := saveReviewProfile(ctx, profileName, profile, false, scope); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Review profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
-		fmt.Fprintf(out, "Run `entire inspect %s` to start.\n", profileName)
+		fmt.Fprintf(out, "Review profile %q saved to %s with %s.\n", profileName, scope.file(), strings.Join(sortedMapKeys(profile.Agents), ", "))
+		fmt.Fprintf(out, "Run `entire review %s` to start.\n", profileName)
 		return nil
 	}
 
@@ -280,10 +319,14 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if setupErr != nil {
 			return handlePickerError(cmd, silentErr, setupErr)
 		}
-		if err := saveReviewProfile(ctx, name, profile, true); err != nil {
+		scope, scopeErr := promptForSettingsScope(ctx, opts.Local)
+		if scopeErr != nil {
+			return handlePickerError(cmd, silentErr, scopeErr)
+		}
+		if err := saveReviewProfile(ctx, name, profile, false, scope); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Crew profile %q saved. Run `entire inspect`, or `entire inspect %s`, to start.\n", name, name)
+		fmt.Fprintf(out, "Review profile %q saved to %s. Run `entire review`, or `entire review %s`, to start.\n", name, scope.file(), name)
 		return nil
 	}
 
@@ -346,12 +389,12 @@ func runReviewListModels(ctx context.Context, cmd *cobra.Command, agentFilter st
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "These are common models/aliases, not an exhaustive list. Use one with:")
-	fmt.Fprintln(out, "  entire inspect --agent <name> --model <model>")
+	fmt.Fprintln(out, "  entire review --agent <name> --model <model>")
 	return nil
 }
 
-// runReviewListProfiles prints the configured inspect profiles with their workers
-// and master, marking the default. Needs settings but no review run.
+// runReviewListProfiles prints the configured review profiles with their
+// reviewers and judges, marking the default. Needs settings but no review run.
 func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) error {
 	out := cmd.OutOrStdout()
 	s, err := settings.Load(ctx)
@@ -363,14 +406,15 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
-		fmt.Fprintln(out, "No inspect profiles configured. Create one with `entire inspect --configure`.")
+		fmt.Fprintln(out, "No review profiles configured. Create one with `entire review --configure`.")
 		return nil
 	}
 	defaultName := strings.TrimSpace(s.ReviewDefaultProfile)
 	fmt.Fprintln(out, "Profiles:")
-	for _, name := range sortedProfileNames(profiles) {
+	for _, name := range sortedMapKeys(profiles) {
 		p := profiles[name]
 		p.Agents = nonZeroAgentConfigs(p.Agents)
 		marker := ""
@@ -379,34 +423,31 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 		}
 		fmt.Fprintf(out, "  %s%s\n", name, marker)
 
-		workers := make([]string, 0, len(p.Agents))
-		for _, w := range sortedProfileAgentNames(p) {
+		reviewers := make([]string, 0, len(p.Agents))
+		for _, w := range sortedMapKeys(p.Agents) {
 			cfg := p.Agents[w]
 			model := strings.TrimSpace(cfg.Model)
 			if model == "" {
 				model = "default"
 			}
-			workers = append(workers, reviewAgentName(w, cfg)+" · "+model)
+			reviewers = append(reviewers, reviewAgentName(w, cfg)+" · "+model)
 		}
-		fmt.Fprintf(out, "    workers: %s\n", strings.Join(workers, ", "))
+		fmt.Fprintf(out, "    reviewers: %s\n", strings.Join(reviewers, ", "))
 
-		if masterAgent, masterModel, ok := profileMasterIdentity(p); ok {
-			label := masterAgent
-			if strings.TrimSpace(masterModel) != "" {
-				label += " · " + masterModel
-			}
-			fmt.Fprintf(out, "    master:  %s\n", label)
+		if j, ok := profileJudge(p); ok {
+			fmt.Fprintf(out, "    judge:      %s\n", judgeLabel(j))
 		}
+		fmt.Fprintf(out, "    output:     %s\n", profileOutput(p))
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Run one with `entire inspect <name>`.")
+	fmt.Fprintln(out, "Run one with `entire review <name>`.")
 	return nil
 }
 
 const reviewHooksInstalledStatus = "hooks installed"
 
-// runReviewListAgents lists the worker agents valid for `--agent` in the
-// resolved profile (with hook-install status and the master marked). With no
+// runReviewListAgents lists the reviewer agents valid for `--agent` in the
+// resolved profile (with hook-install status). With no
 // usable profile it falls back to the available review-agent catalog.
 func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverride string, deps Deps) error {
 	out := cmd.OutOrStdout()
@@ -420,21 +461,17 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 	if err == nil && s != nil {
 		if name, profile, selErr := selectReviewProfile(s, profileOverride); selErr == nil {
 			profile.Agents = nonZeroAgentConfigs(profile.Agents)
-			fmt.Fprintf(out, "Workers in review profile %q (pass one to --agent):\n", name)
-			for _, worker := range sortedProfileAgentNames(profile) {
+			fmt.Fprintf(out, "Reviewers in profile %q (pass one to --agent):\n", name)
+			for _, worker := range sortedMapKeys(profile.Agents) {
 				cfg := profile.Agents[worker]
 				status := reviewHooksInstalledStatus
 				if _, ok := installedSet[reviewAgentName(worker, cfg)]; !ok {
-					status = "hooks NOT installed — run `entire configure --agent " + reviewAgentName(worker, cfg) + "`"
+					status = "hooks NOT installed; run `entire configure --agent " + reviewAgentName(worker, cfg) + "`"
 				}
-				marker := ""
-				if worker == profile.Master {
-					marker = "  [master]"
-				}
-				fmt.Fprintf(out, "  %s — %s%s\n", reviewWorkerLabel(worker, cfg), status, marker)
+				fmt.Fprintf(out, "  %s: %s\n", reviewWorkerLabel(worker, cfg), status)
 			}
 			fmt.Fprintln(out)
-			fmt.Fprintln(out, "See all available agents and profiles with `entire inspect --configure`.")
+			fmt.Fprintln(out, "See all available agents and profiles with `entire review --configure`.")
 			return nil
 		}
 	}
@@ -443,14 +480,14 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 	catalog := availableReviewAgents(installed, deps.ReviewerFor)
 	fmt.Fprintln(out, "No review profile configured yet. Available review agents:")
 	for _, e := range catalog {
-		status := "not installed — run `entire configure --agent " + e.Name + "`"
+		status := "not installed; run `entire configure --agent " + e.Name + "`"
 		if e.Installed {
 			status = reviewHooksInstalledStatus
 		}
 		fmt.Fprintf(out, "  %-14s %s\n", e.Name, status)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Configure a profile with `entire inspect --configure`.")
+	fmt.Fprintln(out, "Configure a profile with `entire review --configure`.")
 	return nil
 }
 
@@ -484,10 +521,10 @@ func availableReviewAgents(installed []types.AgentName, reviewerFor func(string)
 func printReviewConfigCatalog(out io.Writer, profileName string, catalog []reviewAgentCatalogEntry, s *settings.EntireSettings) {
 	fmt.Fprintln(out, "Available review agents:")
 	if len(catalog) == 0 {
-		fmt.Fprintln(out, "  (none — install one with `entire configure --agent claude-code`)")
+		fmt.Fprintln(out, "  (none; install one with `entire configure --agent claude-code`)")
 	}
 	for _, e := range catalog {
-		status := "not installed — run `entire configure --agent " + e.Name + "`"
+		status := "not installed; run `entire configure --agent " + e.Name + "`"
 		if e.Installed {
 			status = reviewHooksInstalledStatus
 		}
@@ -500,15 +537,18 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 		fmt.Fprintln(out, "Configured profiles: (none yet)")
 	} else {
 		fmt.Fprintln(out, "Configured profiles:")
-		for _, name := range sortedProfileNames(profiles) {
+		for _, name := range sortedMapKeys(profiles) {
 			p := profiles[name]
 			marker := ""
 			if name == strings.TrimSpace(s.ReviewDefaultProfile) {
 				marker = " (default)"
 			}
-			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedProfileAgentNames(p), ", "))
-			if strings.TrimSpace(p.Master) != "" {
-				line += "  master=" + p.Master
+			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedMapKeys(p.Agents), ", "))
+			if j, ok := profileJudge(p); ok {
+				line += "  judge=" + j.agent
+			}
+			if profileOutput(p) == ReviewOutputTrail {
+				line += "  output=trail"
 			}
 			fmt.Fprintln(out, line)
 		}
@@ -516,7 +556,7 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "Configure %q non-interactively, e.g.:\n", profileName)
-	fmt.Fprintf(out, "  entire inspect --configure --profile %s --set-agents %s --set-master <agent>\n",
+	fmt.Fprintf(out, "  entire review --configure --profile %s --set-agents %s --set-judge <agent>\n",
 		profileName, exampleAgentList(catalog))
 }
 
@@ -586,7 +626,7 @@ func buildConfiguredProfile(ctx context.Context, profileName string, opts review
 		key, model, ok := strings.Cut(raw, "=")
 		key = strings.TrimSpace(key)
 		model = strings.TrimSpace(model)
-		if !ok || key == "" {
+		if !ok || key == "" || model == "" {
 			return settings.ReviewProfileConfig{}, fmt.Errorf("invalid --set-model %q; expected agent=model", raw)
 		}
 		workerName, _, selErr := selectProfileWorker(profile, key)
@@ -605,20 +645,45 @@ func buildConfiguredProfile(ctx context.Context, profileName string, opts review
 		profile.Task = profileTask(profileName, settings.ReviewProfileConfig{})
 	}
 
-	if opts.Master != "" {
-		profile.Master = opts.Master
-	}
-	if len(nonZeroAgentConfigs(profile.Agents)) > 1 {
-		if strings.TrimSpace(profile.MasterAgent) == "" {
-			if strings.TrimSpace(profile.Master) == "" {
-				profile.Master = defaultReviewMaster(ctx, profile.Agents)
-			}
-			if _, _, masterErr := selectProfileWorker(profile, profile.Master); masterErr != nil {
-				return settings.ReviewProfileConfig{}, fmt.Errorf("master %q is not one of the profile workers (%s)", profile.Master, strings.Join(sortedProfileAgentNames(profile), ", "))
-			}
+	// Judge: explicit --set-judge wins; otherwise a multi-reviewer profile gets
+	// an auto-selected judge, and a single-reviewer profile needs none.
+	reviewerCount := len(nonZeroAgentConfigs(profile.Agents))
+	switch {
+	case strings.TrimSpace(opts.Judge) != "":
+		rawName, model, _ := strings.Cut(opts.Judge, "=")
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return settings.ReviewProfileConfig{}, errors.New("--set-judge needs an agent name")
 		}
-	} else {
-		profile.Master = ""
+		// A judge consolidates the reviewers' reports via text generation, so it
+		// must be a known agent that can write a verdict. Validate up front rather
+		// than failing at synthesis time.
+		if !agentSupportsTextGeneration(ctx, name) {
+			if _, getErr := agent.Get(types.AgentName(name)); getErr != nil {
+				return settings.ReviewProfileConfig{}, fmt.Errorf("--set-judge %q is not a known agent", name)
+			}
+			return settings.ReviewProfileConfig{}, fmt.Errorf("--set-judge %q cannot write a verdict (the agent has no text generation); choose an agent that supports text generation", name)
+		}
+		profile.Judge = &settings.ReviewConfig{Agent: name, Model: strings.TrimSpace(model)}
+	case reviewerCount > 1 && (profile.Judge == nil || profile.Judge.IsZero()):
+		if j, ok := defaultJudge(ctx, profile.Agents); ok {
+			profile.Judge = &settings.ReviewConfig{Agent: j.agent, Model: j.model}
+		}
+	case reviewerCount <= 1:
+		profile.Judge = nil
+	}
+
+	if opts.Output != "" {
+		out, outErr := normalizeReviewOutput(opts.Output)
+		if outErr != nil {
+			return settings.ReviewProfileConfig{}, outErr
+		}
+		// Store only the non-default destination so local profiles stay clean.
+		if out == ReviewOutputTrail {
+			profile.Output = ReviewOutputTrail
+		} else {
+			profile.Output = ""
+		}
 	}
 	return profile, nil
 }
@@ -634,7 +699,7 @@ func reviewAgentNames(deps Deps) []string {
 }
 
 // runReview executes the main review flow.
-func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOverride, baseOverride, profileOverride, perRunPrompt string, deps Deps) error {
+func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOverride, baseOverride, profileOverride, perRunPrompt string, timeout time.Duration, deps Deps) error {
 	out := cmd.OutOrStdout()
 	silentErr := deps.NewSilentError
 
@@ -655,29 +720,30 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		cmd.SilenceUsage = true
 		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
 		fmt.Fprintln(cmd.ErrOrStderr(),
-			"Fix your Entire settings or clone-local review preferences and re-run `entire inspect`.")
+			"Fix your Entire settings or clone-local review preferences and re-run `entire review`.")
 		return silentErr(err)
 	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
 	if s == nil {
 		s = &settings.EntireSettings{}
 	}
+	applyLegacyReviewProfileFallback(s)
 
 	profileOverride = strings.TrimSpace(profileOverride)
 	interactiveTTY := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
 
-	// Bare `entire inspect` never auto-runs a profile. Without a TTY we cannot
+	// Bare `entire review` never auto-runs a profile. Without a TTY we cannot
 	// prompt, so list the profiles (or point at setup) and require an explicit
 	// selection rather than silently spawning a default crew.
 	if profileOverride == "" && !interactiveTTY {
 		cmd.SilenceUsage = true
 		eo := cmd.ErrOrStderr()
 		if profs := nonZeroProfiles(s.ReviewProfiles); len(profs) > 0 {
-			ns := sortedProfileNames(profs)
-			fmt.Fprintf(eo, "Specify a profile to inspect, e.g. `entire inspect %s`.\n", ns[0])
+			ns := sortedMapKeys(profs)
+			fmt.Fprintf(eo, "Specify a profile to review, e.g. `entire review %s`.\n", ns[0])
 			fmt.Fprintf(eo, "Configured profiles: %s\n", strings.Join(ns, ", "))
 		} else {
-			fmt.Fprintln(eo, "No inspect profiles configured. Run `entire inspect --configure` in a terminal first.")
+			fmt.Fprintln(eo, "No review profiles configured. Run `entire review --configure` in a terminal first.")
 		}
 		return silentErr(errors.New("no profile specified"))
 	}
@@ -690,6 +756,9 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	if len(nonZeroProfiles(s.ReviewProfiles)) == 0 {
 		profileForSetup := profileOverride
 		var profile settings.ReviewProfileConfig
+		// Non-interactive first run writes the shared project settings; interactive
+		// setup asks the user where to save below.
+		saveScope := reviewScopeProject
 		guidedSetup := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
 		if guidedSetup {
 			var setupErr error
@@ -697,6 +766,11 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			if setupErr != nil {
 				return handlePickerError(cmd, silentErr, setupErr)
 			}
+			scope, scopeErr := promptForSettingsScope(ctx, false)
+			if scopeErr != nil {
+				return handlePickerError(cmd, silentErr, scopeErr)
+			}
+			saveScope = scope
 		} else {
 			if profileForSetup == "" {
 				profileForSetup = DefaultProfileName
@@ -708,11 +782,11 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 				return silentErr(defaultErr)
 			}
 			profile = defaultProfile
-			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
-			fmt.Fprintln(out, "Configure later with `entire inspect --configure`.")
+			fmt.Fprintf(out, "No review profiles found; using default %q profile with %s.\n", profileForSetup, strings.Join(sortedMapKeys(profile.Agents), ", "))
+			fmt.Fprintln(out, "Configure later with `entire review --configure`.")
 			fmt.Fprintln(out)
 		}
-		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
+		if saveErr := saveReviewProfile(ctx, profileForSetup, profile, false, saveScope); saveErr != nil {
 			return saveErr
 		}
 		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
@@ -732,7 +806,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		}
 	}
 
-	// Interactive bare `entire inspect` with existing profiles: require a choice
+	// Interactive bare `entire review` with existing profiles: require a choice
 	// instead of defaulting silently.
 	if profileOverride == "" {
 		picked, pickErr := promptForProfileToRun(ctx, s)
@@ -750,6 +824,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	}
 	profile.Task = profileTask(profileName, profile)
 	profile.Agents = nonZeroAgentConfigs(profile.Agents)
+	outputMode := profileOutput(profile)
 
 	if agentOverride != "" {
 		workerName, cfg, selectErr := selectProfileWorker(profile, agentOverride)
@@ -762,7 +837,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		if modelOverride != "" {
 			cfg.Model = modelOverride
 		}
-		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, outputMode, timeout, cfg, installed, deps, out)
 	}
 
 	if missing := missingInstalledProfileAgents(profile.Agents, installed); len(missing) > 0 {
@@ -781,7 +856,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		return silentErr(err)
 	case 1:
 		cfg := profile.Agents[eligible[0].Name]
-		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, outputMode, timeout, cfg, installed, deps, out)
 	default:
 		launchableEligible := computeLaunchableEligibleForProfile(profile, installed, deps.ReviewerFor)
 		if len(launchableEligible) != len(eligible) {
@@ -791,27 +866,18 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			return silentErr(err)
 		}
-		masterAgent, _, hasMaster := profileMasterIdentity(profile)
-		if !hasMaster {
+		// Require a consolidating judge (explicit or auto-selected). A judge that
+		// can't actually write a verdict (no text generation) is tolerated here and
+		// handled at synthesis time, where it fails gracefully ("final report
+		// unavailable").
+		judge, ok := resolveJudge(ctx, profile)
+		if !ok {
 			cmd.SilenceUsage = true
-			err := fmt.Errorf("review profile %q has multiple workers but no master; set review_profiles.%s.master_agent", profileName, profileName)
+			err := fmt.Errorf("review profile %q has multiple reviewers but no judge that can write a verdict; set review_profiles.%s.judge", profileName, profileName)
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			return silentErr(err)
 		}
-		if strings.TrimSpace(profile.MasterAgent) == "" {
-			if _, _, masterErr := selectProfileWorker(profile, profile.Master); masterErr != nil {
-				cmd.SilenceUsage = true
-				err := fmt.Errorf("review profile %q master is invalid: %w", profileName, masterErr)
-				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-				return silentErr(err)
-			}
-		} else if !agentSupportsTextGeneration(ctx, masterAgent) {
-			cmd.SilenceUsage = true
-			err := fmt.Errorf("review profile %q master %q cannot write the final report (no text generation)", profileName, masterAgent)
-			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-			return silentErr(err)
-		}
-		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, baseOverride, perRunPrompt, deps, out)
+		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, judge, outputMode, timeout, baseOverride, perRunPrompt, deps, out)
 	}
 }
 
@@ -878,7 +944,8 @@ func confirmReReviewOrProceed(ctx context.Context, out io.Writer, deps Deps) (bo
 func runSingleAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
-	profileName, workerName, baseOverride, perRunPrompt, task string,
+	profileName, workerName, baseOverride, perRunPrompt, task, outputMode string,
+	timeout time.Duration,
 	cfg settings.ReviewConfig,
 	installed []types.AgentName,
 	deps Deps,
@@ -919,7 +986,7 @@ func runSingleAgentPath(
 	// 4. Re-run guard: check if HEAD's checkpoint already has a review.
 	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
 		fmt.Fprintln(out, "prompt cancelled")
-		return guardErr
+		return silentErr(guardErr)
 	} else if !proceed {
 		fmt.Fprintln(out, "Review cancelled.")
 		return nil
@@ -955,6 +1022,7 @@ func runSingleAgentPath(
 		ScopeBaseRef:      scopeBaseRef,
 		CheckpointContext: checkpointContext,
 		StartingSHA:       headSHA,
+		ReviewerTimeout:   timeout,
 	}
 	applyReviewConfig(&runCfg, cfg)
 
@@ -985,6 +1053,7 @@ func runSingleAgentPath(
 
 	summary, waitErr := Run(runCtx, reviewer, runCfg, sinks)
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, "")
+	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, "")
 	if waitErr != nil && runCtx.Err() == nil && ctx.Err() == nil {
 		// Non-cancellation error: surface to caller.
 		return fmt.Errorf("review run: %w", waitErr)
@@ -1030,14 +1099,18 @@ func detectScope(ctx context.Context, worktreeRoot, baseOverride string, out io.
 }
 
 // runMultiAgentPath handles the profile-native fan-out flow. Every configured
-// worker in the selected profile runs concurrently against the same canonical
-// task, then the profile's master agent produces the final report.
+// reviewer in the selected profile runs concurrently against the same
+// canonical task, then the single judge consolidates their reports into the
+// final verdict.
 func runMultiAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
 	profileName string,
 	profile settings.ReviewProfileConfig,
 	launchableEligible []AgentChoice,
+	judge judgeSpec,
+	outputMode string,
+	timeout time.Duration,
 	baseOverride string,
 	perRunPrompt string,
 	deps Deps,
@@ -1057,7 +1130,7 @@ func runMultiAgentPath(
 
 	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
 		fmt.Fprintln(out, "prompt cancelled")
-		return guardErr
+		return deps.NewSilentError(guardErr)
 	} else if !proceed {
 		fmt.Fprintln(out, "Review cancelled.")
 		return nil
@@ -1116,22 +1189,21 @@ func runMultiAgentPath(
 	}
 	aggregateOutput := ""
 
-	masterAgentName, masterModel := resolveProfileMaster(profile)
-	masterLabel := masterDisplayLabel(profile, masterAgentName, masterModel)
-	masterProvider := AgentSynthesisProvider{AgentName: masterAgentName, Model: masterModel}
+	// The single consolidating judge (resolved and validated by the caller)
+	// turns the reviewers' reports into the final verdict.
+	var synthProvider SynthesisProvider = AgentSynthesisProvider{AgentName: judge.agent, Model: judge.model}
+	masterLabel := judgeLabel(judge)
 	sinks := composeMultiAgentSinks(multiAgentSinkInputs{
 		out:               out,
 		isTTY:             interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively(),
-		canPrompt:         interactive.CanPromptInteractively(),
 		agentNames:        agentNames,
 		cancelRun:         cancelRun,
 		runContext:        runCtx,
-		synthesisProvider: masterProvider,
+		synthesisProvider: synthProvider,
 		perRunPrompt:      perRunPrompt,
 		profileName:       profileName,
 		task:              profile.Task,
 		masterName:        masterLabel,
-		autoSynthesis:     true,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result
 		},
@@ -1141,20 +1213,21 @@ func runMultiAgentPath(
 		defer tuiSink.Wait()
 	}
 
-	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{
-		EnrichAgentRun: reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
-	}, sinks)
-	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
-	if waitErr != nil && runCtx.Err() == nil && ctx.Err() == nil {
-		return fmt.Errorf("review run: %w", waitErr)
+	runMultiCfg := reviewtypes.RunConfig{ReviewerTimeout: timeout}
+	runMultiCfg.EnrichAgentRun = reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA, plannedAgentRunsForReviewers(reviewers, runMultiCfg))
+	runMultiCfg.EnrichSummary = reviewSummaryTokenEnricher(worktreeRoot, headSHA)
+	summary, waitErr := RunMulti(runCtx, reviewers, runMultiCfg, sinks)
+	if shouldAbortMultiReview(summary, waitErr) && runCtx.Err() == nil && ctx.Err() == nil {
+		return multiReviewFailureError(waitErr)
 	}
+	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
+	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, aggregateOutput)
 	return nil
 }
 
-// handlePickerError maps multi-picker error sentinels to the appropriate
+// handlePickerError maps picker error sentinels to the appropriate
 // command-layer response.
 //   - ErrPickerCancelled → return nil (user cancelled; no error shown)
-//   - ErrNoAgentsSelected → surface error to user
 //   - other errors → surface to user
 func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr error) error {
 	if errors.Is(pickErr, ErrPickerCancelled) {
@@ -1166,8 +1239,8 @@ func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr 
 }
 
 // multiAgentSinkInputs collects the parameters composeMultiAgentSinks needs.
-// It exists so tests can drive the helper with explicit isTTY / canPrompt
-// values instead of monkey-patching interactive helpers at run time.
+// It exists so tests can drive the helper with an explicit isTTY value
+// instead of monkey-patching interactive helpers at run time.
 //
 // isTTY here means "the TUI sink is safe to compose" — production callers
 // AND IsTerminalWriter(out) with CanPromptInteractively() before passing
@@ -1178,17 +1251,14 @@ func handlePickerError(cmd *cobra.Command, silentErr func(error) error, pickErr 
 type multiAgentSinkInputs struct {
 	out               io.Writer
 	isTTY             bool
-	canPrompt         bool
 	agentNames        []string
 	cancelRun         context.CancelFunc
 	runContext        context.Context
 	synthesisProvider SynthesisProvider
-	promptYN          func(ctx context.Context, question string, def bool) (bool, error)
 	perRunPrompt      string
 	profileName       string
 	task              string
 	masterName        string
-	autoSynthesis     bool
 	onSynthesisResult func(result string)
 }
 
@@ -1200,39 +1270,166 @@ type singleAgentSinkInputs struct {
 	cancelRun context.CancelFunc
 }
 
-// composeMultiAgentSinks builds the sink slice for a multi-agent run.
+// composeMultiAgentSinks builds the sink slice for a multi-agent run. The
+// master adjudication phase (SynthesisSink) runs unconditionally when a
+// provider is configured — it needs no stdin, so it is available in TTY,
+// redirected, and CI output alike.
 //
-//   - Non-TTY: [DumpSink, SynthesisSink?] — narrative dump plus profile-native
-//     final report when autoSynthesis is enabled.
-//   - TTY: [TUISink, DumpSink, SynthesisSink?] — TUI owns the live dashboard;
-//     DumpSink renders the post-run narrative; SynthesisSink renders the final
-//     report after the TUI exits.
-//
-// Prompted legacy synthesis is still only appended when canPrompt is true.
-// Profile-native auto synthesis does not need stdin, so it is available in
-// redirected and CI output too.
+//   - Non-TTY: [DumpSink, SynthesisSink?] — narrative dump plus the final report.
+//   - TTY: [TUISink, buffered DumpSink, buffered SynthesisSink, buffer flusher].
+//     The TUI stays up during the judge phase and post-run stdout is flushed
+//     after the alt-screen exits.
+//   - TTY without a provider: [TUISink, TUI finalizer, DumpSink].
 func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 	sinks := []reviewtypes.Sink{}
 	if in.isTTY {
-		sinks = append(sinks, NewTUISink(in.agentNames, in.cancelRun, in.out, os.Stdin))
+		tui := NewTUISink(in.agentNames, in.cancelRun, in.out, os.Stdin)
+		sinks = append(sinks, tui)
+		if in.synthesisProvider != nil {
+			postRunOut := &bytes.Buffer{}
+			sinks = append(sinks, DumpSink{W: postRunOut, RenderWriter: in.out})
+			sinks = append(sinks, SynthesisSink{
+				Provider:     in.synthesisProvider,
+				Writer:       postRunOut,
+				RenderWriter: in.out,
+				PerRunPrompt: in.perRunPrompt,
+				ProfileName:  in.profileName,
+				Task:         in.task,
+				MasterName:   in.masterName,
+				RunContext:   in.runContext,
+				OnResult:     in.onSynthesisResult,
+				OnStart: func() {
+					tui.FinalPhaseStarted(finalJudgeDisplayName(in.masterName))
+				},
+				OnComplete: func(err error) {
+					tui.FinalPhaseFinished(err)
+				},
+			})
+			sinks = append(sinks, tuiPostRunCompleteSink{tui: tui, buf: postRunOut, out: in.out})
+			return sinks
+		}
+		sinks = append(sinks, tuiPostRunCompleteSink{tui: tui})
+		sinks = append(sinks, DumpSink{W: in.out})
+		return sinks
 	}
+
 	sinks = append(sinks, DumpSink{W: in.out})
-	if in.synthesisProvider != nil && (in.autoSynthesis || in.canPrompt) {
+	if in.synthesisProvider != nil {
 		sinks = append(sinks, SynthesisSink{
 			Provider:     in.synthesisProvider,
 			Writer:       in.out,
-			InputTTY:     in.canPrompt,
-			PromptYN:     in.promptYN,
 			PerRunPrompt: in.perRunPrompt,
 			ProfileName:  in.profileName,
 			Task:         in.task,
 			MasterName:   in.masterName,
-			Auto:         in.autoSynthesis,
 			RunContext:   in.runContext,
 			OnResult:     in.onSynthesisResult,
 		})
 	}
 	return sinks
+}
+
+func finalJudgeDisplayName(masterName string) string {
+	masterName = strings.TrimSpace(masterName)
+	if masterName == "" {
+		return "final judge"
+	}
+	return "judge: " + masterName
+}
+
+// shouldAbortMultiReview reports whether the profile-native fan-out produced no
+// successful reviewer at all. Individual reviewer infrastructure failures (for
+// example quota/auth/tool failures) should not fail the entire review when at
+// least one sibling produced a usable review; the failed reviewer remains
+// visible in terminal output only. With zero successful reviewers, there is no
+// review result to manifest or post, so the command fails loudly.
+func shouldAbortMultiReview(summary reviewtypes.RunSummary, waitErr error) bool {
+	if len(summary.AgentRuns) == 0 {
+		return waitErr != nil
+	}
+	for _, run := range summary.AgentRuns {
+		if run.Status == reviewtypes.AgentStatusSucceeded {
+			return false
+		}
+	}
+	if waitErr != nil {
+		return true
+	}
+	for _, run := range summary.AgentRuns {
+		if run.Status == reviewtypes.AgentStatusFailed {
+			return true
+		}
+	}
+	return false
+}
+
+func multiReviewFailureError(waitErr error) error {
+	if waitErr != nil {
+		return fmt.Errorf("review run: %w", waitErr)
+	}
+	return errors.New("review run: all reviewers failed")
+}
+
+// maybePostReviewToTrail delivers the final review output to the branch's trail
+// when the profile selects the "trail" destination. It never fails the run:
+// the review already happened, so a posting error (or a missing hook) is
+// surfaced as a notice and the local output stands.
+func maybePostReviewToTrail(
+	ctx context.Context,
+	out io.Writer,
+	deps Deps,
+	outputMode, profileName string,
+	summary reviewtypes.RunSummary,
+	aggregateOutput string,
+) {
+	if outputMode != ReviewOutputTrail || summary.Cancelled {
+		return
+	}
+	verdict := strings.TrimSpace(aggregateOutput)
+	if verdict == "" {
+		verdict = combinedReviewNarratives(summary)
+	}
+	if verdict == "" {
+		fmt.Fprintln(out, "Nothing to report, so nothing was posted to the trail.")
+		return
+	}
+	if deps.PostReviewToTrail == nil {
+		fmt.Fprintln(out, "Trail output is not available here; the review was kept local.")
+		return
+	}
+	// On success the hook prints its own confirmation and trail link.
+	if err := deps.PostReviewToTrail(ctx, out, profileName, verdict); err != nil {
+		if !userMessageAlreadyPrinted(err) {
+			fmt.Fprintf(out, "Could not post the review to the trail: %v\n", err)
+		}
+	}
+}
+
+type alreadyPrintedError interface {
+	AlreadyPrinted() bool
+}
+
+func userMessageAlreadyPrinted(err error) bool {
+	var printed alreadyPrintedError
+	return errors.As(err, &printed) && printed.AlreadyPrinted()
+}
+
+// combinedReviewNarratives joins the reviewers' narratives into one document,
+// used as the trail-posting body for single-reviewer runs (which have no
+// synthesized verdict) and as a fallback when synthesis produced nothing.
+func combinedReviewNarratives(summary reviewtypes.RunSummary) string {
+	var b strings.Builder
+	for _, run := range usableAgentRuns(summary) {
+		narrative := joinAssistantText(run.Buffer)
+		if narrative == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s", run.Name, narrative)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func writePostReviewManifest(
@@ -1280,14 +1477,14 @@ func writePostReviewManifest(
 
 // warnManifestNotWritten prints a user-visible note explaining that the
 // review skills ran but findings were not persisted, so `entire review
-// --findings` and `entire review --fix` will not see this run. The reason
-// string is appended verbatim and should describe the underlying cause in
-// terms the user can act on (or at least diagnose with debug logs).
+// --findings` will not see this run. The reason string is appended verbatim
+// and should describe the underlying cause in terms the user can act on (or at
+// least diagnose with debug logs).
 func warnManifestNotWritten(out io.Writer, reason string) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Note: review skills ran but findings were not persisted.")
 	fmt.Fprintf(out, "  Reason: %s\n", reason)
-	fmt.Fprintln(out, "  `entire inspect --findings` will not see this run.")
+	fmt.Fprintln(out, "  `entire review --findings` will not see this run.")
 	fmt.Fprintln(out, "  Re-run with `ENTIRE_LOG_LEVEL=debug` for diagnostic detail.")
 }
 
@@ -1303,13 +1500,37 @@ func reviewSummaryTokenEnricher(worktreeRoot, headSHA string) func(context.Conte
 }
 
 func reviewAgentRunTokenEnricher(worktreeRoot, headSHA string) func(context.Context, reviewtypes.AgentRun) reviewtypes.AgentRun {
+	return reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA, nil)
+}
+
+func reviewAgentRunTokenEnricherForRuns(worktreeRoot, headSHA string, planned []reviewtypes.AgentRun) func(context.Context, reviewtypes.AgentRun) reviewtypes.AgentRun {
+	var mu sync.Mutex
+	usedSessions := map[string]bool{}
+	claimedPlan := make([]bool, len(planned))
+	planned = slices.Clone(planned)
+	runStartedAt := time.Now()
 	return func(ctx context.Context, run reviewtypes.AgentRun) reviewtypes.AgentRun {
-		enriched, err := hydrateReviewAgentRunTokensFromCurrentState(ctx, worktreeRoot, headSHA, run, agent.GetByAgentType)
+		mu.Lock()
+		defer mu.Unlock()
+
+		store, err := session.NewStateStore(ctx)
 		if err != nil {
-			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", err.Error()))
+			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", fmt.Errorf("create session state store: %w", err).Error()))
 			return run
 		}
-		return enriched
+		states, err := store.List(ctx)
+		if err != nil {
+			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", fmt.Errorf("list session states: %w", err).Error()))
+			return run
+		}
+
+		if enriched, ok, sessionID := hydrateReviewAgentRunTokensFromStatesWithPlan(ctx, worktreeRoot, headSHA, run, states, agent.GetByAgentType, planned, runStartedAt, claimedPlan); ok {
+			if sessionID != "" {
+				usedSessions[sessionID] = true
+			}
+			return enriched
+		}
+		return hydrateReviewAgentRunTokensFromStatesWithUsed(ctx, worktreeRoot, headSHA, run, states, agent.GetByAgentType, usedSessions)
 	}
 }
 
@@ -1318,9 +1539,12 @@ func composeSingleAgentSinks(in singleAgentSinkInputs) []reviewtypes.Sink {
 		fmt.Fprintf(in.out, "Running review with %s...\n", in.agentName)
 		return []reviewtypes.Sink{DumpSink{W: in.out}}
 	}
+	tui := NewTUISink([]string{in.agentName}, in.cancelRun, in.out, os.Stdin)
+	postRunOut := &bytes.Buffer{}
 	return []reviewtypes.Sink{
-		NewTUISink([]string{in.agentName}, in.cancelRun, in.out, os.Stdin),
-		DumpSink{W: in.out},
+		tui,
+		DumpSink{W: postRunOut, RenderWriter: in.out},
+		tuiPostRunCompleteSink{tui: tui, buf: postRunOut, out: in.out},
 	}
 }
 

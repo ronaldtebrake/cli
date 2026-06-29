@@ -25,6 +25,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/proclive"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
@@ -320,18 +321,18 @@ func isGitSequenceOperation(ctx context.Context) bool {
 	}
 
 	// Check for rebase state directories
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-merge")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-apply")); err == nil {
 		return true
 	}
 
 	// Check for cherry-pick and revert state files
-	if _, err := os.Stat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
 		return true
 	}
 
@@ -829,7 +830,7 @@ func warnStaleEndedSessionsTo(ctx context.Context, count int, w io.Writer) {
 	}
 	warnDir := filepath.Join(commonDir, session.SessionStateDirName)
 	warnFile := filepath.Join(warnDir, staleEndedSessionWarnFile)
-	if info, statErr := os.Stat(warnFile); statErr == nil {
+	if info, statErr := os.Lstat(warnFile); statErr == nil {
 		if time.Since(info.ModTime()) < staleEndedSessionWarnInterval {
 			return // rate-limited
 		}
@@ -1061,9 +1062,13 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	repoDir string,
 ) error {
 	logCtx := logging.WithComponent(ctx, "attribution")
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Persistent
 
-	summary, err := store.ReadCommitted(ctx, checkpointID)
+	summary, err := store.Read(ctx, checkpointID)
 	if err != nil {
 		return fmt.Errorf("reading checkpoint summary: %w", err)
 	}
@@ -1133,7 +1138,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		agentPercentage = float64(agentAdded+agentRemoved) / float64(totalLinesChanged) * 100
 	}
 
-	combined := &checkpoint.InitialAttribution{
+	combined := &checkpoint.Attribution{
 		CalculatedAt:      time.Now().UTC(),
 		AgentLines:        agentAdded,
 		AgentRemoved:      agentRemoved,
@@ -1154,13 +1159,9 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		slog.Float64("agent_percentage", agentPercentage),
 	)
 
-	if err := store.UpdateCheckpointSummary(ctx, checkpointID, combined); err != nil {
+	if err := store.Write(ctx, checkpoint.CheckpointAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
-
-	// Combined attribution is a committed write in the post-commit hook, so the
-	// mirror must track it too when configured (best-effort).
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	return nil
 }
@@ -1338,6 +1339,26 @@ func (s *ManualCommitStrategy) postCommitProcessSessionLocked(
 		state.FullyCondensed = true
 	}
 
+	// Pin a review session to the single checkpoint it was just condensed into.
+	// A review is a read-only one-shot: it touches no files, so it never accrues
+	// shadow-branch content and the FullyCondensed branch above never fires for
+	// it. Left active, it stays in this worktree's session set and gets
+	// re-condensed into every subsequent commit — which is how one review ends
+	// up attributed to many unrelated checkpoints (its prompt rendering once per
+	// checkpoint on the session page). Once condensed, its transcript is captured
+	// and it has nothing further to contribute, so mark it terminal here. Gated
+	// on handler.condensed so it only fires after the review actually landed in a
+	// checkpoint — a review skipped by the read-only gate is never written to a
+	// checkpoint and stays eligible to attach to a later one.
+	if state.Kind.IsReview() && handler.condensed {
+		if state.EndedAt == nil {
+			endedAt := time.Now().UTC()
+			state.EndedAt = &endedAt
+		}
+		state.Phase = session.PhaseEnded
+		state.FullyCondensed = true
+	}
+
 	// State is saved by the outer MutateSessionState in PostCommit.
 
 	// Only preserve shadow branch for active sessions that were NOT condensed.
@@ -1386,6 +1407,7 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 	state.BaseCommit = newHead
 	state.RealignAttributionBase(newHead)
 	state.StepCount = 0
+	state.CheckpointTokenUsage = nil
 	state.CheckpointTranscriptStart = result.TotalTranscriptLines
 	state.CheckpointTranscriptSize = int64(len(result.Transcript))
 
@@ -2295,6 +2317,8 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		if transcriptPath != "" && state.TranscriptPath != transcriptPath {
 			state.TranscriptPath = transcriptPath
 		}
+		captureSessionBranch(repo, state)
+		captureSessionOwner(state)
 
 		// ORDERING: attribution runs BEFORE migrate to use the pre-migration
 		// BaseCommit as the base tree (preserving correct agent-line counts
@@ -2338,6 +2362,8 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		}
 		promptAttr := s.calculatePromptAttributionAtStart(ctx, repo, state)
 		state.PendingPromptAttribution = &promptAttr
+		captureSessionBranch(repo, state)
+		captureSessionOwner(state)
 		return nil
 	})
 	if mutErr != nil && !errors.Is(mutErr, ErrStateNotFound) {
@@ -2347,6 +2373,45 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 	logging.Info(logging.WithComponent(ctx, "hooks"), "initialized shadow session",
 		slog.String("session_id", sessionID))
 	return nil
+}
+
+// captureSessionBranch records the branch HEAD currently points at into the
+// session state so `entire resume` can map a stopped session back to its branch.
+// It is a no-op when HEAD is detached or cannot be read — the branch field is
+// best-effort and resume derives it from commit trailers when absent.
+func captureSessionBranch(repo *git.Repository, state *SessionState) {
+	headRef, err := repo.Head()
+	if err != nil {
+		return
+	}
+	if headRef.Name().IsBranch() {
+		state.Branch = headRef.Name().Short()
+	} else {
+		// Detached HEAD: clear any branch recorded on a previous turn so resume
+		// falls back to deriving the branch from checkpoint trailers instead of
+		// using a stale, now-incorrect value.
+		state.Branch = ""
+	}
+}
+
+// captureSessionOwner records the owning agent process (PID + start-time
+// fingerprint) into the session state so liveness checks can later detect an
+// ACTIVE session whose agent exited without firing a SessionStop hook. The hook
+// runs as a short-lived child of the agent, so proclive.ResolveOwner walks up
+// past our own binary and any shells to the long-lived agent process.
+//
+// It is best-effort and re-run on every turn start: if the owner can't be
+// resolved (unsupported platform, transient-only ancestry) the field is cleared
+// and liveness degrades to the inactivity timeout; re-resolving each turn keeps
+// the fingerprint current across agent restarts.
+func captureSessionOwner(state *SessionState) {
+	// Clear first: a failed resolve must never leave a stale owner from an
+	// earlier turn. Otherwise a now-live session (agent restarted with a new
+	// PID) could still carry a dead PID and be wrongly finalized as exited.
+	state.Owner = nil
+	if owner, ok := proclive.ResolveOwner(); ok {
+		state.Owner = &owner
+	}
 }
 
 // calculatePromptAttributionAtStart calculates attribution at prompt start (before agent runs).
@@ -2741,6 +2806,10 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 	defer repo.Close()
+	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
+		state.TurnCheckpointIDs = nil
+		return 1
+	}
 
 	prompts := readPromptsFromShadowBranch(ctx, repo, state)
 	if len(prompts) == 0 {
@@ -2759,6 +2828,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (attribution, files touched, prompts). Hooks run without user interaction
 	// so there is no retry path — preserving partial metadata is better than
 	// losing everything. Persisting an unredacted transcript would be worse.
+	// Run the 7-layer pipeline over the transcript — OPF runs later in
+	// the pre-push rewrite path, which re-redacts these 7-layer blobs
+	// and produces 8-layer commits before the push goes out.
 	_, redactSpan := perf.Start(logCtx, "redact_transcript")
 	redactedTranscript, redactErr := redact.JSONLBytes(fullTranscript)
 	redactSpan.End()
@@ -2769,11 +2841,18 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 		redactedTranscript = redact.RedactedBytes{}
 	}
-	for i, p := range prompts {
-		prompts[i] = redact.String(p)
-	}
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	// Post-commit emits 7-layer-only blobs; the writer joins + redacts
+	// via checkpoint.redactedJoinedPrompts. OPF runs later, once per
+	// push, in the pre-push rewrite path.
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "finalize: failed to open checkpoint store",
+			slog.String("error", err.Error()),
+		)
+		return 1 // Count as error - all checkpoints will be skipped
+	}
+	store := stores.Persistent
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2789,7 +2868,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			continue
 		}
 
-		updateOpts := checkpoint.UpdateCommittedOptions{
+		updateOpts := checkpoint.UpdateOptions{
 			CheckpointID:     cpID,
 			SessionID:        state.SessionID,
 			Transcript:       redactedTranscript,
@@ -2799,7 +2878,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			PrecomputedBlobs: precomputed,
 		}
 
-		updateErr := store.UpdateCommitted(ctx, updateOpts)
+		updateErr := store.Write(ctx, checkpoint.SessionTranscript(updateOpts))
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),
@@ -2814,11 +2893,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			slog.String("session_id", state.SessionID),
 		)
 	}
-
-	// Mirror the finalized primary metadata to refs.Mirror when configured
-	// (best-effort; failures are logged, not fatal). Once after the loop is
-	// enough — it tracks Primary's final commit.
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	// Clear turn checkpoint IDs. Do NOT update CheckpointTranscriptStart here — it was
 	// already set correctly by PostCommit: condenseAndUpdateState sets it to the total
@@ -2889,14 +2963,21 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	start := time.Now()
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		logging.Warn(logCtx, "post-commit: carry-forward failed to open checkpoint store",
+			slog.String("session_id", state.SessionID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
 	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
-	result, err := store.WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
+	result, err := stores.Ephemeral().Write(writeCtx, checkpoint.Step{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,

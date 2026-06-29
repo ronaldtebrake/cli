@@ -84,14 +84,16 @@ func NewRootCmd() *cobra.Command {
 	// Noun groups (canonical homes for subcommands).
 	cmd.AddCommand(newSessionsCmd())        // 'session' (with 'sessions' as Cobra alias)
 	cmd.AddCommand(newCheckpointGroupCmd()) // 'checkpoint' / 'cp' / 'checkpoints'
+	cmd.AddCommand(newTokensGroupCmd())     // 'tokens'
 	cmd.AddCommand(newAgentGroupCmd())      // 'agent'
 	cmd.AddCommand(newAuthCmd())            // 'auth'
 	cmd.AddCommand(newDoctorCmd())          // 'doctor' (group: trace/logs/bundle)
 	cmd.AddCommand(newLabsCmd())            // 'labs' (experimental workflow discovery)
 	cmd.AddCommand(newPluginGroupCmd())     // 'plugin' (managed install/list/remove)
+	cmd.AddCommand(newImportCmd())          // 'import' (hidden; import pre-existing agent history)
 
 	// Top-level lifecycle and standalone commands.
-	cmd.AddCommand(cliReview.NewCommand(buildReviewDeps()))        // `inspect` (alias: review); hidden during maturation
+	cmd.AddCommand(cliReview.NewCommand(buildReviewDeps()))        // `review`; hidden during maturation
 	cmd.AddCommand(investigate.NewCommand(buildInvestigateDeps())) // hidden during maturation; runs a multi-agent investigation
 	cmd.AddCommand(newOrgCmd())                                    // hidden during maturation; control-plane org management
 	cmd.AddCommand(newProjectCmd())                                // hidden during maturation; control-plane project management
@@ -102,6 +104,8 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newEnableCmd())
 	cmd.AddCommand(newDisableCmd())
 	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newBlameCmd())
+	cmd.AddCommand(newWhyCmd())
 	cmd.AddCommand(newLoginCmd())
 	cmd.AddCommand(newLogoutCmd())
 	cmd.AddCommand(newVersionCmd())

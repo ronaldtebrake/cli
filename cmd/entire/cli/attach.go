@@ -22,7 +22,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	"github.com/entireio/cli/cmd/entire/cli/session"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
@@ -55,16 +54,21 @@ type attachOptions struct {
 	// transcript's first user prompt. Set from a pending-review marker when
 	// `entire attach --review` adopts the prompt the user was asked to run.
 	ReviewPromptOverride string
-	// entireSettings, when non-nil, supplies already-resolved settings.
-	entireSettings *settings.EntireSettings
 }
 
-// committedRefs resolves the topology, honoring an injected EntireSettings.
-func (opts attachOptions) committedRefs(ctx context.Context) cpkg.CommittedRefs {
-	if opts.entireSettings != nil {
-		return cpkg.ResolveCommittedRefsFromSettings(opts.entireSettings)
+// committedRefs resolves the committed metadata topology.
+func (opts attachOptions) committedRefs(ctx context.Context) cpkg.PersistentRefs {
+	return cpkg.ResolveRefs(ctx)
+}
+
+// openAttachStore opens the committed store for the resolved topology. refs is
+// passed explicitly so attach preserves PrimaryAsRead() pinning.
+func openAttachStore(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs) (cpkg.PersistentStore, error) {
+	stores, err := cpkg.Open(ctx, repo, cpkg.OpenOptions{Refs: &refs})
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	return cpkg.ResolveCommittedRefs(ctx)
+	return stores.Persistent, nil
 }
 
 func newAttachCmd() *cobra.Command {
@@ -251,6 +255,10 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return nil
 	}
 
+	if err := ensureCommittedCheckpointWritePolicy(ctx, repo); err != nil {
+		return err
+	}
+
 	// Resolve agent and transcript path.
 	ag, transcriptPath, err := resolveAgentAndTranscript(logCtx, w, sessionID, agentName, existingState)
 	if err != nil {
@@ -299,7 +307,10 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return err
 	}
 
-	store := cpkg.NewGitStore(repo, refs)
+	store, err := openAttachStore(ctx, repo, refs)
+	if err != nil {
+		return err
+	}
 
 	// Defense-in-depth guard: the earlier existingState.LastCheckpointID
 	// check only fires when the session's state file records its
@@ -337,7 +348,7 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return fmt.Errorf("failed to redact transcript: %w", redactErr)
 	}
 
-	writeOpts := cpkg.WriteCommittedOptions{
+	writeOpts := cpkg.WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        sessionID,
 		Strategy:         strategy.StrategyNameManualCommit,
@@ -357,12 +368,8 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		writeOpts.HasReview = true
 	}
 
-	if err := store.WriteCommitted(ctx, writeOpts); err != nil {
+	if err := store.Write(ctx, cpkg.Session(writeOpts)); err != nil {
 		return fmt.Errorf("failed to write checkpoint: %w", err)
-	}
-
-	if err := strategy.MirrorCommittedMetadataRef(ctx, repo, refs); err != nil {
-		return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
 	}
 
 	// Create or update session state.
@@ -389,9 +396,12 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 // checkpointHasSessionMetadata reports whether sessionID has existing metadata
 // at Primary. Reads target Primary directly, not refs.Read, because this guard
 // must reflect what the next write would target.
-func checkpointHasSessionMetadata(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID, sessionID string) (bool, error) {
-	store := cpkg.NewGitStore(repo, refs.PrimaryAsRead())
-	summary, err := store.ReadCommitted(ctx, checkpointID)
+func checkpointHasSessionMetadata(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID, sessionID string) (bool, error) {
+	store, err := openAttachStore(ctx, repo, refs.PrimaryAsRead())
+	if err != nil {
+		return false, err
+	}
+	summary, err := store.Read(ctx, checkpointID)
 	if err != nil {
 		return false, fmt.Errorf("read checkpoint summary: %w", err)
 	}
@@ -437,7 +447,7 @@ func getHeadCommit(repo *git.Repository) (*object.Commit, error) {
 // metadata fetch fallback chain used by `entire resume` (which advances the
 // local ref on success) and re-check. Returns a possibly-freshly-opened repo
 // handle so go-git sees any newly fetched packfiles.
-func ensureCheckpointAvailable(ctx, logCtx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID, isExistingCheckpoint bool) (*git.Repository, error) {
+func ensureCheckpointAvailable(ctx, logCtx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID, isExistingCheckpoint bool) (*git.Repository, error) {
 	if !isExistingCheckpoint {
 		return repo, nil
 	}
@@ -486,11 +496,15 @@ func refreshCheckpointRefs(ctx context.Context) (*git.Repository, error) {
 // Primary locally. Reads target Primary directly, not refs.Read, because this
 // asks what the next write would find, not what readers see. A missing local
 // ref is reported as absent; the caller is responsible for any remote refresh.
-func checkpointPresentLocally(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs, checkpointID id.CheckpointID) (bool, error) {
+func checkpointPresentLocally(ctx context.Context, repo *git.Repository, refs cpkg.PersistentRefs, checkpointID id.CheckpointID) (bool, error) {
 	if _, err := repo.Reference(refs.Primary, true); err != nil {
 		return false, nil //nolint:nilerr // Missing ref is the "absent" signal, not an error.
 	}
-	summary, err := cpkg.NewGitStore(repo, refs.PrimaryAsRead()).ReadCommitted(ctx, checkpointID)
+	store, err := openAttachStore(ctx, repo, refs.PrimaryAsRead())
+	if err != nil {
+		return false, err
+	}
+	summary, err := store.Read(ctx, checkpointID)
 	if err != nil {
 		return false, err //nolint:wrapcheck // Caller wraps with checkpoint ID context
 	}

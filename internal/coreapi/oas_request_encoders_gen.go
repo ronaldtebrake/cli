@@ -122,6 +122,20 @@ func encodeCreateServiceAccountRequest(
 	return nil
 }
 
+func encodeGrantMirrorCollaboratorRequest(
+	req *GrantMirrorCollaboratorInputBody,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeGrantProjectAccessRequest(
 	req *GrantProjectAccessInputBody,
 	r *http.Request,
@@ -152,6 +166,20 @@ func encodeGrantRepoAccessRequest(
 
 func encodeGrantServiceAccountAccessRequest(
 	req *GrantServiceAccountAccessInputBody,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateMeRequest(
+	req *UpdateMeInputBody,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

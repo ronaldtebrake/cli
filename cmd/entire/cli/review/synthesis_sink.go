@@ -1,34 +1,31 @@
 // Package review — see env.go for package-level rationale.
 //
-// synthesis_sink.go provides SynthesisSink, an opt-in Sink that prompts the
-// user (y/N, default N) after all agents finish, then asks a configured
-// summary provider to synthesize a unified verdict across the per-agent
-// narratives. Skipped silently in non-TTY mode, on cancellation, or when
-// fewer than 2 agents produced usable output.
+// synthesis_sink.go provides SynthesisSink, the master adjudication phase of a
+// multi-agent review: after all worker agents finish, it asks a configured
+// provider to consolidate the per-agent narratives into a final report.
+// Skipped silently on cancellation or when fewer than 2 successful agents
+// produced usable output. The report runs unconditionally (no y/N prompt) and works in
+// both TTY and redirected/CI output.
 //
-// Composition: appended AFTER DumpSink in TTY-mode sink slices, so the
-// y/N prompt appears below the per-agent narrative dump.
+// Composition: appended AFTER DumpSink in the multi-agent sink slice, so the
+// final report renders below the per-agent narrative dump.
 package review
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	agenttypes "github.com/entireio/cli/cmd/entire/cli/agent/types"
-	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/mdrender"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
-	"github.com/entireio/cli/cmd/entire/cli/uiform"
 )
 
 // SynthesisProvider abstracts the LLM call that produces the cross-agent
-// verdict. Injected via Deps so tests can stub the provider call without a
-// real API roundtrip. Production wiring (in review_bridge.go) calls into
-// the same provider entire explain uses.
+// verdict. Injected so tests can stub the provider call without a real API
+// roundtrip; production wiring uses AgentSynthesisProvider.
 type SynthesisProvider interface {
 	// Synthesize takes the composed synthesis prompt and returns the
 	// verdict text. Errors are surfaced to the caller; SynthesisSink
@@ -59,24 +56,26 @@ func (p AgentSynthesisProvider) Synthesize(ctx context.Context, prompt string) (
 }
 
 // SynthesisSink composes a multi-agent verdict by calling a configured
-// provider after the run finishes. In normal profile-native `entire review`
-// runs this is the profile's master adjudication phase: Auto is true and
-// Provider is the profile master, so the master report is produced without a
-// y/N prompt. The legacy opt-in path (Auto false) keeps the prompted-synthesis
-// behavior. AgentEvent is a no-op; all work happens in RunFinished.
+// provider after the run finishes — the profile's master adjudication phase.
+// Provider is the profile master, so the final report is produced
+// unconditionally (no y/N prompt). AgentEvent is a no-op; all work happens in
+// RunFinished.
 type SynthesisSink struct {
-	Provider        SynthesisProvider
-	Writer          io.Writer
-	InputTTY        bool // true if stdin can prompt the user
-	PromptYN        func(ctx context.Context, question string, def bool) (bool, error)
+	Provider SynthesisProvider
+	Writer   io.Writer
+	// RenderWriter is the writer whose terminal capabilities should be used for
+	// markdown rendering. It defaults to Writer. TTY review runs use this when
+	// Writer is a post-run buffer that will later flush to the real terminal.
+	RenderWriter    io.Writer
 	PerRunPrompt    string // if non-empty, included in the synthesis prompt for context
 	ProfileName     string
 	Task            string
 	MasterName      string
-	Auto            bool            // when true, run without a y/N prompt (profile-native final report)
 	RunContext      context.Context // optional; nil falls back to context.Background()
 	ProviderTimeout time.Duration   // optional; zero uses defaultSynthesisProviderTimeout
 	OnResult        func(result string)
+	OnStart         func()
+	OnComplete      func(error)
 }
 
 // Compile-time interface check.
@@ -87,18 +86,15 @@ const defaultSynthesisProviderTimeout = 2 * time.Minute
 // AgentEvent is a no-op; SynthesisSink only acts in RunFinished.
 func (SynthesisSink) AgentEvent(_ string, _ reviewtypes.Event) {}
 
-// RunFinished optionally synthesizes a cross-agent verdict.
+// RunFinished synthesizes a cross-agent final report.
 //
 // Skip silently when:
-//   - stdin isn't a TTY (s.InputTTY == false)
 //   - the run was cancelled (summary.Cancelled)
-//   - fewer than 2 agents produced usable output (status Succeeded or Failed
-//     with non-empty narrative buffer)
+//   - fewer than 2 successful agents produced usable output
 //
-// In profile-native mode (Auto=true), the master phase is mandatory and runs
-// without a y/N prompt. In legacy sink mode (Auto=false), prompt y/N (default
-// N). On provider failure: print "final report unavailable: <err>" with the
-// underlying error; user can still commit.
+// The master phase is mandatory and runs without a y/N prompt, in TTY and
+// redirected output alike. On provider failure: print "final report
+// unavailable: <err>" with the underlying error; the user can still commit.
 func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
 	if summary.Cancelled {
 		return
@@ -107,48 +103,22 @@ func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
 		return
 	}
 
-	ctx := s.runContext()
-	if !s.Auto {
-		if !s.InputTTY {
-			return
-		}
-		promptFn := s.PromptYN
-		if promptFn == nil {
-			promptFn = realPromptYN
-		}
-
-		yes, err := promptFn(ctx, "Synthesize a unified verdict across all agent reviews?", false)
-		if err != nil {
-			// huh form errors (terminal-resize anomalies, stdin EOF, stub
-			// failures) shouldn't block the user from committing — they get the
-			// same silent skip as a "no" answer. Logged at debug for diagnostics.
-			logging.Debug(ctx, "synthesis prompt error",
-				slog.String("error", err.Error()))
-			return
-		}
-		if !yes {
-			return
-		}
-	}
-
 	synthesisPrompt := composeSynthesisPrompt(summary, s.PerRunPrompt, s.ProfileName, s.Task)
 	providerCtx, cancelProvider := s.providerContext()
 	defer cancelProvider()
-	if s.Auto {
-		if s.MasterName != "" {
-			fmt.Fprintf(s.Writer, "Generating final report with %s...\n", s.MasterName)
-		} else {
-			fmt.Fprintln(s.Writer, "Generating final report...")
-		}
+	if s.MasterName != "" {
+		fmt.Fprintf(s.Writer, "Generating final report with %s...\n", s.MasterName)
 	} else {
-		fmt.Fprintln(s.Writer, "Generating summary...")
+		fmt.Fprintln(s.Writer, "Generating final report...")
+	}
+	if s.OnStart != nil {
+		s.OnStart()
 	}
 	result, provErr := s.Provider.Synthesize(providerCtx, synthesisPrompt)
 	if provErr != nil {
-		if s.Auto {
-			fmt.Fprintf(s.Writer, "final report unavailable: %v\n", provErr)
-		} else {
-			fmt.Fprintf(s.Writer, "synthesis unavailable: %v\n", provErr)
+		fmt.Fprintf(s.Writer, "final report unavailable: %v\n", provErr)
+		if s.OnComplete != nil {
+			s.OnComplete(provErr)
 		}
 		return
 	}
@@ -163,11 +133,21 @@ func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
 	// already ends with a newline, and the raw-markdown fallback path has its
 	// own terminal newline from the LLM response. Adding Fprintln would double
 	// the trailing blank line.
-	rendered, err := mdrender.RenderForWriter(s.Writer, result)
+	rendered, err := mdrender.RenderForWriter(s.renderWriter(), result)
 	if err != nil {
 		rendered = result
 	}
 	fmt.Fprint(s.Writer, rendered)
+	if s.OnComplete != nil {
+		s.OnComplete(nil)
+	}
+}
+
+func (s SynthesisSink) renderWriter() io.Writer {
+	if s.RenderWriter != nil {
+		return s.RenderWriter
+	}
+	return s.Writer
 }
 
 func (s SynthesisSink) runContext() context.Context {
@@ -190,10 +170,4 @@ func (s SynthesisSink) providerContext() (context.Context, context.CancelFunc) {
 // synthesis is worth offering.
 func usableAgentCount(summary reviewtypes.RunSummary) int {
 	return len(usableAgentRuns(summary))
-}
-
-// realPromptYN is the production y/N prompt; delegates to uiform.PromptYN
-// so the review and investigate packages share one implementation.
-func realPromptYN(ctx context.Context, question string, def bool) (bool, error) {
-	return uiform.PromptYN(ctx, question, def) //nolint:wrapcheck // uiform already wraps
 }

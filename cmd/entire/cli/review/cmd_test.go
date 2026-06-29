@@ -54,17 +54,20 @@ func seedReviewConfig(ctx context.Context, cfg map[string]settings.ReviewConfig)
 		prefs = &settings.ClonePreferences{}
 	}
 	prefs.ReviewDefaultProfile = review.DefaultProfileName
+	profile := settings.ReviewProfileConfig{
+		Task:   "Test review task.",
+		Agents: cfg,
+	}
+	if judge := defaultTestJudge(cfg); judge != "" {
+		profile.Judge = &settings.ReviewConfig{Agent: judge}
+	}
 	prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{
-		review.DefaultProfileName: {
-			Task:   "Test review task.",
-			Agents: cfg,
-			Master: defaultTestMaster(cfg),
-		},
+		review.DefaultProfileName: profile,
 	}
 	return settings.SaveClonePreferences(ctx, prefs)
 }
 
-func defaultTestMaster(cfg map[string]settings.ReviewConfig) string {
+func defaultTestJudge(cfg map[string]settings.ReviewConfig) string {
 	if _, ok := cfg[string(agent.AgentNameClaudeCode)]; ok {
 		return string(agent.AgentNameClaudeCode)
 	}
@@ -94,7 +97,7 @@ func TestReviewCmd_ListAgents(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"claude-code", "codex", "[master]", "--agent"} {
+	for _, want := range []string{"claude-code", "codex", "--agent"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--agents output missing %q:\n%s", want, out)
 		}
@@ -113,7 +116,7 @@ func TestReviewCmd_Help(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"review", "--configure", "--edit", "--findings", "--agent", "--agents", "--model", "--models", "--list", "attach", "Labs entry"} {
+	for _, want := range []string{"review", "--configure", "--edit", "--findings", "--agent", "--agents", "--model", "--models", "--list", "attach"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--help output missing %q: %s", want, out)
 		}
@@ -362,7 +365,7 @@ func TestRunReview_PromptOnlyConfigSkipsVerification(t *testing.T) {
 	}
 }
 
-// TestRunReview_BareNonInteractiveRequiresProfile verifies that `entire inspect`
+// TestRunReview_BareNonInteractiveRequiresProfile verifies that `entire review`
 // with no profile, in a non-interactive context (the test has no TTY), never
 // auto-runs a default crew — it errors and lists the configured profiles.
 func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
@@ -383,7 +386,7 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 
 	err := rootCmd.Execute()
 	if err == nil {
-		t.Fatal("bare non-interactive inspect should require a profile, got nil error")
+		t.Fatal("bare non-interactive review should require a profile, got nil error")
 	}
 	if !strings.Contains(errBuf.String(), "Specify a profile") {
 		t.Errorf("stderr should ask for a profile, got:\n%s", errBuf.String())
@@ -394,7 +397,7 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 	// It must not have spawned a crew: no pending marker written.
 	_, exists, markerErr := review.ReadPendingReviewMarker(context.Background())
 	if markerErr == nil && exists {
-		t.Error("bare non-interactive inspect should not have started a review")
+		t.Error("bare non-interactive review should not have started a review")
 	}
 }
 
@@ -468,16 +471,12 @@ func newDispatchTestDeps(
 	t *testing.T,
 	installed []types.AgentName,
 	launchableAgents []string,
-	multiPickerFn func(ctx context.Context, eligible []review.AgentChoice) (review.PickedAgents, error),
-	promptForAgentFn func(ctx context.Context, eligible []review.AgentChoice) (string, error),
 ) review.Deps {
 	t.Helper()
 	launchableSet := make(map[string]struct{}, len(launchableAgents))
 	for _, name := range launchableAgents {
 		launchableSet[name] = struct{}{}
 	}
-	_ = promptForAgentFn
-	_ = multiPickerFn
 	return review.Deps{
 		GetAgentsWithHooksInstalled: func(_ context.Context) []types.AgentName {
 			return installed
@@ -519,9 +518,38 @@ func (p *stubDispatchProcess) Events() <-chan reviewtypes.Event {
 
 func (p *stubDispatchProcess) Wait() error { return nil }
 
+type scriptedDispatchReviewer struct {
+	name    string
+	events  []reviewtypes.Event
+	waitErr error
+}
+
+func (r *scriptedDispatchReviewer) Name() string { return r.name }
+func (r *scriptedDispatchReviewer) Start(context.Context, reviewtypes.RunConfig) (reviewtypes.Process, error) {
+	return &scriptedDispatchProcess{events: r.events, waitErr: r.waitErr}, nil
+}
+
+type scriptedDispatchProcess struct {
+	events  []reviewtypes.Event
+	waitErr error
+}
+
+func (p *scriptedDispatchProcess) Events() <-chan reviewtypes.Event {
+	ch := make(chan reviewtypes.Event, len(p.events))
+	for _, ev := range p.events {
+		ch <- ev
+	}
+	close(ch)
+	return ch
+}
+
+func (p *scriptedDispatchProcess) Wait() error { return p.waitErr }
+
 // Compile-time interface check.
 var _ reviewtypes.AgentReviewer = (*stubDispatchReviewer)(nil)
 var _ reviewtypes.Process = (*stubDispatchProcess)(nil)
+var _ reviewtypes.AgentReviewer = (*scriptedDispatchReviewer)(nil)
+var _ reviewtypes.Process = (*scriptedDispatchProcess)(nil)
 
 type captureRunConfigReviewer struct {
 	name   string
@@ -589,8 +617,7 @@ func TestRunReview_ConfigPromptAugmentsSelectedSkills(t *testing.T) {
 }
 
 // TestDispatchFork_TwoLaunchableNoOverride verifies that when 2+ launchable
-// agents are configured and --agent is empty, the profile fan-out runs without
-// invoking the old per-run multi-picker.
+// agents are configured and --agent is empty, the profile fan-out runs cleanly.
 func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 	setupCmdTestRepo(t)
 
@@ -601,18 +628,8 @@ func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	multiPickerCalled := false
-	multiPickerFn := func(_ context.Context, eligible []review.AgentChoice) (review.PickedAgents, error) {
-		multiPickerCalled = true
-		names := make([]string, 0, len(eligible))
-		for _, e := range eligible {
-			names = append(names, e.Name)
-		}
-		return review.PickedAgents{Names: names, PerRun: ""}, nil
-	}
-
 	installed := []types.AgentName{"agent-a", "agent-b"}
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
+	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"})
 
 	buf := &bytes.Buffer{}
 	cmd := review.NewCommand(deps)
@@ -623,8 +640,101 @@ func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if multiPickerCalled {
-		t.Error("multi-picker should not be invoked; profile config is the fan-out contract")
+}
+
+func TestDispatchFork_MultiAgentIgnoresFailedSiblingWhenAnotherSucceeds(t *testing.T) {
+	setupCmdTestRepo(t)
+
+	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
+		"agent-a": {Prompt: "review"},
+		"agent-b": {Prompt: "review"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	quotaErr := errors.New("quota exhausted")
+	reviewers := map[string]reviewtypes.AgentReviewer{
+		"agent-a": &scriptedDispatchReviewer{
+			name: "agent-a",
+			events: []reviewtypes.Event{
+				reviewtypes.Started{},
+				reviewtypes.Finished{Success: false},
+			},
+			waitErr: quotaErr,
+		},
+		"agent-b": &scriptedDispatchReviewer{
+			name: "agent-b",
+			events: []reviewtypes.Event{
+				reviewtypes.Started{},
+				reviewtypes.AssistantText{Text: "agent-b found no blockers."},
+				reviewtypes.Finished{Success: true},
+			},
+		},
+	}
+	deps := newDispatchTestDeps(t, []types.AgentName{"agent-a", "agent-b"}, []string{"agent-a", "agent-b"})
+	deps.ReviewerFor = func(agentName string) reviewtypes.AgentReviewer { return reviewers[agentName] }
+
+	buf := &bytes.Buffer{}
+	cmd := review.NewCommand(deps)
+	cmd.SetOut(buf)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"general"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("partial reviewer failure should not fail command: %v\nOutput:\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "2 agent(s) done — 1 succeeded, 1 failed") {
+		t.Fatalf("output missing partial-failure counts:\n%s", out)
+	}
+	if !strings.Contains(out, "agent-b found no blockers") {
+		t.Fatalf("output missing successful reviewer narrative:\n%s", out)
+	}
+}
+
+func TestDispatchFork_MultiAgentFailsWhenAllReviewersFail(t *testing.T) {
+	setupCmdTestRepo(t)
+
+	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
+		"agent-a": {Prompt: "review"},
+		"agent-b": {Prompt: "review"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reviewers := map[string]reviewtypes.AgentReviewer{
+		"agent-a": &scriptedDispatchReviewer{
+			name: "agent-a",
+			events: []reviewtypes.Event{
+				reviewtypes.Started{},
+				reviewtypes.Finished{Success: false},
+			},
+			waitErr: errors.New("agent-a quota exhausted"),
+		},
+		"agent-b": &scriptedDispatchReviewer{
+			name: "agent-b",
+			events: []reviewtypes.Event{
+				reviewtypes.Started{},
+				reviewtypes.Finished{Success: false},
+			},
+			waitErr: errors.New("agent-b quota exhausted"),
+		},
+	}
+	deps := newDispatchTestDeps(t, []types.AgentName{"agent-a", "agent-b"}, []string{"agent-a", "agent-b"})
+	deps.ReviewerFor = func(agentName string) reviewtypes.AgentReviewer { return reviewers[agentName] }
+
+	buf := &bytes.Buffer{}
+	cmd := review.NewCommand(deps)
+	cmd.SetOut(buf)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"general"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error when all reviewers fail\nOutput:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "review run") {
+		t.Fatalf("error should identify review run failure, got %v", err)
 	}
 }
 
@@ -701,161 +811,6 @@ func TestDispatchFork_MultiAgentPassesPerAgentConfigs(t *testing.T) {
 	}
 }
 
-// TestDispatchFork_OneLaunchableOneNonLaunchableNoOverride verifies that when
-// only 1 agent is launchable (the other is non-launchable), the single-agent
-// path is taken (no multi-picker). Uses cursor (real non-launchable agent with
-// hooks) + agent-a (fake launchable stub).
-func TestDispatchFork_OneLaunchableOneNonLaunchableNoOverride(t *testing.T) {
-	setupCmdTestRepo(t)
-	installHooksForCmdTest(t, "cursor")
-
-	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
-		"cursor":  {Prompt: "review"},
-		"agent-a": {Prompt: "review"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	multiPickerCalled := false
-	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
-		multiPickerCalled = true
-		return review.PickedAgents{}, errors.New("should not be called")
-	}
-	// Stub single-select picker to avoid TTY: always picks cursor.
-	singlePickerFn := func(_ context.Context, _ []review.AgentChoice) (string, error) {
-		return "cursor", nil
-	}
-
-	installed := []types.AgentName{"cursor", "agent-a"}
-	// Only agent-a is launchable. With 1 launchable agent, computeLaunchableEligible
-	// returns 1 entry, so multi-path is skipped. The single-select picker picks cursor.
-	// ReviewerFor("cursor") returns nil → marker fallback path (writes marker file).
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a"}, multiPickerFn, singlePickerFn)
-
-	cmd := review.NewCommand(deps)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"general"})
-
-	executeErr := cmd.Execute() // may error (agent-a not a real agent); we only care about picker routing
-	_ = executeErr              // intentionally ignored: this test only asserts picker routing
-	if multiPickerCalled {
-		t.Error("multi-picker should NOT be invoked when only 1 launchable agent is configured")
-	}
-}
-
-// TestDispatchFork_TwoLaunchableWithAgentOverride verifies that --agent flag
-// bypasses the multi-picker even when 2+ launchable agents are configured.
-// The test uses cursor (non-launchable, real agent) + agent-a (fake launchable)
-// with --agent cursor so the single-agent path runs to completion via marker
-// fallback (cursor is non-launchable in reviewerFor, so nil → marker fallback).
-func TestDispatchFork_TwoLaunchableWithAgentOverride(t *testing.T) {
-	setupCmdTestRepo(t)
-	installHooksForCmdTest(t, "cursor") // cursor needs real hooks
-
-	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
-		"cursor":  {Prompt: "review"},
-		"agent-a": {Prompt: "review"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	multiPickerCalled := false
-	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
-		multiPickerCalled = true
-		return review.PickedAgents{}, errors.New("should not be called")
-	}
-
-	// cursor + agent-a both installed; agent-a is launchable but cursor is not.
-	// With 1 launchable agent (agent-a) among the 2 eligible agents, the
-	// multi-agent path would NOT fire (needs 2+ launchable). But when we
-	// additionally pass --agent cursor, the multi-picker is bypassed by the
-	// agentOverride check at the top of step 3.
-	installed := []types.AgentName{"cursor", "agent-a"}
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a"}, multiPickerFn, nil)
-
-	buf := &bytes.Buffer{}
-	cmd := review.NewCommand(deps)
-	cmd.SetOut(buf)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"general", "--agent", "cursor"})
-
-	// cursor is not launchable in our stub (reviewerFor returns nil), so it
-	// falls through to RunMarkerFallback. That's fine — we only care that
-	// multiPickerCalled is false.
-	executeErr := cmd.Execute()
-	_ = executeErr // intentionally ignored: this test only asserts picker routing
-	if multiPickerCalled {
-		t.Error("multi-picker should NOT be invoked when --agent override is set")
-	}
-}
-
-// TestDispatchFork_MultiPickerCancellationExitsCleanly verifies that when
-// the multi-picker is cancelled (ErrPickerCancelled), the command exits with
-// nil error (no user-facing error).
-func TestDispatchFork_MultiPickerCancellationExitsCleanly(t *testing.T) {
-	setupCmdTestRepo(t)
-
-	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
-		"agent-a": {Prompt: "review"},
-		"agent-b": {Prompt: "review"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
-		return review.PickedAgents{}, review.ErrPickerCancelled
-	}
-
-	installed := []types.AgentName{"agent-a", "agent-b"}
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
-
-	errBuf := &bytes.Buffer{}
-	cmd := review.NewCommand(deps)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(errBuf)
-	cmd.SetArgs([]string{"general"})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Errorf("ErrPickerCancelled should produce nil command error, got: %v", err)
-	}
-}
-
-// TestDispatchFork_MultiPickerNoSelectionNotUsed verifies profile fan-out no
-// longer asks a per-run multi-picker, so picker selection errors are irrelevant.
-func TestDispatchFork_MultiPickerNoSelectionSurfacesError(t *testing.T) {
-	setupCmdTestRepo(t)
-
-	if err := seedReviewConfig(context.Background(), map[string]settings.ReviewConfig{
-		"agent-a": {Prompt: "review"},
-		"agent-b": {Prompt: "review"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	multiPickerCalled := false
-	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
-		multiPickerCalled = true
-		return review.PickedAgents{}, review.ErrNoAgentsSelected
-	}
-
-	installed := []types.AgentName{"agent-a", "agent-b"}
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
-
-	cmd := review.NewCommand(deps)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"general"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if multiPickerCalled {
-		t.Error("multi-picker should not be called by profile fan-out")
-	}
-}
-
 // --- Synthesis sink dispatch tests (CU10) ---
 
 // stubCmdSynthesisProvider is a minimal SynthesisProvider for cmd-level tests.
@@ -880,7 +835,6 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 	tests := []struct {
 		name      string
 		isTTY     bool
-		canPrompt bool
 		provider  review.SynthesisProvider
 		wantTUI   bool
 		wantDump  bool
@@ -888,40 +842,36 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 		wantTotal int
 	}{
 		{
-			name:      "non-tty omits tui and synth",
+			name:      "non-tty omits tui but auto-synthesizes with provider",
 			isTTY:     false,
-			canPrompt: false,
 			provider:  provider,
 			wantDump:  true,
-			wantTotal: 1,
+			wantSynth: true,
+			wantTotal: 2,
 		},
 		{
-			name:      "tty with provider and prompt appends synth",
+			name:      "tty with provider buffers dump and synth before the flusher",
 			isTTY:     true,
-			canPrompt: true,
 			provider:  provider,
 			wantTUI:   true,
 			wantDump:  true,
 			wantSynth: true,
-			wantTotal: 3,
+			wantTotal: 4,
 		},
 		{
 			name:      "tty without provider skips synth",
 			isTTY:     true,
-			canPrompt: true,
 			provider:  nil,
 			wantTUI:   true,
 			wantDump:  true,
-			wantTotal: 2,
+			wantTotal: 3,
 		},
 		{
-			name:      "tty without prompt skips synth even with provider",
-			isTTY:     true,
-			canPrompt: false,
-			provider:  provider,
-			wantTUI:   true,
+			name:      "non-tty without provider is dump only",
+			isTTY:     false,
+			provider:  nil,
 			wantDump:  true,
-			wantTotal: 2,
+			wantTotal: 1,
 		},
 	}
 
@@ -931,7 +881,6 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 			sinks := review.ExposedComposeMultiAgentSinks(review.SinkComposeInputs{
 				Out:               &bytes.Buffer{},
 				IsTTY:             tt.isTTY,
-				CanPrompt:         tt.canPrompt,
 				AgentNames:        []string{"a", "b"},
 				CancelRun:         noopCancel,
 				SynthesisProvider: tt.provider,
@@ -983,12 +932,12 @@ func TestComposeSingleAgentSinks(t *testing.T) {
 			wantOutput: "Running review with agent-a...",
 		},
 		{
-			name:      "tty uses tui and dump",
+			name:      "tty uses tui buffered dump and post-run finalizer",
 			isTTY:     true,
 			canPrompt: true,
 			wantTUI:   true,
 			wantDump:  true,
-			wantTotal: 2,
+			wantTotal: 3,
 		},
 		{
 			name:       "tty without prompt falls back to running line",
@@ -1047,43 +996,59 @@ func TestComposeSingleAgentSinks(t *testing.T) {
 func TestComposeSinks_TUIWritersRunBeforePostRunWriters(t *testing.T) {
 	t.Parallel()
 	provider := &stubSynthesisProvider{}
+	multiOut := &bytes.Buffer{}
 
 	multi := review.ExposedComposeMultiAgentSinks(review.SinkComposeInputs{
-		Out:               &bytes.Buffer{},
+		Out:               multiOut,
 		IsTTY:             true,
-		CanPrompt:         true,
 		AgentNames:        []string{"a", "b"},
 		CancelRun:         func() {},
 		SynthesisProvider: provider,
 	})
-	if len(multi) != 3 {
-		t.Fatalf("multi sinks len = %d, want 3", len(multi))
+	if len(multi) != 4 {
+		t.Fatalf("multi sinks len = %d, want 4", len(multi))
 	}
 	if _, ok := multi[0].(*review.TUISink); !ok {
 		t.Fatalf("multi sink[0] = %T, want *TUISink", multi[0])
 	}
-	if _, ok := multi[1].(review.DumpSink); !ok {
-		t.Fatalf("multi sink[1] = %T, want DumpSink", multi[1])
+	multiDump, ok := multi[1].(review.DumpSink)
+	if !ok {
+		t.Fatalf("multi sink[1] = %T, want buffered DumpSink", multi[1])
 	}
-	if _, ok := multi[2].(review.SynthesisSink); !ok {
+	if multiDump.RenderWriter != multiOut {
+		t.Fatalf("multi DumpSink RenderWriter = %T, want output writer", multiDump.RenderWriter)
+	}
+	multiSynth, ok := multi[2].(review.SynthesisSink)
+	if !ok {
 		t.Fatalf("multi sink[2] = %T, want SynthesisSink", multi[2])
 	}
+	if multiSynth.RenderWriter != multiOut {
+		t.Fatalf("multi SynthesisSink RenderWriter = %T, want output writer", multiSynth.RenderWriter)
+	}
 
+	singleOut := &bytes.Buffer{}
 	single := review.ExposedComposeSingleAgentSinks(review.SingleAgentSinkComposeInputs{
-		Out:       &bytes.Buffer{},
+		Out:       singleOut,
 		IsTTY:     true,
 		CanPrompt: true,
 		AgentName: "a",
 		CancelRun: func() {},
 	})
-	if len(single) != 2 {
-		t.Fatalf("single sinks len = %d, want 2", len(single))
+	if len(single) != 3 {
+		t.Fatalf("single sinks len = %d, want 3", len(single))
 	}
 	if _, ok := single[0].(*review.TUISink); !ok {
 		t.Fatalf("single sink[0] = %T, want *TUISink", single[0])
 	}
-	if _, ok := single[1].(review.DumpSink); !ok {
-		t.Fatalf("single sink[1] = %T, want DumpSink", single[1])
+	singleDump, ok := single[1].(review.DumpSink)
+	if !ok {
+		t.Fatalf("single sink[1] = %T, want buffered DumpSink", single[1])
+	}
+	if singleDump.RenderWriter != singleOut {
+		t.Fatalf("single DumpSink RenderWriter = %T, want output writer", singleDump.RenderWriter)
+	}
+	if !review.ExposedIsTUIPostRunCompleteSink(single[2]) {
+		t.Fatalf("single sink[2] = %T, want TUI post-run finalizer", single[2])
 	}
 }
 
@@ -1111,16 +1076,8 @@ func TestDispatchFork_SynthesisSinkNilProviderNoComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	multiPickerFn := func(_ context.Context, eligible []review.AgentChoice) (review.PickedAgents, error) {
-		names := make([]string, 0, len(eligible))
-		for _, e := range eligible {
-			names = append(names, e.Name)
-		}
-		return review.PickedAgents{Names: names, PerRun: ""}, nil
-	}
-
 	installed := []types.AgentName{"agent-a", "agent-b"}
-	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
+	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"})
 	// Profile-native review uses the profile master rather than deps-level synthesis.
 
 	buf := &bytes.Buffer{}
@@ -1156,7 +1113,7 @@ func TestDispatchFork_SingleAgentNoSynthesis(t *testing.T) {
 
 	// cursor is installed but not launchable (ReviewerFor returns nil).
 	installed := []types.AgentName{"cursor"}
-	deps := newDispatchTestDeps(t, installed, nil /* no launchable */, nil, nil)
+	deps := newDispatchTestDeps(t, installed, nil /* no launchable */)
 	_ = provider
 
 	buf := &bytes.Buffer{}
@@ -1170,5 +1127,38 @@ func TestDispatchFork_SingleAgentNoSynthesis(t *testing.T) {
 	}
 	if provider.called {
 		t.Error("synthesis provider should NOT be called on single-agent path")
+	}
+}
+
+func TestComposeMultiAgentSinks_TTYAutoSynthesisRunsBeforeTUIExit(t *testing.T) {
+	t.Parallel()
+	provider := &stubSynthesisProvider{}
+
+	sinks := review.ExposedComposeMultiAgentSinks(review.SinkComposeInputs{
+		Out:               &bytes.Buffer{},
+		IsTTY:             true,
+		AgentNames:        []string{"a", "b"},
+		CancelRun:         func() {},
+		SynthesisProvider: provider,
+		MasterName:        testAgentName,
+	})
+	if len(sinks) != 4 {
+		t.Fatalf("len(sinks) = %d, want 4", len(sinks))
+	}
+	if _, ok := sinks[0].(*review.TUISink); !ok {
+		t.Fatalf("sink[0] = %T, want *TUISink", sinks[0])
+	}
+	if _, ok := sinks[1].(review.DumpSink); !ok {
+		t.Fatalf("sink[1] = %T, want buffered DumpSink", sinks[1])
+	}
+	synth, ok := sinks[2].(review.SynthesisSink)
+	if !ok {
+		t.Fatalf("sink[2] = %T, want SynthesisSink", sinks[2])
+	}
+	if synth.MasterName != testAgentName {
+		t.Fatalf("synthesis sink MasterName = %q, want %s", synth.MasterName, testAgentName)
+	}
+	if synth.OnStart == nil || synth.OnComplete == nil {
+		t.Fatal("auto synthesis should notify the TUI when the final judge starts/completes")
 	}
 }

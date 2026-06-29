@@ -18,7 +18,10 @@
 // without depending on each other.
 package types
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // AgentReviewer drives a single agent's review run.
 type AgentReviewer interface {
@@ -36,9 +39,10 @@ type AgentReviewer interface {
 	// lifecycle hooks adopt the session as a review session.
 	//
 	// Errors from Start indicate failure to construct or launch the process
-	// (e.g., binary not on PATH at exec.Cmd.Start time, invalid argv). Once
-	// Start returns nil, errors during the run flow through Process.Events
-	// (as RunError) and Process.Wait.
+	// (e.g., binary not on PATH at exec.Cmd.Start time, invalid argv). On error,
+	// Start must not retain background work that depends on ctx; no Process exists
+	// for the orchestrator to drain. Once Start returns nil, errors during the
+	// run flow through Process.Events (as RunError) and Process.Wait.
 	Start(ctx context.Context, run RunConfig) (Process, error)
 }
 
@@ -59,6 +63,13 @@ type Process interface {
 	// after the Events channel has closed. Consumers must drain Events until
 	// close before calling Wait; otherwise an implementation that forwards
 	// parsed events from another goroutine may block while sending.
+	//
+	// When Wait returns, the process has exited and any goroutines the Process
+	// spawned (stdout parsers, event forwarders) have finished — implementations
+	// MUST NOT leave goroutines running past Wait. The orchestrator relies on
+	// this: it releases the run context (cancelling any per-reviewer deadline)
+	// right after Wait returns, so a goroutine still bound to that context could
+	// otherwise be cancelled out from under it.
 	Wait() error
 }
 
@@ -117,6 +128,14 @@ type RunConfig struct {
 	// hook via ENTIRE_REVIEW_STARTING_SHA so checkpoint metadata records
 	// the commit that was reviewed.
 	StartingSHA string
+
+	// ReviewerTimeout bounds how long a single reviewer may run before the
+	// orchestrator cancels it (its process is killed and the run is marked
+	// failed-by-timeout) so a stuck agent can't hang the review forever. Zero
+	// or negative means use the orchestrator default (defaultReviewerTimeout).
+	// Sibling reviewers and the judge are unaffected by one reviewer's
+	// timeout.
+	ReviewerTimeout time.Duration
 
 	// EnrichSummary optionally updates the completed run summary before sinks
 	// receive RunFinished. It is used for post-process data such as token

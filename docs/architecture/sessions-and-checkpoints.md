@@ -42,16 +42,15 @@ The low-level `checkpoint.Type` (from `checkpoint/checkpoint.go`) indicates stor
 type Type int
 
 const (
-    Temporary Type = iota // Full state snapshot, shadow branch
-    Committed             // Metadata + commit ref, entire/checkpoints/v1
-                          // (or the local v1.1 read mirror when configured)
+    Ephemeral Type = iota // Full state snapshot, shadow branch
+    Persistent            // Metadata + commit ref, entire/checkpoints/v1
 )
 ```
 
 | Type | Contents | Use Case |
 |------|----------|----------|
-| Temporary | Full state (code + metadata) | Intra-session rewind, pre-commit |
-| Committed | Metadata + commit reference | Permanent record, post-commit rewind |
+| Ephemeral | Full state (code + metadata) | Intra-session rewind, pre-commit |
+| Persistent | Metadata + commit reference | Permanent record, post-commit rewind |
 
 ## Interface
 
@@ -60,62 +59,58 @@ const (
 `strategy/session.go` keeps the `Session` and `Checkpoint` data types used by
 status/explain formatting. Active session state is read from `.git/entire-sessions/`
 through `session.StateStore`; committed checkpoint/session content is read
-through a `checkpoint.GitStore` built with resolved committed refs (for example,
-`checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))`) and
-command-specific strategy methods such as `GetSessionInfo`.
+through the checkpoint facade (`checkpoint.Open(ctx, repo, opts)`, which resolves
+the ref topology and wires the blob fetcher) and command-specific strategy
+methods such as `GetSessionInfo`.
 
 ### Checkpoint Storage (Low-Level)
 
-The `checkpoint.Store` interface (from `checkpoint/checkpoint.go`) provides primitives for reading/writing checkpoints. Used by strategies.
+`checkpoint.Open` returns a `*Stores` facade exposing two independent stores,
+split by lifecycle:
+
+- `stores.Persistent` — the permanent record on `entire/checkpoints/v1`
+  (a `PersistentStore`). This is the pluggable surface.
+- `stores.Ephemeral()` — the git-only shadow-branch store for intra-session
+  state (an `EphemeralStore`).
+
+Both present a symmetric generic surface — `Read` (differentiated by return
+type), `Write` (a sealed request union), and `List`:
 
 ```go
-type Store interface {
-    // Temporary checkpoint operations (shadow branches - full state)
-    WriteTemporary(ctx context.Context, opts WriteTemporaryOptions) (WriteTemporaryResult, error)
-    ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error)
-    ListTemporary(ctx context.Context) ([]TemporaryInfo, error)
+type PersistentStore interface {
+    Read(ctx, checkpointID id.CheckpointID) (*CheckpointSummary, error)
+    List(ctx) ([]CheckpointInfo, error)
+    ReadSessionContent(ctx, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
+    Write(ctx, req WriteRequest) error    // WriteSession / BackfillTranscript / BackfillSummary / BackfillAttribution
+    // ...session reads
+}
 
-    // Committed checkpoint operations (metadata only)
-    // Writes target v1. Reads use the configured committed-read ref.
-    WriteCommitted(ctx context.Context, opts WriteCommittedOptions) error
-    ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
-    ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
-    ReadSessionContentByID(ctx context.Context, checkpointID id.CheckpointID, sessionID string) (*SessionContent, error)
-    ListCommitted(ctx context.Context) ([]CommittedInfo, error)
+type EphemeralStore interface {
+    Read(ctx, baseCommit, worktreeID string) (*ReadEphemeralResult, error)
+    List(ctx) ([]EphemeralInfo, error)
+    Write(ctx, req EphemeralWriteRequest) (WriteEphemeralResult, error) // WriteCheckpoint / WriteTask
+    // ...shadow-branch queries
 }
 ```
 
-Key option types (abbreviated):
+Writes go through the request unions rather than per-operation methods, so a
+mirror/fan-out store just forwards the request value:
 
 ```go
-type WriteTemporaryOptions struct {
-    SessionID      string
-    BaseCommit     string
-    WorktreeID     string   // Internal git worktree identifier (empty for main)
-    ModifiedFiles  []string
-    NewFiles       []string
-    DeletedFiles   []string
-    MetadataDir    string   // Relative path to metadata directory
-    MetadataDirAbs string   // Absolute path
-    CommitMessage  string
-    // ...
-}
+// Persistent: condensation, stop-time backfill, async summary, attribution
+stores.Persistent.Write(ctx, checkpoint.WriteSession{CheckpointID: id, /* ... */})
+stores.Persistent.Write(ctx, checkpoint.BackfillSummary{CheckpointID: id, Summary: s})
 
-type WriteCommittedOptions struct {
-    CheckpointID id.CheckpointID
-    SessionID    string
-    Strategy     string
-    Branch       string
-    Transcript   []byte
-    Prompts      []string
-    Context      []byte
-    FilesTouched []string
-    TokenUsage   *agent.TokenUsage
-    // ...
-}
+// Ephemeral: shadow-branch capture / task checkpoints
+res, _ := stores.Ephemeral().Write(ctx, checkpoint.WriteCheckpoint{BaseCommit: base, /* ... */})
 ```
 
-Token usage is defined in `agent/types.go`:
+`WriteSession`/`BackfillTranscript` are defined types over the option structs
+(`WriteOptions`/`UpdateOptions`); `WriteCheckpoint`/`WriteTask` over
+`WriteEphemeralOptions`/`WriteEphemeralTaskOptions`.
+
+Token usage and skill events live in the leaf `agent/types` package (so the
+contract doesn't pull in the full `agent` package):
 
 ```go
 type TokenUsage struct {
@@ -148,15 +143,21 @@ func (s *ManualCommitStrategy) CondenseSession(
 | Type | Location | Contents |
 |------|----------|----------|
 | Session State | `.git/entire-sessions/<id>.json` | Active session tracking |
-| Temporary | `entire/<commit[:7]>-<worktreeHash[:6]>` branch | Full state (code + metadata) |
-| Committed | `entire/checkpoints/v1` branch (sharded) | Metadata + commit reference |
-| Committed read mirror | `refs/entire/checkpoints/v1.1` ref | Mirror used by v1.1 reads; pushed alongside v1 when opted in |
+| Ephemeral | `entire/<commit[:7]>-<worktreeHash[:6]>` branch | Full state (code + metadata) |
+| Persistent | `entire/checkpoints/v1` branch (sharded) | Metadata + commit reference |
 
 ### Session State
 
 Location: `.git/entire-sessions/<session-id>.json`
 
 Stored in git common dir (shared across worktrees). Tracks active session info.
+
+The state records `Branch` — the branch HEAD pointed at on the session's last turn
+(captured each turn start, so it follows branches created/renamed after the
+session began). `entire resume` (bare, no arg) uses it to list stopped sessions
+and map each back to its branch; for sessions recorded before the field existed
+it falls back to deriving the branch from the session's last checkpoint ID found
+in branch-only commit trailers.
 
 ### Temporary Checkpoints
 
@@ -193,10 +194,11 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 <id[:2]>/<id[2:]>/
 ├── metadata.json        # CheckpointSummary (aggregated stats)
 ├── 0/                   # First session (0-based indexing)
-│   ├── metadata.json    # Session-specific CommittedMetadata
-│   ├── full.jsonl
+│   ├── metadata.json    # Session-specific Metadata
+│   ├── full.jsonl       # Raw agent transcript (CLI rewind/resume/explain)
+│   ├── transcript.jsonl # Compact transcript, scoped to this checkpoint
 │   ├── prompt.txt       # Checkpoint-scoped user prompts
-│   └── content_hash.txt
+│   └── content_hash.txt # sha256 of full.jsonl (dedup short-circuit)
 ├── 1/                   # Second session
 │   ├── metadata.json
 │   ├── full.jsonl
@@ -204,38 +206,28 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 └── 2/                   # Third session...
 ```
 
-#### v1.1 local read mirror
-
-`entire/checkpoints/v1` remains the durable source of truth: committed writes
-target this branch, and push/fetch operations synchronize this branch with
-remotes. When `strategy_options.checkpoints_version` is `"1.1"`, committed reads
-resolve against `refs/entire/checkpoints/v1.1` instead.
-
-The v1.1 ref lives outside `refs/heads/` and does not appear in normal branch
-listings. It is pushed to the configured remote alongside `entire/checkpoints/v1`
-— the resolver adds it to the push set and `PrePush` pushes every ref there.
-Because it is not a branch it gets no `refs/remotes/origin/...` tracking ref,
-and reads still resolve against the local ref rather than bootstrapping it from
-origin (reads target v1.1 while the primary write/fetch ref stays
-`entire/checkpoints/v1`). Entire-managed v1 write and fetch paths advance the
-mirror best-effort after they advance `entire/checkpoints/v1`; mirror failures
-are logged but never fail the primary operation. `PrePush` re-points the mirror
-at the v1 tip before pushing so the published ref reflects the current primary.
-The resume bootstrap that promotes local v1 from origin's remote-tracking ref
-is the deliberate exception — it does not mirror and is skipped entirely in
-v1.1 mode.
-
-Read paths do not create, repair, or advance the mirror before use; they read
-the configured committed-read ref as-is. The repair tool is `entire doctor`:
-it diagnoses a missing, stale (behind v1), or diverged mirror via
-`strategy.DiagnoseCommittedMetadataMirror` and — with confirmation, or
-automatically under `--force` — points the mirror back at the v1 tip.
-`entire doctor bundle` captures the entire-related refs and the mirror
-diagnosis in `entire-refs.txt`.
+**Compact transcript (`transcript.jsonl`):** generated best-effort from
+`full.jsonl` via `transcript/compact` on every committed write and on
+transcript replacement during finalization. Unlike `full.jsonl` (the
+cumulative session transcript, scoped at read time via
+`checkpoint_transcript_start`), `transcript.jsonl` is pre-sliced to the
+checkpoint's own portion (`compact.Compact` is called with
+`StartLine = checkpoint_transcript_start`), so it needs no offset to consume.
+It is written into the checkpoint tree and pushed alongside `full.jsonl`. The
+root `metadata.json` `sessions[].transcript` pointer keeps targeting
+`full.jsonl`; when a compact transcript was generated the session entry also
+carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted
+otherwise) so external readers can find it next to `full.jsonl`.
+CLI read paths (rewind/resume/explain) read `full.jsonl` by filename. Compact
+generation is best-effort: failures are logged but never fail the checkpoint
+write, and during finalization a failed regeneration keeps the previous
+`transcript.jsonl`.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json
 {
+  "cli_version": "0.0.0-dev",
+  "checkpoint_version": "branch-v1",
   "checkpoint_id": "abc123def456",
   "strategy": "manual-commit",
   "branch": "main",
@@ -245,6 +237,7 @@ diagnosis in `entire-refs.txt`.
     {
       "metadata": "/ab/c123def456/0/metadata.json",
       "transcript": "/ab/c123def456/0/full.jsonl",
+      "compact_transcript": "/ab/c123def456/0/transcript.jsonl",
       "content_hash": "/ab/c123def456/0/content_hash.txt",
       "prompt": "/ab/c123def456/0/prompt.txt"
     }
@@ -261,7 +254,7 @@ diagnosis in `entire-refs.txt`.
 
 `checkpoints_count` in the root summary is the aggregate displayed "steps" count: the sum of per-session prompt-window counts. Despite the historical name, it is not a count of checkpoint records.
 
-**Session-level metadata.json (`CommittedMetadata`, abbreviated):**
+**Session-level metadata.json (`Metadata`, abbreviated):**
 ```json
 {
   "checkpoint_id": "abc123def456",
@@ -283,6 +276,41 @@ When condensing multiple concurrent sessions:
 - New `session_id` values are appended at the next index, so higher-numbered folders correspond to more recently introduced sessions, not necessarily the chronologically latest activity
 - `sessions` array in `CheckpointSummary` maps each session to its file paths
 - `files_touched` is merged from all sessions
+
+### Checkpoint Policy
+
+Repo-wide checkpoint policy lives at `refs/entire/policies/checkpoint`. The ref
+points at a commit whose tree contains `policy.json`:
+
+```json
+{
+  "checkpoint_version": "branch-v1",
+  "checkpoint_min_version": "branch-v1"
+}
+```
+
+`checkpoint_version` is the checkpoint format new writes should use.
+`checkpoint_min_version` is the oldest checkpoint format clients must be able
+to read for this repo. Missing policy fields default to `branch-v1`.
+
+Policy follows the configured checkpoint remote. `entire policy checkpoint`
+fetches the latest remote policy before validating requested changes, updates
+the local policy ref, and pushes only `refs/entire/policies/checkpoint`.
+Policy commits use the same signing settings as checkpoint commits.
+
+Hooks that run while ordinary git operations must keep working offline:
+post-commit and agent lifecycle hooks read only the local policy ref. If the
+local policy requires checkpoint writes this CLI does not support, they skip
+writing checkpoint data and warn only when running in an interactive terminal.
+The pre-push hook is the regular online sync point: it compares the remote
+policy ref with the local ref, fetches updated policy when needed, and evaluates
+the refreshed policy before pushing `entire/checkpoints/v1`. If policy refresh
+fails, the hook warns or logs the failure and lets the normal push continue.
+
+User-driven commands warn when the local policy indicates the CLI should be
+upgraded. Commands that need to decode checkpoint contents, such as
+`entire checkpoint explain` and `entire session resume`, fail when the target
+checkpoint uses an unsupported `checkpoint_version`.
 
 ### Checkpoint ID Linking
 
@@ -350,6 +378,7 @@ are for human readability in `git log` only. The CLI always reads from the tree 
 │     │   (checkpoint_id: "a3b2c4d5e6f7")          │
 │     ├── 0/                                       │
 │     │   ├── full.jsonl                           │
+│     │   ├── transcript.jsonl                     │
 │     │   └── prompt.txt                           │
 │     └── ...                                      │
 │                                                   │

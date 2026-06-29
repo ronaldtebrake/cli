@@ -21,6 +21,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -65,6 +66,39 @@ func TestAttach_TranscriptNotFound(t *testing.T) {
 	err := runAttach(context.Background(), &out, "nonexistent-session-id", agent.AgentNameClaudeCode, attachOptions{Force: true})
 	if err == nil {
 		t.Fatal("expected error for missing transcript")
+	}
+}
+
+func TestAttachRejectsUnsupportedCheckpointWritePolicy(t *testing.T) {
+	setupAttachTestRepo(t)
+
+	repoRoot := mustGetwd(t)
+	repo, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkpointpolicy.WriteLocal(context.Background(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
+		CheckpointVersion:    "refs-v1",
+		CheckpointMinVersion: "branch-v1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "test-attach-policy-unsupported"
+	setupClaudeTranscript(t, sessionID, `{"type":"user","message":{"role":"user","content":"create a file"},"uuid":"uuid-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]},"uuid":"uuid-2"}
+`)
+
+	var out bytes.Buffer
+	err = runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, attachOptions{Force: true})
+	if err == nil {
+		t.Fatal("expected unsupported checkpoint policy error")
+	}
+	if !strings.Contains(err.Error(), `checkpoint_version "refs-v1"`) {
+		t.Fatalf("error = %v, want checkpoint policy version", err)
+	}
+	if _, refErr := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true); refErr == nil {
+		t.Fatal("metadata branch exists after rejected attach")
 	}
 }
 
@@ -339,9 +373,9 @@ func TestAttach_AppendsAsAdditionalSessionWhenIDDiffers(t *testing.T) {
 	}
 
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	summary, err := store.ReadCommitted(context.Background(), checkpointID)
+	summary, err := store.Read(context.Background(), checkpointID)
 	if err != nil {
-		t.Fatalf("ReadCommitted(%s): %v", checkpointID, err)
+		t.Fatalf("Read(%s): %v", checkpointID, err)
 	}
 	if summary == nil {
 		t.Fatalf("checkpoint %s summary nil after two attaches", checkpointID)
@@ -397,9 +431,9 @@ func TestAttach_RefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	summary, err := store.ReadCommitted(context.Background(), "ffffffffeeee")
+	summary, err := store.Read(context.Background(), "ffffffffeeee")
 	if err != nil {
-		t.Fatalf("ReadCommitted: %v", err)
+		t.Fatalf("Read: %v", err)
 	}
 	if summary != nil {
 		t.Errorf("attach should NOT have created checkpoint ffffffffeeee locally; found %+v", summary)
@@ -409,7 +443,7 @@ func TestAttach_RefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) {
 // Regression for https://github.com/entireio/cli/pull/1014#pullrequestreview-copilot:
 // Bob clones a repo where Alice's checkpoint is on the remote-tracking ref
 // (refs/remotes/origin/entire/checkpoints/v1) but the local branch doesn't
-// exist yet. ReadCommitted falls back to the remote-tracking tree, so a naive
+// exist yet. Read falls back to the remote-tracking tree, so a naive
 // "read and check" guard would think all is well. But WriteCommitted would
 // then create a *fresh* orphan local branch, and Bob's push would clobber
 // Alice's data on origin. Attach must refuse in this shape.
@@ -425,7 +459,7 @@ func TestAttach_RefusesWhenCheckpointOnlyInRemoteTrackingRef(t *testing.T) {
 	// Seed the local branch with a checkpoint representing Alice's session.
 	alicesCheckpoint := id.MustCheckpointID("abcdef012345")
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	if writeErr := store.WriteCommitted(context.Background(), cpkg.WriteCommittedOptions{
+	if writeErr := store.Write(context.Background(), cpkg.Session{
 		CheckpointID: alicesCheckpoint,
 		SessionID:    "alice-original",
 		Strategy:     "manual-commit",
@@ -538,43 +572,6 @@ func TestAttach_SetsSessionTurnCount(t *testing.T) {
 	}
 	if state.SessionTurnCount != 2 {
 		t.Errorf("SessionTurnCount = %d, want 2", state.SessionTurnCount)
-	}
-}
-
-func TestAttach_MirrorsToV1CustomRefWhenOptedIn(t *testing.T) {
-	setupAttachTestRepo(t)
-
-	repoRoot := mustGetwd(t)
-	sessionID := "test-attach-v1-1-mirror"
-	setupClaudeTranscript(t, sessionID, `{"type":"user","message":{"role":"user","content":"hello"},"uuid":"u1"}
-{"type":"assistant","message":{"role":"assistant","content":"hi"},"uuid":"a1"}
-`)
-
-	var out bytes.Buffer
-	opts := attachOptions{
-		Force: true,
-		entireSettings: &settings.EntireSettings{
-			StrategyOptions: map[string]any{"checkpoints_version": "1.1"},
-		},
-	}
-	if err := runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, opts); err != nil {
-		t.Fatalf("runAttach failed: %v", err)
-	}
-
-	repo, err := git.PlainOpen(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	v1Ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
-	if err != nil {
-		t.Fatalf("v1 metadata branch missing: %v", err)
-	}
-	customRef, err := repo.Reference(plumbing.ReferenceName(paths.MetadataRefName), true)
-	if err != nil {
-		t.Fatalf("v1.1 custom ref missing: %v", err)
-	}
-	if v1Ref.Hash() != customRef.Hash() {
-		t.Errorf("v1.1 custom ref = %s, want %s (v1 tip)", customRef.Hash(), v1Ref.Hash())
 	}
 }
 
@@ -1148,9 +1145,9 @@ func TestAttach_ReviewAppendsAsAdditionalSessionWhenIDDiffers(t *testing.T) {
 	// losing the original attach. The summary has only one session entry
 	// despite two attach calls with different IDs.
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	summary, err := store.ReadCommitted(context.Background(), checkpointID)
+	summary, err := store.Read(context.Background(), checkpointID)
 	if err != nil {
-		t.Fatalf("ReadCommitted(%s): %v", checkpointID, err)
+		t.Fatalf("Read(%s): %v", checkpointID, err)
 	}
 	if summary == nil {
 		t.Fatalf("checkpoint %s summary nil after two attaches", checkpointID)
@@ -1224,9 +1221,9 @@ func TestAttach_ReviewRefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) 
 		t.Fatal(err)
 	}
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	summary, err := store.ReadCommitted(context.Background(), "ffffffffeeee")
+	summary, err := store.Read(context.Background(), "ffffffffeeee")
 	if err != nil {
-		t.Fatalf("ReadCommitted: %v", err)
+		t.Fatalf("Read: %v", err)
 	}
 	if summary != nil {
 		t.Errorf("attach should NOT have created checkpoint ffffffffeeee locally; found %+v", summary)
@@ -1296,7 +1293,7 @@ func TestAttach_ReviewWithExistingMetadataOnlyCheckpointErrorsEvenWithoutSession
 	sessionID := "test-attach-review-metadata-only"
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
-	if err := store.WriteCommitted(context.Background(), cpkg.WriteCommittedOptions{
+	if err := store.Write(context.Background(), cpkg.Session{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		Strategy:     strategy.StrategyNameManualCommit,
@@ -1501,6 +1498,11 @@ func setupAttachTestRepo(t *testing.T) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	testutil.InitRepo(t, tmpDir)
+	// attach runs `git commit --amend` via the git CLI, which inherits this
+	// process's env. Pin git config (gc.auto=0, gc.autoDetach=false) so git
+	// doesn't fork a detached `git gc` that keeps writing into the temp repo's
+	// .git/objects and races t.TempDir cleanup ("directory not empty", COR-394).
+	testutil.IsolateGitConfigEnv(t)
 	testutil.WriteFile(t, tmpDir, "init.txt", "init")
 	testutil.GitAdd(t, tmpDir, "init.txt")
 	testutil.GitCommit(t, tmpDir, "init")

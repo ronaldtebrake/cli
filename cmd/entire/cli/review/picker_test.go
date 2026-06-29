@@ -98,42 +98,6 @@ func TestMergePickerResults(t *testing.T) {
 	}
 }
 
-// TestSelectReviewAgent_OverrideResolvesSpecificAgent pins that --agent flag
-// resolves a non-default configured agent when the map has multiple entries.
-func TestSelectReviewAgent_OverrideResolvesSpecificAgent(t *testing.T) {
-	t.Parallel()
-	reviewMap := map[string]settings.ReviewConfig{
-		testAgentName:  {Skills: []string{"/a"}},
-		testCodexAgent: {Skills: []string{"/b"}},
-	}
-
-	name, cfg, err := review.SelectReviewAgent(reviewMap, testCodexAgent)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if name != testCodexAgent || len(cfg.Skills) != 1 || cfg.Skills[0] != "/b" {
-		t.Errorf("override=%s returned name=%q cfg=%+v", testCodexAgent, name, cfg)
-	}
-
-	// Default (no override) must remain the alphabetically-first agent.
-	name, _, err = review.SelectReviewAgent(reviewMap, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if name != testAgentName {
-		t.Errorf("default pick = %q, want %q", name, testAgentName)
-	}
-
-	// Unknown override must surface a helpful error listing configured agents.
-	_, _, err = review.SelectReviewAgent(reviewMap, "gemini")
-	if err == nil {
-		t.Fatal("expected error for unconfigured --agent value")
-	}
-	if !strings.Contains(err.Error(), testAgentName) || !strings.Contains(err.Error(), testCodexAgent) {
-		t.Errorf("error should list configured agents; got: %v", err)
-	}
-}
-
 // TestSplitSavedPicks pins the partition logic used by the picker to
 // pre-select previously-saved skills.
 func TestSplitSavedPicks(t *testing.T) {

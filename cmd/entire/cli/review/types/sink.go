@@ -16,8 +16,10 @@ import "time"
 // multi-agent runs (CU8 fans events from N agents into one dispatch
 // loop). Sinks need not internally synchronize.
 //
-// Sinks MUST NOT block. AgentEvent runs on the dispatch goroutine; a
-// slow sink stalls the entire run and starves all other sinks.
+// AgentEvent implementations MUST NOT block: AgentEvent runs on the dispatch
+// goroutine, so a slow sink stalls the live run and starves all other sinks.
+// RunFinished is serialized after all agent processes have drained; post-run
+// sinks may do bounded work there (render dumps, run synthesis, tear down TUI).
 type Sink interface {
 	// AgentEvent is called for every event emitted by an agent's
 	// process during the run. Events are delivered in-order within a

@@ -172,7 +172,7 @@ func TestResolveContextForAPI(t *testing.T) {
 
 	// The cross-core case the slice exists to fix: the active context is a prod
 	// login, but the only context eligible for the partial.to API is the
-	// staging one — pick it without any operator override.
+	// staging one — pick it without any operator-side configuration.
 	t.Run("sole eligible context used despite unrelated active", func(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(apiHandler(t, "https://us.auth.partial.to", "https://eu.auth.partial.to"))

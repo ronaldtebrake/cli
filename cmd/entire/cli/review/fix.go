@@ -16,7 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 )
 
-const reviewCommandBinary = "entire inspect"
+const reviewCommandBinary = "entire review"
 
 func runReviewFindings(ctx context.Context, cmd *cobra.Command, silentErr func(error) error) error {
 	worktreeRoot, err := paths.WorktreeRoot(ctx)

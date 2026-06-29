@@ -185,7 +185,7 @@ func fetchLatestVersion(ctx context.Context) (string, error) {
 	}
 
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "entire-cli")
+	req.Header.Set("User-Agent", versioninfo.UserAgent())
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -229,7 +229,7 @@ func fetchLatestNightlyVersion(ctx context.Context) (string, error) {
 	}
 
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "entire-cli/"+versioninfo.Version)
+	req.Header.Set("User-Agent", versioninfo.UserAgent())
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -408,6 +408,13 @@ func updateCommand(currentVersion string) string {
 		return "curl -fsSL https://entire.io/install.sh | bash -s -- --channel nightly"
 	}
 	return "curl -fsSL https://entire.io/install.sh | bash"
+}
+
+func UpdateCommandForCurrentBinary(currentVersion string) string {
+	if !canAutoInstall() {
+		return downloadsURL
+	}
+	return updateCommand(currentVersion)
 }
 
 // printNotification prints the version update notification to the user.

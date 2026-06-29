@@ -36,9 +36,7 @@ func buildGeminiReviewCmd(ctx context.Context, cfg reviewtypes.RunConfig) *exec.
 	// argv placeholder to trigger headless (non-interactive) mode, and pipe
 	// the actual prompt via stdin to avoid argv size limits.
 	args := []string{"-p", " "}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
-	}
+	args = review.AppendModelFlag(args, cfg.Model)
 	cmd := exec.CommandContext(ctx, "gemini", args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	// Agent name must equal string(ag.Name()) — adoptReviewEnv compares

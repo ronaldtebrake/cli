@@ -18,6 +18,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/osroot"
+	"github.com/entireio/cli/cmd/entire/cli/proclive"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
 )
 
@@ -57,6 +58,12 @@ const (
 	// to Kind.IsInvestigate so the checkpoint's HasInvestigation umbrella
 	// flag keeps covering them.
 	KindAgentInvestigate Kind = "agent_investigate"
+
+	// KindImported tags a checkpoint created by `entire import` from a
+	// pre-existing agent transcript. Imported checkpoints are read-only and
+	// commit-less; they live on the v1 metadata branch and push like any other
+	// checkpoint.
+	KindImported Kind = "imported"
 )
 
 // IsReview reports whether this Kind counts as "a review happened" for the
@@ -105,6 +112,14 @@ type State struct {
 	// WorktreeID is the internal git worktree identifier (empty for main worktree)
 	// Derived from .git/worktrees/<name>/, stable across git worktree move
 	WorktreeID string `json:"worktree_id,omitempty"`
+
+	// Branch is the git branch HEAD pointed at the last time this session took a
+	// turn. Captured on each turn start so it tracks branches created or renamed
+	// after the session began. Empty when HEAD was detached or for sessions
+	// recorded before this field existed (callers derive it from commit trailers
+	// as a fallback). Lets `entire resume` map a stopped session back to its
+	// branch without the user remembering it.
+	Branch string `json:"branch,omitempty"`
 
 	// StartedAt is when the session was started
 	StartedAt time.Time `json:"started_at"`
@@ -225,6 +240,15 @@ type State struct {
 	// than being captured by hooks during normal agent execution.
 	AttachedManually bool `json:"attached_manually,omitempty"`
 
+	// ContextInjectionDecided records that the once-per-session model-context
+	// injection (e.g. the `entire trail` pointer) has been handled for this
+	// session, so the dispatcher does not re-inject on later turns. Set on the
+	// first normal turn regardless of whether anything was injected: the prompt
+	// path reads only clone-local cached trail enablement, and a missing/stale
+	// false cache fails closed (miss the hint) rather than retrying/spamming.
+	// Review/investigate sessions leave this false because they skip injection.
+	ContextInjectionDecided bool `json:"context_injection_decided,omitempty"`
+
 	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor")
 	AgentType types.AgentType `json:"agent_type,omitempty"`
 
@@ -234,6 +258,10 @@ type State struct {
 
 	// Token usage tracking (accumulated across all checkpoints in this session)
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
+
+	// CheckpointTokenUsage tracks hook-provided token usage since the last condensation.
+	// This is checkpoint-scoped; TokenUsage remains the session-wide total.
+	CheckpointTokenUsage *agent.TokenUsage `json:"checkpoint_token_usage,omitempty"`
 
 	// SkillEvents records explicit native skill signals observed during this session.
 	// Stored as sidecar metadata so consumers can collapse skill-related transcript events
@@ -283,6 +311,15 @@ type State struct {
 	// PendingPromptAttribution holds attribution calculated at prompt start (before agent runs).
 	// This is moved to PromptAttributions when SaveStep is called.
 	PendingPromptAttribution *PromptAttribution `json:"pending_prompt_attribution,omitempty"`
+
+	// Owner fingerprints the process that owns this session's agent turn,
+	// captured at each turn start via proclive.ResolveOwner. It lets liveness
+	// checks detect an ACTIVE session whose agent has exited (clean /exit,
+	// crash, kill, terminal close, reboot) without a SessionStop hook firing —
+	// see OwnerExited. nil for legacy sessions or when the owner couldn't be
+	// resolved, in which case liveness falls back to the StuckActiveThreshold
+	// timeout. Only meaningful on Owner.Host.
+	Owner *proclive.Identity `json:"owner,omitempty"`
 }
 
 // PromptAttribution captures line-level attribution data at the start of each prompt.
@@ -391,6 +428,31 @@ func (s *State) IsStuckActive() bool {
 		ref = &s.StartedAt
 	}
 	return time.Since(*ref) > StuckActiveThreshold
+}
+
+// OwnerLiveness reports the liveness of this session's recorded owner process.
+// It returns proclive.LivenessUnknown when no owner was recorded (legacy
+// sessions, or sessions where the owner couldn't be resolved), so callers can
+// fall back to the time-based IsStuckActive heuristic.
+func (s *State) OwnerLiveness() proclive.Liveness {
+	if s.Owner == nil {
+		return proclive.LivenessUnknown
+	}
+	return proclive.Check(*s.Owner)
+}
+
+// OwnerExited reports true when this session is ACTIVE but its owning agent
+// process is gone — exited cleanly, crashed, was killed, or the machine
+// rebooted — without a SessionStop hook firing. Unlike IsStuckActive (a
+// time-based heuristic), this is detected immediately, regardless of how
+// recently the session interacted. It returns false when liveness is Unknown
+// (no owner recorded, cross-host state, or an unsupported platform) so behavior
+// degrades to the StuckActiveThreshold timeout.
+func (s *State) OwnerExited() bool {
+	if !s.Phase.IsActive() {
+		return false
+	}
+	return s.OwnerLiveness() == proclive.LivenessDead
 }
 
 func (s *State) IsStale() bool {
