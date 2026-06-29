@@ -43,12 +43,14 @@ With Entire, you can:
 ## Quick Start
 
 ```bash
-# Install stable via Homebrew
+# To use Homebrew, first tap:
 brew tap entireio/tap
+brew trust entireio/tap
+
+# Install stable via Homebrew
 brew install --cask entire
 
 # Or install nightly via Homebrew
-brew tap entireio/tap
 brew install --cask entire@nightly
 
 # Or install stable via install.sh
@@ -85,6 +87,7 @@ Entire currently ships two release channels:
 
 How to use each channel:
 
+- Homebrew (one-time setup): `brew tap entireio/tap && brew trust entireio/tap`
 - Homebrew stable: `brew install --cask entire`
 - Homebrew nightly: `brew install --cask entire@nightly`
 - `install.sh` stable: `curl -fsSL https://entire.io/install.sh | bash`
