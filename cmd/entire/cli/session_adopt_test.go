@@ -1057,7 +1057,7 @@ func TestSessionAdopt_RejectsSourceSessionWithoutWorktreeMetadata(t *testing.T) 
 }
 
 func TestStateStoreForWorktreeIgnoresGitStderrOnSuccess(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsGOOS {
 		t.Skip("uses a POSIX shell script fake git")
 	}
 
@@ -1086,6 +1086,42 @@ printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
 	}
 	if gotCommonDir != filepath.Clean(commonDir) {
 		t.Fatalf("commonDir = %q, want %q", gotCommonDir, filepath.Clean(commonDir))
+	}
+}
+
+func TestStateStoreForWorktreePreservesGitCommonDirSymlink(t *testing.T) {
+	if runtime.GOOS == windowsGOOS {
+		t.Skip("uses a POSIX shell script fake git")
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	realCommonDir := filepath.Join(t.TempDir(), "real-common.git")
+	if err := os.MkdirAll(realCommonDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	commonDirLink := filepath.Join(t.TempDir(), "common-link.git")
+	if err := os.Symlink(realCommonDir, commonDirLink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_WORKTREE_ROOT", sourceRoot)
+	t.Setenv("FAKE_GIT_COMMON_DIR", commonDirLink)
+
+	_, _, gotCommonDir, err := stateStoreForWorktree(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("stateStoreForWorktree failed: %v", err)
+	}
+	if gotCommonDir != filepath.Clean(commonDirLink) {
+		t.Fatalf("commonDir = %q, want git-reported symlink path %q", gotCommonDir, filepath.Clean(commonDirLink))
 	}
 }
 

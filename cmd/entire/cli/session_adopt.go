@@ -270,9 +270,6 @@ func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.S
 		commonDir = filepath.Join(absWorktree, commonDir)
 	}
 	commonDir = filepath.Clean(commonDir)
-	if resolved, err := filepath.EvalSymlinks(commonDir); err == nil {
-		commonDir = resolved
-	}
 
 	return session.NewStateStoreWithDir(filepath.Join(commonDir, session.SessionStateDirName)), sourceRoot, commonDir, nil
 }
