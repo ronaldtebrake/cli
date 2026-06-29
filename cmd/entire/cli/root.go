@@ -127,6 +127,7 @@ func NewRootCmd() *cobra.Command {
 	// Hidden infrastructure.
 	cmd.AddCommand(newHooksCmd())
 	cmd.AddCommand(newTrailCmd())
+	cmd.AddCommand(newRunnerCmd()) // 'runner' (setup/tune runners); hidden during maturation
 	cmd.AddCommand(newSendAnalyticsCmd())
 	cmd.AddCommand(newCurlBashPostInstallCmd())
 

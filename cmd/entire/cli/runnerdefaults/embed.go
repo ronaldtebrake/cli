@@ -1,5 +1,5 @@
 // Package runnerdefaults embeds the canonical generic trail runner configs, so
-// `entire trail tune` can scaffold them into a repository that has none yet.
+// `entire runner setup` can scaffold them into a repository that has none yet.
 // These are the structural contract (output adapters, result types, runtime)
 // plus generic prompt templates; tune tailors the templates to the repo.
 package runnerdefaults

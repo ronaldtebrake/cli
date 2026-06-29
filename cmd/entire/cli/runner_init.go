@@ -76,3 +76,21 @@ func confirmCreateRunners(n int) (bool, error) {
 	}
 	return ok, nil
 }
+
+// confirmTuneExisting asks whether to re-tailor runners that already exist —
+// the re-run case where there is nothing to scaffold.
+func confirmTuneExisting() (bool, error) {
+	var ok bool
+	form := NewAccessibleForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Runners are already configured for this repo. Tune them to this repo now?").
+				Description("Re-tailors the runner prompts using fresh repository signal.").
+				Value(&ok),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return false, fmt.Errorf("runner-tune prompt cancelled: %w", err)
+	}
+	return ok, nil
+}

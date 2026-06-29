@@ -10,12 +10,13 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
 	"github.com/spf13/cobra"
 )
 
-type trailTuneOptions struct {
+type runnerSetupOptions struct {
 	runner       string // optional: limit to one runner (id, with or without "trail-")
 	run          bool   // headless apply vs. print prompt
 	assumeYes    bool   // skip the create-defaults confirmation
@@ -25,7 +26,7 @@ type trailTuneOptions struct {
 	insecureHTTP bool
 }
 
-func newTrailTuneCmd() *cobra.Command {
+func newRunnerSetupCmd() *cobra.Command {
 	var (
 		run       bool
 		assumeYes bool
@@ -35,22 +36,23 @@ func newTrailTuneCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "tune [<runner>]",
-		Short: "Tailor trail runner prompts to this repository",
-		Long: `Tune the .entire/runners/*.json prompt templates to fit this repository.
+		Use:   "setup [<runner>]",
+		Short: "Create and tailor this repository's trail runners",
+		Long: `Set up the .entire/runners/*.json evaluators for this repository.
 
-The shipped runner templates (risk, confidence, drift, …) are written for a
-generic web/backend app. "tune" gathers signal about THIS repo — its docs and
-structure, merged PRs and issues, checkpoint churn hotspots, and past trail
-findings — and produces an instruction prompt to rewrite the templates so their
-dimensions and score bands fit what actually matters here.
+Runners (risk, confidence, drift, security, review, …) score and review a
+branch's changes. The shipped templates are generic; "setup" tailors them to
+THIS repo using gathered signal — its docs and structure, merged PRs and
+issues, checkpoint churn hotspots, and past trail findings.
 
-By default it prints that prompt to stdout, ready to paste into your agent.
-With --run it executes the prompt headlessly through your configured summary
-provider and rewrites the runner files in place (review with git diff).
+- In a repo with no runners, setup creates the default set first (use --yes to
+  skip the confirmation), then tailors them.
+- Run again in a repo that already has runners and setup offers to re-tune them.
 
-If the repo has no runners yet, tune offers to create the default set first
-(use --yes to skip the confirmation), then tailors them.
+By default setup prints the tailoring prompt to stdout, ready to paste into
+your agent. With --run it executes the prompt headlessly through your
+configured summary provider and rewrites the runner files in place (review with
+git diff).
 
 If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 		Args: cobra.MaximumNArgs(1),
@@ -59,14 +61,14 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 			if len(args) == 1 {
 				runner = args[0]
 			}
-			return runTrailTune(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), trailTuneOptions{
+			return runRunnerSetup(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), runnerSetupOptions{
 				runner:       runner,
 				run:          run,
 				assumeYes:    assumeYes,
 				debugDir:     debugDir,
 				sources:      sources,
 				limit:        limit,
-				insecureHTTP: trailInsecureHTTP(cmd),
+				insecureHTTP: runnerInsecureHTTP(cmd),
 			})
 		},
 	}
@@ -84,7 +86,7 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 	return cmd
 }
 
-func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions) error {
+func runRunnerSetup(ctx context.Context, w, errW io.Writer, opts runnerSetupOptions) error {
 	src, err := parseTuneSources(opts.sources)
 	if err != nil {
 		return err
@@ -95,11 +97,28 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 		return fmt.Errorf("not a git repository: %w", err)
 	}
 
-	// Onboarding: a repo with no runners yet gets the default set scaffolded
-	// (on confirmation), which tune then tailors below.
+	// A repo with no runners gets the default set scaffolded (on confirmation),
+	// which setup then tailors below.
 	created, err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes)
 	if err != nil {
 		return err
+	}
+
+	// Re-run on an already-configured repo: setup is done, so offer to re-tune
+	// rather than silently re-emitting. --run is taken as an explicit yes.
+	if len(created) == 0 && !opts.run {
+		if !interactive.CanPromptInteractively() {
+			fmt.Fprintln(errW, "Runners already configured. Re-run with --run to tailor them headlessly.")
+			return nil
+		}
+		proceed, err := confirmTuneExisting()
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			fmt.Fprintln(errW, "Runners already configured. Nothing to do.")
+			return nil
+		}
 	}
 
 	runners, err := loadTuneRunners(repoRoot, opts.runner)
@@ -238,7 +257,7 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 	if untailored := untailoredRunners(createdIDs, tailored); len(untailored) > 0 {
 		fmt.Fprintf(errW, "\n%d runner(s) kept as working defaults (generic, not tailored to this repo): %s\n",
 			len(untailored), strings.Join(untailored, ", "))
-		fmt.Fprintln(errW, "They are functional as-is; re-run `entire trail tune --run` to tailor them.")
+		fmt.Fprintln(errW, "They are functional as-is; re-run `entire runner setup --run` to tailor them.")
 	}
 	return nil
 }
