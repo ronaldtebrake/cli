@@ -13,9 +13,10 @@ import (
 )
 
 // newRepoCmd is the hidden `entire repo` command group: control-plane
-// repository lifecycle (create, list within a project, get, delete) on the
-// Entire control plane. Git content operations (clone, log, diff, …) are
-// intentionally out of scope here. Surfaced via `entire labs`.
+// repository lifecycle (create, list within a project, get, delete) plus the
+// `clone` convenience that resolves a mirror and shells out to `git clone`.
+// Other git content operations (log, diff, …) remain intentionally out of scope
+// here. Surfaced via `entire labs`.
 func newRepoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "repo",
@@ -27,6 +28,7 @@ func newRepoCmd() *cobra.Command {
 	cmd.AddCommand(newRepoListCmd())
 	cmd.AddCommand(newRepoGetCmd())
 	cmd.AddCommand(newRepoDeleteCmd())
+	cmd.AddCommand(newRepoCloneCmd())
 	cmd.AddCommand(newRepoMirrorCmd())
 	return cmd
 }

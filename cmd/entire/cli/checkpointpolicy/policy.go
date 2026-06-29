@@ -52,3 +52,25 @@ func ValidatePolicy(policy Policy) error {
 
 	return nil
 }
+
+func RequiresUpgrade(policy Policy) bool {
+	policy = Normalize(policy)
+	minVersion, err := ParseFormat(policy.CheckpointMinVersion)
+	if err != nil {
+		return true
+	}
+	return !CanRead(minVersion)
+}
+
+func UnsupportedWrite(policy Policy) bool {
+	policy = Normalize(policy)
+	version, err := ParseFormat(policy.CheckpointVersion)
+	if err != nil {
+		return true
+	}
+	return !CanWrite(version)
+}
+
+func UpgradeWarning(updateCommand string) string {
+	return fmt.Sprintf("[entire] This repository requires checkpoint support newer than this Entire CLI.\n[entire] Upgrade Entire, then rerun the command:\n[entire]   %s\n", updateCommand)
+}
