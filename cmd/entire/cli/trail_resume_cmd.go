@@ -217,7 +217,7 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 			forge, owner, repo = expectedRepo.Forge, expectedRepo.Owner, expectedRepo.Repo
 		}
 
-		found, err := resolveTrailBySelector(ctx, client, forge, owner, repo, opts.Selector)
+		found, err := resolveTrailBySelector(ctx, client, forge, owner, repo, opts.Selector, opts.ExpectedBranch)
 		if err != nil {
 			return err
 		}
