@@ -1022,6 +1022,40 @@ func TestSessionAdopt_FiltersSharedSourceStoreByFromWorktree(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_RejectsSourceSessionWithoutWorktreeMetadata(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+
+	sessionID := "missing-worktree-metadata"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:           sessionID,
+		AgentType:           agent.AgentTypeClaudeCode,
+		StartedAt:           time.Now().Add(-5 * time.Minute),
+		LastInteractionTime: &lastInteraction,
+		Phase:               session.PhaseActive,
+		BaseCommit:          testutil.GetHeadHash(t, sourceRepo),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := selectAdoptSourceSession(context.Background(), sourceStore, sourceRepo, sessionID)
+	if err == nil {
+		t.Fatal("selectAdoptSourceSession succeeded for explicit session without worktree metadata, want refusal")
+	}
+	if !strings.Contains(err.Error(), "belongs to") || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("selectAdoptSourceSession error = %v, want missing-worktree ownership refusal", err)
+	}
+
+	_, err = selectAdoptSourceSession(context.Background(), sourceStore, sourceRepo, "")
+	if err == nil {
+		t.Fatal("selectAdoptSourceSession auto-selected session without worktree metadata, want no candidate")
+	}
+	if !strings.Contains(err.Error(), "no recent active sessions") {
+		t.Fatalf("selectAdoptSourceSession error = %v, want no recent active sessions", err)
+	}
+}
+
 func TestStateStoreForWorktreeIgnoresGitStderrOnSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell script fake git")

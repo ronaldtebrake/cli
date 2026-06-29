@@ -339,7 +339,7 @@ func sessionBelongsToSourceWorktree(state *session.State, sourceWorktree, source
 	if state.WorktreePath != "" {
 		return sameAdoptPath(state.WorktreePath, sourceWorktree)
 	}
-	return true
+	return false
 }
 
 func adoptSessionWorktreeLabel(state *session.State) string {
