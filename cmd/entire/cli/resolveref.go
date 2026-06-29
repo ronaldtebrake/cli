@@ -154,10 +154,11 @@ func resolveRepoRef(ctx context.Context, c *coreapi.Client, ref, projectRef stri
 		}
 		return "", err
 	}
-	if repo, ok := out.Repo.Get(); ok {
-		return repo.ID, nil
+	repo, ok := out.Repo.Get()
+	if !ok {
+		return "", noRepoNamedErr(ref)
 	}
-	return "", noRepoNamedErr(ref)
+	return repo.ID, nil
 }
 
 func noOrgNamedErr(name string) error {
