@@ -149,9 +149,12 @@ func TestKnownTrailResumeSessionsForContextTreatsDiscoveryErrorAsUnavailable(t *
 		SessionID:    "known-session",
 		CheckpointID: "abc123def456",
 	}}
-	got, unavailable := knownTrailResumeSessionsForContext(sessions, errors.New("branch not found locally or on origin"))
+	got, skipped, unavailable := knownTrailResumeSessionsForContext(sessions, 2, errors.New("branch not found locally or on origin"))
 	if len(got) != 0 {
 		t.Fatalf("knownTrailResumeSessionsForContext() len = %d, want 0: %#v", len(got), got)
+	}
+	if skipped != 0 {
+		t.Fatalf("skipped = %d, want 0 when sessions are unavailable", skipped)
 	}
 	if unavailable != "branch not found locally or on origin" {
 		t.Fatalf("unavailable = %q", unavailable)
@@ -162,6 +165,7 @@ func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	const newSessionID = "new-session"
 	ctx := buildTrailResumeContext(api.TrailResource{
 		ID:     "trl_1",
 		Number: 575,
@@ -178,7 +182,7 @@ func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
 			CheckpointID: "bbbbbbbbbbbb",
 		},
 		{
-			SessionID:    "new-session",
+			SessionID:    newSessionID,
 			Agent:        "codex",
 			LastPrompt:   "newer work",
 			LastActive:   now,
@@ -189,13 +193,13 @@ func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
 	if len(ctx.Sessions) != 2 {
 		t.Fatalf("sessions len = %d, want 2: %#v", len(ctx.Sessions), ctx.Sessions)
 	}
-	if ctx.Sessions[0].SessionID != "new-session" || ctx.Sessions[0].CheckpointID != "aaaaaaaaaaaa" {
+	if ctx.Sessions[0].SessionID != newSessionID || ctx.Sessions[0].CheckpointID != "aaaaaaaaaaaa" {
 		t.Fatalf("first session = %#v, want newest trail session", ctx.Sessions[0])
 	}
 	if ctx.Sessions[1].SessionID != "old-session" {
 		t.Fatalf("second session = %#v, want old-session", ctx.Sessions[1])
 	}
-	if ctx.DefaultResume == nil || ctx.DefaultResume.SessionID != "new-session" {
+	if ctx.DefaultResume == nil || ctx.DefaultResume.SessionID != newSessionID {
 		t.Fatalf("DefaultResume = %#v, want new-session", ctx.DefaultResume)
 	}
 	wantCommands := []string{
@@ -239,7 +243,9 @@ func TestBuildTrailResumeContextWithRepoIncludesRepoInResumeCommands(t *testing.
 	}
 }
 
-func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T) {
+func newTrailResumeCheckpointTestRepo(t *testing.T) (string, *git.Repository, *git.Worktree) {
+	t.Helper()
+
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
@@ -266,6 +272,11 @@ func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T
 	if err := wt.Checkout(&git.CheckoutOptions{Create: true, Branch: "refs/heads/feature/trail"}); err != nil {
 		t.Fatalf("checkout feature: %v", err)
 	}
+	return tmpDir, repo, wt
+}
+
+func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T) {
+	tmpDir, repo, wt := newTrailResumeCheckpointTestRepo(t)
 	cpID := id.MustCheckpointID("abc123def456")
 	firstTime := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
 	secondTime := firstTime.Add(time.Hour)
@@ -281,9 +292,12 @@ func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T
 		t.Fatalf("commit feature: %v", err)
 	}
 
-	sessions, err := resolveTrailCheckpointSessions(context.Background(), "feature/trail")
+	sessions, skipped, err := resolveTrailCheckpointSessions(context.Background(), "feature/trail")
 	if err != nil {
 		t.Fatalf("resolveTrailCheckpointSessions() error = %v", err)
+	}
+	if skipped != 0 {
+		t.Fatalf("skipped = %d, want 0", skipped)
 	}
 	if len(sessions) != 2 {
 		t.Fatalf("sessions len = %d, want 2: %#v", len(sessions), sessions)
@@ -300,6 +314,122 @@ func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T
 	if sessions[1].SessionID != "session-alice" {
 		t.Fatalf("second session = %#v, want session-alice", sessions[1])
 	}
+}
+
+func TestResolveTrailCheckpointSessionsIncludesAllBranchCheckpoints(t *testing.T) {
+	tmpDir, repo, wt := newTrailResumeCheckpointTestRepo(t)
+	oldCP := id.MustCheckpointID("abc123def456")
+	newCP := id.MustCheckpointID("def456abc123")
+	oldTime := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	newTime := oldTime.Add(time.Hour)
+	writeTrailResumeCheckpointSession(t, repo, oldCP, "old-session", oldTime, agent.AgentTypeClaudeCode, "older checkpoint work")
+	writeTrailResumeCheckpointSession(t, repo, newCP, "new-session", newTime, agent.AgentTypeCodex, "newer checkpoint work")
+	if err := os.WriteFile(filepath.Join(tmpDir, "readme.md"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	if _, err := wt.Add("readme.md"); err != nil {
+		t.Fatalf("add feature: %v", err)
+	}
+	message := "feature work\n\nEntire-Checkpoint: " + oldCP.String() + "\nEntire-Checkpoint: " + newCP.String()
+	if _, err := wt.Commit(message, &git.CommitOptions{Author: testTrailResumeSignature(newTime)}); err != nil {
+		t.Fatalf("commit feature: %v", err)
+	}
+
+	sessions, skipped, err := resolveTrailCheckpointSessions(context.Background(), "feature/trail")
+	if err != nil {
+		t.Fatalf("resolveTrailCheckpointSessions() error = %v", err)
+	}
+	if skipped != 0 {
+		t.Fatalf("skipped = %d, want 0", skipped)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2: %#v", len(sessions), sessions)
+	}
+	if sessions[0].SessionID != "new-session" || sessions[0].CheckpointID != newCP.String() {
+		t.Fatalf("first session = %#v, want newest checkpoint session", sessions[0])
+	}
+	if sessions[1].SessionID != "old-session" || sessions[1].CheckpointID != oldCP.String() {
+		t.Fatalf("second session = %#v, want older checkpoint session", sessions[1])
+	}
+}
+
+func TestReadTrailCheckpointSessionContextsReportsSkippedSessions(t *testing.T) {
+	t.Parallel()
+
+	cpID := id.MustCheckpointID("abc123def456")
+	store := fakeTrailResumeCheckpointReader{
+		summary: &checkpoint.CheckpointSummary{
+			CheckpointID: cpID,
+			Sessions:     make([]checkpoint.SessionFilePaths, 2),
+		},
+		contents: map[int]*checkpoint.SessionContent{
+			0: {
+				Metadata: checkpoint.Metadata{
+					CheckpointID: cpID,
+					SessionID:    "kept-session",
+					Agent:        agent.AgentTypeCodex,
+					CreatedAt:    time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC),
+				},
+				Prompts: "continue the trail",
+			},
+		},
+		errs: map[int]error{1: errors.New("missing session blob")},
+	}
+
+	sessions, skipped, err := readTrailCheckpointSessionContexts(context.Background(), store, cpID)
+	if err != nil {
+		t.Fatalf("readTrailCheckpointSessionContexts() error = %v", err)
+	}
+	if skipped != 1 {
+		t.Fatalf("skipped = %d, want 1", skipped)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "kept-session" {
+		t.Fatalf("sessions = %#v, want kept-session only", sessions)
+	}
+}
+
+type fakeTrailResumeCheckpointReader struct {
+	summary  *checkpoint.CheckpointSummary
+	contents map[int]*checkpoint.SessionContent
+	errs     map[int]error
+}
+
+func (f fakeTrailResumeCheckpointReader) Read(context.Context, id.CheckpointID) (*checkpoint.CheckpointSummary, error) {
+	return f.summary, nil
+}
+
+func (f fakeTrailResumeCheckpointReader) List(context.Context) ([]checkpoint.CheckpointInfo, error) {
+	return nil, nil
+}
+
+func (f fakeTrailResumeCheckpointReader) ReadSessionMetadata(_ context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, error) {
+	content, err := f.sessionContent(checkpointID, sessionIndex)
+	if err != nil {
+		return nil, err
+	}
+	return &content.Metadata, nil
+}
+
+func (f fakeTrailResumeCheckpointReader) ReadSessionMetadataAndPrompts(_ context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, string, error) {
+	content, err := f.sessionContent(checkpointID, sessionIndex)
+	if err != nil {
+		return nil, "", err
+	}
+	return &content.Metadata, content.Prompts, nil
+}
+
+func (f fakeTrailResumeCheckpointReader) sessionContent(checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error) {
+	if err := f.errs[sessionIndex]; err != nil {
+		return nil, err
+	}
+	content := f.contents[sessionIndex]
+	if content == nil {
+		return nil, errors.New("missing session content")
+	}
+	if content.Metadata.CheckpointID != checkpointID {
+		return nil, errors.New("unexpected checkpoint ID")
+	}
+	return content, nil
 }
 
 func testTrailResumeSignature(when time.Time) *object.Signature {
@@ -402,6 +532,31 @@ func TestPrintTrailResumeContextIncludesSessionsFindingsAndCommands(t *testing.T
 		if !strings.Contains(text, want) {
 			t.Fatalf("context output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestPrintTrailResumeContextShowsSkippedSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{
+			Number: 575,
+			Title:  "Add trail resume",
+			Branch: "feature/trail-resume",
+		},
+		Sessions: []trailResumeSessionContext{{
+			SessionID:    "session-1",
+			Agent:        "codex",
+			CheckpointID: "aaaaaaaaaaaa",
+		}},
+		SessionsSkipped: 2,
+	}
+
+	var out strings.Builder
+	printTrailResumeContext(&out, ctx)
+	text := out.String()
+	if !strings.Contains(text, "skipped 2 checkpoint sessions due to read errors") {
+		t.Fatalf("context output missing skipped sessions message:\n%s", text)
 	}
 }
 

@@ -46,6 +46,7 @@ type trailResumeContext struct {
 	Trail               trailResumeTrailContext     `json:"trail"`
 	Sessions            []trailResumeSessionContext `json:"sessions"`
 	SessionsUnavailable string                      `json:"sessions_unavailable,omitempty"`
+	SessionsSkipped     int                         `json:"sessions_skipped,omitempty"`
 	Findings            trailResumeFindingsContext  `json:"-"`
 	DefaultResume       *trailResumeDefaultContext  `json:"default_resume,omitempty"`
 	Commands            []string                    `json:"commands"`
@@ -229,8 +230,8 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 			return err
 		}
 
-		sessions, sessionErr := resolveTrailResumeSessionContexts(ctx, branch)
-		sessions, sessionsUnavailable := knownTrailResumeSessionsForContext(sessions, sessionErr)
+		sessions, sessionsSkipped, sessionErr := resolveTrailResumeSessionContexts(ctx, branch)
+		sessions, sessionsSkipped, sessionsUnavailable := knownTrailResumeSessionsForContext(sessions, sessionsSkipped, sessionErr)
 		if sessionsUnavailable != "" {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not load trail checkpoint sessions: %s\n", sessionsUnavailable)
 		}
@@ -241,7 +242,7 @@ func runTrailResume(cmd *cobra.Command, opts trailResumeOptions) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not load trail findings: %v\n", findingsErr)
 		}
 
-		resumeCtx := buildTrailResumeContextForRepo(*found, sessions, sessionsUnavailable, findings, owner+"/"+repo)
+		resumeCtx := buildTrailResumeContextForRepoWithSkipped(*found, sessions, sessionsUnavailable, sessionsSkipped, findings, owner+"/"+repo)
 		if opts.JSON {
 			return encodeTrailResumeContextJSON(cmd.OutOrStdout(), resumeCtx)
 		}
@@ -307,11 +308,11 @@ func validateTrailResumeExpectedBranch(found *api.TrailResource, expectedBranch 
 	return fmt.Errorf("%s is attached to branch %q, not expected branch %q", describeTrailRef(found), actualBranch, expectedBranch)
 }
 
-func knownTrailResumeSessionsForContext(sessions []trailResumeSessionContext, sessionErr error) ([]trailResumeSessionContext, string) {
+func knownTrailResumeSessionsForContext(sessions []trailResumeSessionContext, skipped int, sessionErr error) ([]trailResumeSessionContext, int, string) {
 	if sessionErr != nil {
-		return nil, sessionErr.Error()
+		return nil, 0, sessionErr.Error()
 	}
-	return sessions, ""
+	return sessions, skipped, ""
 }
 
 func resumeTrailLatest(ctx context.Context, cmd *cobra.Command, branch string, force bool, preferredSessionID string) error {
@@ -422,44 +423,44 @@ func mostRecentRestoredSessionID(sessions []strategy.RestoredSession) string {
 	return latestID
 }
 
-func resolveTrailResumeSessionContexts(ctx context.Context, branch string) ([]trailResumeSessionContext, error) {
-	sessions, err := resolveTrailCheckpointSessions(ctx, branch)
+func resolveTrailResumeSessionContexts(ctx context.Context, branch string) ([]trailResumeSessionContext, int, error) {
+	sessions, skipped, err := resolveTrailCheckpointSessions(ctx, branch)
 	if err == nil && len(sessions) > 0 {
-		return sessions, nil
+		return sessions, skipped, nil
 	}
 
 	items, localErr := resolveTrailResumeSessions(ctx, branch)
 	if localErr != nil {
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		return nil, localErr
+		return nil, skipped, localErr
 	}
 	localSessions := trailResumeSessionContextsFromLocal(branch, items)
 	if len(localSessions) > 0 {
-		return localSessions, nil
+		return localSessions, skipped, nil
 	}
-	return sessions, err
+	return sessions, skipped, err
 }
 
-func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trailResumeSessionContext, error) {
+func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trailResumeSessionContext, int, error) {
 	repo, err := openRepository(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", err)
+		return nil, 0, fmt.Errorf("not a git repository: %w", err)
 	}
 	defer repo.Close()
 
 	result, err := findBranchCheckpointsForBranchRef(repo, branch)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(result.checkpointIDs) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
 	if err != nil {
-		return nil, fmt.Errorf("open checkpoint store: %w", err)
+		return nil, 0, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	store := stores.Persistent
 	refs := stores.Refs()
@@ -467,31 +468,35 @@ func resolveTrailCheckpointSessions(ctx context.Context, branch string) ([]trail
 		promoteRemoteTrackingPrimary(ctx, repo, refs)
 	}
 
-	checkpointID := result.checkpointIDs[0]
-	if len(result.checkpointIDs) > 1 {
-		latestMetadata, found, latestErr := resolveLatestCheckpoint(ctx, store, result.checkpointIDs)
-		if latestErr != nil {
-			return nil, fmt.Errorf("resolve latest checkpoint: %w", latestErr)
+	sessions := make([]trailResumeSessionContext, 0)
+	skipped := 0
+	for _, checkpointID := range result.checkpointIDs {
+		checkpointSessions, checkpointSkipped, readErr := readTrailCheckpointSessionContexts(ctx, store, checkpointID)
+		if readErr != nil {
+			return nil, 0, readErr
 		}
-		if !found {
-			return nil, errors.New("resolve latest checkpoint: no checkpoint metadata found")
-		}
-		checkpointID = latestMetadata.CheckpointID
+		sessions = append(sessions, checkpointSessions...)
+		skipped += checkpointSkipped
 	}
 
-	return readTrailCheckpointSessionContexts(ctx, store, checkpointID)
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].LastActive.After(sessions[j].LastActive)
+	})
+	return sessions, skipped, nil
 }
 
-func readTrailCheckpointSessionContexts(ctx context.Context, store checkpointInfoReader, checkpointID id.CheckpointID) ([]trailResumeSessionContext, error) {
+func readTrailCheckpointSessionContexts(ctx context.Context, store checkpointInfoReader, checkpointID id.CheckpointID) ([]trailResumeSessionContext, int, error) {
 	summary, err := checkpoint.ReadCheckpoint(ctx, store, checkpointID)
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint %s: %w", checkpointID, err)
+		return nil, 0, fmt.Errorf("read checkpoint %s: %w", checkpointID, err)
 	}
 
 	sessions := make([]trailResumeSessionContext, 0, len(summary.Sessions))
+	skipped := 0
 	for i := range summary.Sessions {
 		content, contentErr := readTrailCheckpointSessionContent(ctx, store, checkpointID, i)
 		if contentErr != nil {
+			skipped++
 			continue
 		}
 		metadata := content.Metadata
@@ -526,7 +531,7 @@ func readTrailCheckpointSessionContexts(ctx context.Context, store checkpointInf
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].LastActive.After(sessions[j].LastActive)
 	})
-	return sessions, nil
+	return sessions, skipped, nil
 }
 
 func readTrailCheckpointSessionContent(
@@ -640,10 +645,14 @@ func trailResumeTopFindingOptions() trailReviewListOptions {
 }
 
 func buildTrailResumeContext(found api.TrailResource, sessions []trailResumeSessionContext, sessionsUnavailable string, findings trailResumeFindingsContext) trailResumeContext {
-	return buildTrailResumeContextForRepo(found, sessions, sessionsUnavailable, findings, "")
+	return buildTrailResumeContextForRepoWithSkipped(found, sessions, sessionsUnavailable, 0, findings, "")
 }
 
 func buildTrailResumeContextForRepo(found api.TrailResource, sessions []trailResumeSessionContext, sessionsUnavailable string, findings trailResumeFindingsContext, repoFullName string) trailResumeContext {
+	return buildTrailResumeContextForRepoWithSkipped(found, sessions, sessionsUnavailable, 0, findings, repoFullName)
+}
+
+func buildTrailResumeContextForRepoWithSkipped(found api.TrailResource, sessions []trailResumeSessionContext, sessionsUnavailable string, sessionsSkipped int, findings trailResumeFindingsContext, repoFullName string) trailResumeContext {
 	trailCtx := trailResumeTrailContext{
 		ID:     found.ID,
 		Number: found.Number,
@@ -675,6 +684,7 @@ func buildTrailResumeContextForRepo(found api.TrailResource, sessions []trailRes
 		Trail:               trailCtx,
 		Sessions:            sessions,
 		SessionsUnavailable: sessionsUnavailable,
+		SessionsSkipped:     sessionsSkipped,
 		Findings:            findings,
 		DefaultResume:       defaultResume,
 	}
@@ -734,7 +744,7 @@ func shellArg(s string) string {
 
 func printTrailResumeContext(w io.Writer, ctx trailResumeContext) {
 	printTrailResumeTrail(w, ctx.Trail)
-	printTrailResumeSessions(w, ctx.Sessions, ctx.SessionsUnavailable)
+	printTrailResumeSessions(w, ctx.Sessions, ctx.SessionsUnavailable, ctx.SessionsSkipped)
 	printTrailResumeFindings(w, ctx.Findings)
 	printTrailResumeCommands(w, ctx.Commands)
 	fmt.Fprintln(w)
@@ -771,7 +781,7 @@ func printTrailResumeTrail(w io.Writer, trail trailResumeTrailContext) {
 	fmt.Fprintln(w)
 }
 
-func printTrailResumeSessions(w io.Writer, sessions []trailResumeSessionContext, sessionsUnavailable string) {
+func printTrailResumeSessions(w io.Writer, sessions []trailResumeSessionContext, sessionsUnavailable string, sessionsSkipped int) {
 	fmt.Fprintln(w, "  Checkpoint sessions:")
 	if sessionsUnavailable != "" {
 		fmt.Fprintf(w, "    unavailable before restore: %s\n", sessionsUnavailable)
@@ -780,6 +790,7 @@ func printTrailResumeSessions(w io.Writer, sessions []trailResumeSessionContext,
 	}
 	if len(sessions) == 0 {
 		fmt.Fprintln(w, "    none found before restore")
+		printTrailResumeSkippedSessions(w, sessionsSkipped)
 		fmt.Fprintln(w)
 		return
 	}
@@ -811,7 +822,19 @@ func printTrailResumeSessions(w io.Writer, sessions []trailResumeSessionContext,
 	}
 	_ = tw.Flush()
 	printIndentedBlock(w, table.String(), "    ")
+	printTrailResumeSkippedSessions(w, sessionsSkipped)
 	fmt.Fprintln(w)
+}
+
+func printTrailResumeSkippedSessions(w io.Writer, skipped int) {
+	if skipped == 0 {
+		return
+	}
+	label := "session"
+	if skipped != 1 {
+		label = "sessions"
+	}
+	fmt.Fprintf(w, "    skipped %d checkpoint %s due to read errors\n", skipped, label)
 }
 
 func printTrailResumeFindings(w io.Writer, findings trailResumeFindingsContext) {
@@ -862,6 +885,7 @@ func encodeTrailResumeContextJSON(w io.Writer, ctx trailResumeContext) error {
 		Trail               trailResumeTrailContext     `json:"trail"`
 		Sessions            []trailResumeSessionContext `json:"sessions"`
 		SessionsUnavailable string                      `json:"sessions_unavailable,omitempty"`
+		SessionsSkipped     int                         `json:"sessions_skipped,omitempty"`
 		FindingsSummary     *trailResumeFindingCounts   `json:"findings_summary,omitempty"`
 		Findings            []api.TrailReviewComment    `json:"findings"`
 		FindingsHasMore     bool                        `json:"findings_has_more,omitempty"`
@@ -872,6 +896,7 @@ func encodeTrailResumeContextJSON(w io.Writer, ctx trailResumeContext) error {
 		Trail:               ctx.Trail,
 		Sessions:            ctx.Sessions,
 		SessionsUnavailable: ctx.SessionsUnavailable,
+		SessionsSkipped:     ctx.SessionsSkipped,
 		Findings:            ctx.Findings.Top,
 		FindingsHasMore:     ctx.Findings.HasMore,
 		FindingsUnavailable: ctx.Findings.Unavailable,
