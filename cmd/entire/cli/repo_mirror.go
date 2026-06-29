@@ -26,7 +26,7 @@ var mirrorColumns = []string{"REPO", "CLONE URL", "PRIVATE"}
 
 func mirrorRow(m coreapi.Mirror) []string {
 	repo := m.Owner + "/" + m.Repo
-	cloneURL := fmt.Sprintf("entire://%s/gh/%s/%s", m.ClusterHost, m.Owner, m.Repo)
+	cloneURL := mirrorCloneURL(m.ClusterHost, m.Owner, m.Repo)
 	private := "no"
 	if m.IsPrivate.Or(false) {
 		private = "yes"

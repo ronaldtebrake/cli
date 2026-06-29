@@ -327,10 +327,12 @@ func TestAttach_OutputContainsCheckpointID(t *testing.T) {
 
 	output := out.String()
 
-	// Must contain Entire-Checkpoint trailer with 12-hex-char ID
-	re := regexp.MustCompile(`Entire-Checkpoint: [0-9a-f]{12}`)
+	// Must contain an Entire-Checkpoint trailer with a checkpoint ID in either
+	// supported format (legacy hex or ULID) — reuse the canonical pattern instead
+	// of re-hardcoding the hex-only shape.
+	re := regexp.MustCompile(`Entire-Checkpoint: ` + id.CheckpointPattern)
 	if !re.MatchString(output) {
-		t.Errorf("expected 'Entire-Checkpoint: <12-hex-id>' in output, got:\n%s", output)
+		t.Errorf("expected 'Entire-Checkpoint: <checkpoint-id>' in output, got:\n%s", output)
 	}
 }
 
