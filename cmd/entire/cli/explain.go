@@ -2060,13 +2060,20 @@ func walkFirstParentCommits(ctx context.Context, repo *git.Repository, from plum
 //   - On feature branches: only show checkpoints unique to this branch (not in main)
 //   - On default branch (main/master): show all checkpoints in history (up to limit)
 //   - Includes both committed checkpoints (entire/checkpoints/v1) and temporary checkpoints (shadow branches)
-func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) ([]strategy.RewindPoint, error) {
+//
+// The second return value is true when either the live (commit-linked +
+// temporary) or imported budget hit `limit`, i.e. older checkpoints were
+// dropped. This is the authoritative truncation signal: the budgets are
+// applied here, so callers cannot reconstruct it from the returned length
+// (the two budgets are independent, so the slice can hold up to 2*limit
+// entries without anything being dropped).
+func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) ([]strategy.RewindPoint, bool, error) {
 	// Warn (once per process) if metadata branches are disconnected
 	strategy.WarnIfMetadataDisconnected()
 
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("open checkpoint store: %w", err)
+		return nil, false, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	store := stores.Persistent
 
@@ -2088,9 +2095,9 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	if err != nil {
 		// Unborn HEAD (no commits yet) - return empty list instead of erroring
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			return []strategy.RewindPoint{}, nil
+			return []strategy.RewindPoint{}, false, nil
 		}
-		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+		return nil, false, fmt.Errorf("failed to get HEAD: %w", err)
 	}
 
 	// Check if we're on the default branch (needed for getReachableTemporaryCheckpoints)
@@ -2135,7 +2142,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 			Order: git.LogOrderCommitterTime,
 		})
 		if iterErr != nil {
-			return nil, fmt.Errorf("failed to get commit log: %w", iterErr)
+			return nil, false, fmt.Errorf("failed to get commit log: %w", iterErr)
 		}
 		defer iter.Close()
 
@@ -2168,12 +2175,14 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("error iterating commits: %w", err)
+		return nil, false, fmt.Errorf("error iterating commits: %w", err)
 	}
 
 	// Get temporary checkpoints from ALL shadow branches whose base commit is reachable from HEAD.
 	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, stores.Ephemeral(), head.Hash(), isOnDefault, limit)
 	points = append(points, tempPoints...)
+
+	truncated := false
 
 	// Sort live points (commit-linked + temporary) and apply the limit FIRST, so
 	// a large historical import can't evict recent commit-linked checkpoints.
@@ -2182,6 +2191,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	})
 	if len(points) > limit {
 		points = points[:limit]
+		truncated = true
 	}
 
 	// Append imported (read-only, commit-less) checkpoints after the live points,
@@ -2193,10 +2203,11 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	})
 	if len(imported) > limit {
 		imported = imported[:limit]
+		truncated = true
 	}
 	points = append(points, imported...)
 
-	return points, nil
+	return points, truncated, nil
 }
 
 // getImportedRewindPoints returns read-only imported checkpoints (Kind
@@ -2381,10 +2392,11 @@ func runExplainBranchWithFilter(ctx context.Context, w, errW io.Writer, noPager 
 		}
 	}
 
-	// Get checkpoints for this branch (strategy-agnostic). Probe one extra so
-	// we can tell the user when the prose list silently hides checkpoints
-	// beyond the cap — mirrors the --json path's limit+1 truncation probe.
-	points, err := getBranchCheckpoints(ctx, repo, branchCheckpointsLimit+1)
+	// Get checkpoints for this branch (strategy-agnostic). getBranchCheckpoints
+	// reports whether it hit its budget; we render everything it returns (it
+	// already enforces the cap internally) and only surface a note when older
+	// checkpoints were actually dropped.
+	points, truncated, err := getBranchCheckpoints(ctx, repo, branchCheckpointsLimit)
 	if err != nil {
 		// If context was cancelled (e.g. user hit Ctrl+C), exit silently
 		if ctx.Err() != nil {
@@ -2393,32 +2405,26 @@ func runExplainBranchWithFilter(ctx context.Context, w, errW io.Writer, noPager 
 		// Log the error but continue with empty list so user sees helpful message
 		logging.Warn(ctx, "failed to get branch checkpoints", "error", err)
 		points = nil
+		truncated = false
 	}
-	points, truncationNote := capBranchCheckpoints(points)
 
 	// Format output
 	output := formatBranchCheckpoints(w, branchName, points, sessionFilter)
 
 	outputExplainContent(w, output, noPager)
 
-	// Printed to stderr so the note never lands in piped/paged stdout.
-	if truncationNote != "" {
-		fmt.Fprint(errW, truncationNote)
+	// Printed to stderr so the note never lands in piped/paged stdout. The
+	// signal reflects the raw scan budget, not the (filtered, grouped) display
+	// count — so the wording stays vague ("may be hidden", no count) and names
+	// the full `checkpoint explain` command, which works regardless of whether
+	// the user reached this path via `explain`, `checkpoint explain`, or
+	// `checkpoint list` (the latter two share this code but expose different
+	// flags).
+	if truncated {
+		fmt.Fprint(errW, "note: checkpoint list reached its scan limit; older checkpoints may be hidden. "+
+			"Run 'entire checkpoint explain --json --limit <N>' to see more.\n")
 	}
 	return nil
-}
-
-// capBranchCheckpoints applies the prose list cap (branchCheckpointsLimit) to
-// points fetched with a limit+1 probe. It returns the capped slice plus a
-// truncation note (empty when nothing was hidden). The note is deliberately
-// vague: the probe only proves at least one more checkpoint exists, never how
-// many, so it says "more exist" rather than an exact remaining count.
-func capBranchCheckpoints(points []strategy.RewindPoint) ([]strategy.RewindPoint, string) {
-	if len(points) <= branchCheckpointsLimit {
-		return points, ""
-	}
-	return points[:branchCheckpointsLimit], fmt.Sprintf(
-		"note: showing first %d checkpoints (more exist); rerun with --json --limit <N> for more\n", branchCheckpointsLimit)
 }
 
 // runExplainBranchDefault shows all checkpoints on the current branch grouped by date.

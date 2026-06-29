@@ -522,11 +522,11 @@ type branchCheckpointJSON struct {
 // filtered by session ID prefix (mirrors the prose list view). The cap
 // defaults to branchCheckpointsLimit; pass listLimit > 0 to override.
 //
-// Truncation detection: we ask the underlying lister for one more than the
-// effective cap. If we got that many back, we know there were at least
-// `cap` checkpoints we didn't return — emit a stderr note so the consumer
-// knows to set --limit higher. The JSON shape stays a flat array so jq
-// pipelines don't have to unwrap.
+// Truncation detection: getBranchCheckpoints reports whether it hit its scan
+// budget (the authoritative signal — it applies the cap internally). We also
+// hard-cap the flat array at `limit` for the JSON contract, flagging
+// truncation if that slice drops anything. The JSON shape stays a flat array
+// so jq pipelines don't have to unwrap.
 func runExplainListJSON(ctx context.Context, w, errW io.Writer, sessionFilter string, listLimit int) error {
 	repo, err := openRepository(ctx)
 	if err != nil {
@@ -539,8 +539,7 @@ func runExplainListJSON(ctx context.Context, w, errW io.Writer, sessionFilter st
 		limit = branchCheckpointsLimit
 	}
 
-	// Probe one extra so we can detect truncation.
-	points, err := getBranchCheckpoints(ctx, repo, limit+1)
+	points, truncated, err := getBranchCheckpoints(ctx, repo, limit)
 	if err != nil {
 		if ctx.Err() != nil {
 			return NewSilentError(ctx.Err())
@@ -550,9 +549,12 @@ func runExplainListJSON(ctx context.Context, w, errW io.Writer, sessionFilter st
 		// a real diagnostic instead of silently degraded output.
 		return fmt.Errorf("failed to list checkpoints: %w", err)
 	}
-	truncated := len(points) > limit
-	if truncated {
+	// getBranchCheckpoints budgets the live and imported lists independently,
+	// so it can return up to 2*limit entries. Hard-cap the combined array to
+	// the requested limit for the JSON contract.
+	if len(points) > limit {
 		points = points[:limit]
+		truncated = true
 	}
 
 	out := make([]branchCheckpointJSON, 0, len(points))
