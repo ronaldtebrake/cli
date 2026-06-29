@@ -445,6 +445,7 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.TurnCheckpointIDs = nil
 	adopted.LastCheckpointID = id.EmptyCheckpointID
 	adopted.LastCheckpointCommitHash = ""
+	adopted.CheckpointTokenUsage = nil
 
 	adopted.FullyCondensed = false
 	adopted.UntrackedFilesAtStart = untrackedFiles

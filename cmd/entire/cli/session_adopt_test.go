@@ -624,6 +624,7 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 		TurnCheckpointIDs:           []string{"abc123def456"},
 		LastCheckpointID:            id.MustCheckpointID("abc123def456"),
 		LastCheckpointCommitHash:    "source-commit",
+		CheckpointTokenUsage:        &agent.TokenUsage{InputTokens: 100, OutputTokens: 25, APICallCount: 1},
 		UntrackedFilesAtStart:       []string{"source-only.txt"},
 		PromptWindowBase:            3,
 		PromptWindowResetPending:    true,
@@ -700,6 +701,9 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	}
 	if adopted.LastCheckpointCommitHash != "" {
 		t.Fatalf("LastCheckpointCommitHash = %q, want empty", adopted.LastCheckpointCommitHash)
+	}
+	if adopted.CheckpointTokenUsage != nil {
+		t.Fatalf("CheckpointTokenUsage = %#v, want nil for first target checkpoint", adopted.CheckpointTokenUsage)
 	}
 
 	commitMsgFile := filepath.Join(targetRepo, "COMMIT_EDITMSG")
