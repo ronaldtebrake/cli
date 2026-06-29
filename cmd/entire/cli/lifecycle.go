@@ -393,7 +393,7 @@ func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 func entireTrailContextInjection(scope trailEnablementScope) string {
 	repo := ""
 	if scope.Forge != "" && scope.Owner != "" && scope.Repo != "" {
-		repo = strings.Join([]string{scope.Forge, scope.Owner, scope.Repo}, "/")
+		repo = trailEnablementRepoKey(scope.Forge, scope.Owner, scope.Repo)
 	}
 	var b strings.Builder
 	b.WriteString("Entire is enabled for this repo. Run `entire agent-help` to see what entire does and which subcommand to use, then `entire agent-help <command>` for that command's exact, current flags. ")

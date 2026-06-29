@@ -110,6 +110,46 @@ func TestScaffoldAgentHelpSkill_SkipsUnmanagedConflict(t *testing.T) {
 	}
 }
 
+// A pre-existing Entire-managed agent-help file with stale content is rewritten
+// to the current template (Updated), not left as-is or treated as a conflict.
+func TestScaffoldAgentHelpSkill_UpdatesManagedFile(t *testing.T) {
+	tmpDir := setupTestDir(t)
+
+	ag := claudecode.NewClaudeCodeAgent()
+	relPath, _, ok := agentHelpSkillTemplate(ag.Name())
+	if !ok {
+		t.Fatal("agentHelpSkillTemplate() unexpectedly unsupported for claude")
+	}
+
+	targetPath := filepath.Join(tmpDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
+		t.Fatalf("failed to create target dir: %v", err)
+	}
+	stale := "<!-- " + entireManagedAgentHelpSkillMarker + " -->\noutdated body\n"
+	if err := os.WriteFile(targetPath, []byte(stale), 0o600); err != nil {
+		t.Fatalf("failed to write stale managed content: %v", err)
+	}
+
+	result, err := scaffoldAgentHelpSkill(context.Background(), ag)
+	if err != nil {
+		t.Fatalf("scaffoldAgentHelpSkill() error = %v", err)
+	}
+	if result.Status != managedScaffoldUpdated {
+		t.Fatalf("status = %q, want %q", result.Status, managedScaffoldUpdated)
+	}
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read updated content: %v", err)
+	}
+	if !strings.Contains(string(data), "entire agent-help") {
+		t.Error("updated managed file should contain the current template")
+	}
+	if strings.Contains(string(data), "outdated body") {
+		t.Error("stale content should have been overwritten")
+	}
+}
+
 // The agent-help skill is opt-in: a default enable installs nothing; only
 // --agent-help-skill (EnableOptions.AgentHelpSkill) scaffolds it.
 func TestSetupAgentHooksNonInteractive_AgentHelpSkillOptInOnly(t *testing.T) {

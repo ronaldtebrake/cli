@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
@@ -48,8 +49,7 @@ func newAgentHelpCmd(rootCmd *cobra.Command) *cobra.Command {
 		Long: `Prints agent-facing usage for the Entire CLI, generated live from the installed
 command tree so it always matches this binary. With no arguments it prints a
 high-level map of when to use entire and which subcommand; pass a command path
-(e.g. "agent-help trail") to see that command's exact, current flags.`,
-		DisableFlagParsing: false,
+(e.g. "agent-help checkpoint") to see that command's exact, current flags.`,
 		RunE: func(c *cobra.Command, args []string) error {
 			repoLine := agentHelpRepoLine(c.Context())
 			trailsEnabled := trailsEnabledForRepo(c.Context())
@@ -73,7 +73,7 @@ func agentHelpRepoLine(ctx context.Context) string {
 	if err != nil || forge == "" || owner == "" || repo == "" {
 		return ""
 	}
-	return strings.Join([]string{forge, owner, repo}, "/")
+	return trailEnablementRepoKey(forge, owner, repo)
 }
 
 // runAgentHelp resolves args to a command node and renders it. It is pure (no
@@ -85,8 +85,15 @@ func runAgentHelp(rootCmd *cobra.Command, args []string, repoLine string, asJSON
 		if child == nil {
 			return "", fmt.Errorf("unknown command %q; run `entire agent-help` for the list of commands", name)
 		}
+		// Keep the specific, actionable message for the trail-gated case.
 		if !trailsEnabled && child.Annotations[agentHelpRequiresTrailsAnnotation] == agentHelpAnnotationEnabled {
 			return "", fmt.Errorf("`%s` is unavailable: trails are not enabled for this repo", child.Name())
+		}
+		// The drillable surface must match the advertised surface: a name an agent
+		// guesses for a command the listing intentionally hides (help, deprecated,
+		// or plain-hidden infra like `hooks`) reads as nonexistent here too.
+		if !isAgentHelpAdvertised(child, trailsEnabled) {
+			return "", fmt.Errorf("unknown command %q; run `entire agent-help` for the list of commands", name)
 		}
 		target = child
 	}
@@ -99,8 +106,10 @@ func runAgentHelp(rootCmd *cobra.Command, args []string, repoLine string, asJSON
 	return renderAgentHelpCommand(target, repoLine, trailsEnabled), nil
 }
 
-// agentHelpFindChild finds a direct child of parent by name or alias, including
-// hidden commands (so drill-down into e.g. trail works).
+// agentHelpFindChild finds a direct child of parent by name or alias. It
+// includes hidden commands so an annotated one like trail resolves; the caller
+// (runAgentHelp) then enforces isAgentHelpAdvertised, so the drillable surface
+// matches the advertised one.
 func agentHelpFindChild(parent *cobra.Command, name string) *cobra.Command {
 	for _, sub := range parent.Commands() {
 		if sub.Name() == name {
@@ -173,22 +182,31 @@ func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string, trails
 	return string(b) + "\n", nil
 }
 
-// agentHelpCommands returns the child commands to advertise to agents: every
-// visible command plus any hidden command that opts in via agentHelpAnnotation.
-// The help command itself is never advertised.
+// isAgentHelpAdvertised reports whether sub should be exposed to agents through
+// agent-help. The listing AND the drill-down resolver share this predicate so
+// the drillable surface always matches the advertised surface: visible commands
+// plus hidden commands that opt in via agentHelpAnnotation, minus the help
+// command, deprecated commands, and (when trails are disabled) trail-gated ones.
+func isAgentHelpAdvertised(sub *cobra.Command, trailsEnabled bool) bool {
+	if sub.Name() == "help" || sub.Deprecated != "" {
+		return false
+	}
+	if sub.Hidden && sub.Annotations[agentHelpAnnotation] != agentHelpAnnotationEnabled {
+		return false
+	}
+	if !trailsEnabled && sub.Annotations[agentHelpRequiresTrailsAnnotation] == agentHelpAnnotationEnabled {
+		return false
+	}
+	return true
+}
+
+// agentHelpCommands returns the child commands to advertise to agents.
 func agentHelpCommands(parent *cobra.Command, trailsEnabled bool) []*cobra.Command {
 	var out []*cobra.Command
 	for _, sub := range parent.Commands() {
-		if sub.Name() == "help" || sub.Deprecated != "" {
-			continue
+		if isAgentHelpAdvertised(sub, trailsEnabled) {
+			out = append(out, sub)
 		}
-		if sub.Hidden && sub.Annotations[agentHelpAnnotation] != agentHelpAnnotationEnabled {
-			continue
-		}
-		if !trailsEnabled && sub.Annotations[agentHelpRequiresTrailsAnnotation] == agentHelpAnnotationEnabled {
-			continue
-		}
-		out = append(out, sub)
 	}
 	return out
 }
@@ -197,7 +215,11 @@ func agentHelpCommands(parent *cobra.Command, trailsEnabled bool) []*cobra.Comma
 // when the repo can't be resolved (no origin / detached HEAD) rather than
 // implying a repo that isn't there.
 func agentHelpRepoBlock(repoLine string) string {
-	if strings.TrimSpace(repoLine) == "" {
+	// Defense-in-depth: this line is emitted as plain text into agent context and
+	// the user's terminal. A crafted origin URL's control characters (newline,
+	// ANSI escapes) are rejected upstream in gitremote, but never let one reach
+	// this plain-text sink — degrade to the not-detectable message instead.
+	if strings.TrimSpace(repoLine) == "" || strings.IndexFunc(repoLine, unicode.IsControl) >= 0 {
 		return "Current repo: not auto-detectable here (no origin remote / detached HEAD); pass --repo explicitly.\n"
 	}
 	return "Current repo: " + repoLine + "  (auto-detected from origin; pass --repo only for a DIFFERENT repo)\n"

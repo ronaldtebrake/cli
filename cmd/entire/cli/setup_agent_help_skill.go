@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,29 +36,7 @@ func setupOptionalAgentHelpSkill(ctx context.Context, w io.Writer, ag agent.Agen
 }
 
 func setupOptionalAgentHelpSkillForNames(ctx context.Context, w io.Writer, names []string, opts EnableOptions) error {
-	if !opts.AgentHelpSkill {
-		return nil
-	}
-
-	var errs []error
-	seen := make(map[types.AgentName]struct{}, len(names))
-	for _, name := range names {
-		agentName := types.AgentName(name)
-		if _, ok := seen[agentName]; ok {
-			continue
-		}
-		seen[agentName] = struct{}{}
-
-		ag, err := agent.Get(agentName)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to get agent %s: %w", name, err))
-			continue
-		}
-		if err := setupOptionalAgentHelpSkill(ctx, w, ag, opts); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	return setupOptionalSkillForNames(ctx, w, names, opts.AgentHelpSkill, setupOptionalAgentHelpSkill, opts)
 }
 
 func scaffoldAgentHelpSkill(ctx context.Context, ag agent.Agent) (managedScaffoldResult, error) {
@@ -82,14 +59,6 @@ func scaffoldAgentHelpSkill(ctx context.Context, ag agent.Agent) (managedScaffol
 
 func isManagedAgentHelpSkill(data []byte) bool {
 	return bytes.Contains(data, []byte(entireManagedAgentHelpSkillMarker))
-}
-
-func printAgentHelpSkillNonInteractiveNoAgentsGuidance(w io.Writer) {
-	fmt.Fprintln(w, "Cannot install the agent-help skill in non-interactive mode because no agents are enabled.")
-	fmt.Fprintln(w, "Install it for a specific agent with:")
-	fmt.Fprintln(w, "  entire enable --agent <name> --agent-help-skill")
-	fmt.Fprintln(w, "or:")
-	fmt.Fprintln(w, "  entire agent add <name> --agent-help-skill")
 }
 
 func reportAgentHelpSkillScaffold(w io.Writer, ag agent.Agent, result managedScaffoldResult) {
@@ -124,6 +93,21 @@ func agentHelpSkillTemplate(agentName types.AgentName) (string, []byte, bool) {
 	}
 }
 
+// agentHelpSkillBody is the shared, format-agnostic instruction body for the
+// agent-help skill. It is byte-identical across claude/gemini/codex (only the
+// surrounding frontmatter differs), so it lives in one place to stay in sync.
+// The drill-down example uses checkpoint (always advertised) rather than a
+// feature-gated command, matching renderAgentHelpTop's example selection so the
+// static skill never points the agent at a command it can't use.
+const agentHelpSkillBody = `Entire's CLI is the source of truth for its own usage. Do not guess flags or subcommands.
+
+Run ` + "`entire agent-help`" + ` for a map of when to use entire and which subcommand to use,
+then ` + "`entire agent-help <command>`" + ` (e.g. ` + "`entire agent-help checkpoint`" + `) for that command's
+exact, currently-installed flags.
+
+You are already inside the repo — entire auto-detects it from the git origin remote.
+Never ask the user for the repo name.`
+
 const claudeAgentHelpSkillTemplate = `
 ---
 name: entire
@@ -132,14 +116,7 @@ description: How to use the Entire CLI (checkpoints, search, sessions, and more)
 
 <!-- ` + entireManagedAgentHelpSkillMarker + ` -->
 
-Entire's CLI is the source of truth for its own usage. Do not guess flags or subcommands.
-
-Run ` + "`entire agent-help`" + ` for a map of when to use entire and which subcommand to use,
-then ` + "`entire agent-help <command>`" + ` (e.g. ` + "`entire agent-help trail`" + `) for that command's
-exact, currently-installed flags.
-
-You are already inside the repo — entire auto-detects it from the git origin remote.
-Never ask the user for the repo name.
+` + agentHelpSkillBody + `
 `
 
 const geminiAgentHelpSkillTemplate = `
@@ -153,14 +130,7 @@ tools:
 
 <!-- ` + entireManagedAgentHelpSkillMarker + ` -->
 
-Entire's CLI is the source of truth for its own usage. Do not guess flags or subcommands.
-
-Run ` + "`entire agent-help`" + ` for a map of when to use entire and which subcommand to use,
-then ` + "`entire agent-help <command>`" + ` (e.g. ` + "`entire agent-help trail`" + `) for that command's
-exact, currently-installed flags.
-
-You are already inside the repo — entire auto-detects it from the git origin remote.
-Never ask the user for the repo name.
+` + agentHelpSkillBody + `
 `
 
 const codexAgentHelpSkillTemplate = `
@@ -168,13 +138,6 @@ const codexAgentHelpSkillTemplate = `
 name = "entire"
 description = "How to use the Entire CLI (checkpoints, search, sessions, and more). Use whenever a task involves entire, checkpoints, or the ` + "`entire`" + ` command."
 developer_instructions = """
-Entire's CLI is the source of truth for its own usage. Do not guess flags or subcommands.
-
-Run ` + "`entire agent-help`" + ` for a map of when to use entire and which subcommand to use,
-then ` + "`entire agent-help <command>`" + ` (e.g. ` + "`entire agent-help trail`" + `) for that command's
-exact, currently-installed flags.
-
-You are already inside the repo — entire auto-detects it from the git origin remote.
-Never ask the user for the repo name.
+` + agentHelpSkillBody + `
 """
 `
