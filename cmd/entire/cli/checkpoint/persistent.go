@@ -1667,7 +1667,11 @@ func (s *GitStore) backfillTranscript(ctx context.Context, opts UpdateOptions) e
 	return s.setPrimaryRef(newCommitHash)
 }
 
-func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPath string, entries map[string]object.TreeEntry) error {
+// updateSessionMetadata reads the session metadata blob from entries, applies
+// mutate, and rewrites the blob. Reading from the blob (rather than an in-memory
+// copy) keeps it correct when several finalize-path steps mutate the same
+// metadata in sequence — each sees the prior step's changes.
+func (s *GitStore) updateSessionMetadata(sessionPath string, entries map[string]object.TreeEntry, mutate func(*Metadata)) error {
 	metadataPath := sessionPath + paths.MetadataFileName
 	entry, exists := entries[metadataPath]
 	if !exists {
@@ -1678,8 +1682,7 @@ func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPat
 	if err != nil {
 		return fmt.Errorf("read session metadata: %w", err)
 	}
-	metadata.SkillEventsVersion = skillEventsVersion(skillEvents)
-	metadata.SkillEvents = skillEvents
+	mutate(metadata)
 
 	metadataJSON, err := jsonutil.MarshalIndentWithNewline(metadata, "", "  ")
 	if err != nil {
@@ -1695,6 +1698,13 @@ func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPat
 		Hash: metadataHash,
 	}
 	return nil
+}
+
+func (s *GitStore) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPath string, entries map[string]object.TreeEntry) error {
+	return s.updateSessionMetadata(sessionPath, entries, func(metadata *Metadata) {
+		metadata.SkillEventsVersion = skillEventsVersion(skillEvents)
+		metadata.SkillEvents = skillEvents
+	})
 }
 
 // replaceTranscript writes the full transcript content, replacing any existing
@@ -1818,36 +1828,13 @@ func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.Reda
 	return nil
 }
 
-// setCompactTranscriptStart reads the session metadata blob from entries, sets
-// CompactTranscriptStart, and rewrites it. Used by the OPF rewrite path so the
-// finalized session metadata reflects the regenerated compact transcript.
+// setCompactTranscriptStart records CompactTranscriptStart in the session
+// metadata. Used by the OPF rewrite path so the finalized session metadata
+// reflects the regenerated compact transcript.
 func (s *GitStore) setCompactTranscriptStart(sessionPath string, start int, entries map[string]object.TreeEntry) error {
-	metadataPath := sessionPath + paths.MetadataFileName
-	entry, exists := entries[metadataPath]
-	if !exists {
-		return fmt.Errorf("session metadata not found at %s", metadataPath)
-	}
-
-	metadata, err := s.readMetadataFromBlob(entry.Hash)
-	if err != nil {
-		return fmt.Errorf("read session metadata: %w", err)
-	}
-	metadata.CompactTranscriptStart = &start
-
-	metadataJSON, err := jsonutil.MarshalIndentWithNewline(metadata, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal session metadata: %w", err)
-	}
-	metadataHash, err := CreateBlobFromContent(s.repo, metadataJSON)
-	if err != nil {
-		return err
-	}
-	entries[metadataPath] = object.TreeEntry{
-		Name: metadataPath,
-		Mode: filemode.Regular,
-		Hash: metadataHash,
-	}
-	return nil
+	return s.updateSessionMetadata(sessionPath, entries, func(metadata *Metadata) {
+		metadata.CompactTranscriptStart = &start
+	})
 }
 
 // PrecomputeTranscriptBlobs chunks the given transcript and writes each chunk

@@ -147,17 +147,8 @@ func TestWriteCommitted_CompactTranscriptFullWithMarker(t *testing.T) {
 		t.Fatalf("compact_transcript_start = %d, want 2", marker)
 	}
 
-	lines := strings.Split(strings.TrimRight(compactContent, "\n"), "\n")
-	if marker > len(lines) {
-		t.Fatalf("marker %d out of range for %d compact lines", marker, len(lines))
-	}
-	slice := strings.Join(lines[marker:], "\n")
-	if strings.Contains(slice, "hello one") || strings.Contains(slice, "reply one") {
-		t.Errorf("slice past marker contains pre-start content:\n%s", slice)
-	}
-	if !strings.Contains(slice, "hello two") || !strings.Contains(slice, "reply two") {
-		t.Errorf("slice past marker missing checkpoint content:\n%s", slice)
-	}
+	assertCompactSliceScoped(t, compactContent, marker,
+		[]string{"hello one", "reply one"}, []string{"hello two", "reply two"})
 }
 
 func TestWriteCommitted_NonCompactableTranscriptPointsAtFull(t *testing.T) {
@@ -309,7 +300,7 @@ func TestUpdateCommitted_CodexCompactSanitizedLikeInitialWrite(t *testing.T) {
 	if !ok {
 		t.Fatal("compact_transcript_start not recorded after WriteCommitted")
 	}
-	assertCodexSliceIsGamma(t, initialCompact, initialMarker)
+	assertCompactSliceScoped(t, initialCompact, initialMarker, []string{"beta"}, []string{"gamma"})
 
 	// Finalize with the same raw transcript. replaceTranscript must sanitize
 	// before compaction, exactly like the initial write — otherwise the full
@@ -338,24 +329,28 @@ func TestUpdateCommitted_CodexCompactSanitizedLikeInitialWrite(t *testing.T) {
 	if finalizeMarker != initialMarker {
 		t.Errorf("finalize marker %d diverges from initial marker %d", finalizeMarker, initialMarker)
 	}
-	assertCodexSliceIsGamma(t, finalizeCompact, finalizeMarker)
+	assertCompactSliceScoped(t, finalizeCompact, finalizeMarker, []string{"beta"}, []string{"gamma"})
 }
 
-// assertCodexSliceIsGamma checks that slicing the full compact transcript at the
-// marker yields only the checkpoint-scoped content ("gamma"), excluding the
-// pre-start "beta".
-func assertCodexSliceIsGamma(t *testing.T, compactContent string, marker int) {
+// assertCompactSliceScoped checks that slicing the full compact transcript at
+// the marker yields exactly this checkpoint's content: every wantAbsent string
+// (pre-start content) is gone and every wantPresent string is retained.
+func assertCompactSliceScoped(t *testing.T, compactContent string, marker int, wantAbsent, wantPresent []string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(compactContent, "\n"), "\n")
 	if marker > len(lines) {
 		t.Fatalf("marker %d out of range for %d compact lines", marker, len(lines))
 	}
 	slice := strings.Join(lines[marker:], "\n")
-	if strings.Contains(slice, "beta") {
-		t.Errorf("slice past marker contains pre-start content:\n%s", slice)
+	for _, s := range wantAbsent {
+		if strings.Contains(slice, s) {
+			t.Errorf("slice past marker contains pre-start content %q:\n%s", s, slice)
+		}
 	}
-	if !strings.Contains(slice, "gamma") {
-		t.Errorf("slice past marker missing checkpoint content:\n%s", slice)
+	for _, s := range wantPresent {
+		if !strings.Contains(slice, s) {
+			t.Errorf("slice past marker missing checkpoint content %q:\n%s", s, slice)
+		}
 	}
 }
 
