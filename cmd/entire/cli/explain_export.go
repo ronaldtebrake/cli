@@ -206,6 +206,9 @@ func matchCheckpointPrefixWithRemoteFallback(ctx context.Context, errW io.Writer
 	// then re-list. Falls through to the v1-branch fetch below otherwise.
 	if cpCfg, _ := settings.LoadCheckpointsConfig(ctx); checkpoint.PrimaryIsRefs(cpCfg) { //nolint:errcheck // fail-soft: bad config surfaces via Open elsewhere
 		if cid, err := id.NewCheckpointID(prefix); err == nil {
+			// cid is already validated by NewCheckpointID above, so RefName can't
+			// error here; the guard is defensive — fall back to the v1-branch path
+			// rather than fetch a malformed ref.
 			refName, refErr := checkpoint.RefName(cid)
 			if refErr != nil {
 				return nil, lookup

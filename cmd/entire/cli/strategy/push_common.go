@@ -299,12 +299,16 @@ func finishPush(ctx context.Context, stop func(string), result pushResult, targe
 
 // tryPushRefCommon attempts to push a ref. No timeout of its own —
 // runs under doPushRef's shared budget. Branch refs use a bare branch-name
-// refSpec so existing remote-tracking works; non-branch refs use a force
-// refspec ("+refs/...:refs/...") with no tracking shadow.
+// refSpec so existing remote-tracking works; non-branch refs use an explicit
+// "refs/...:refs/..." refSpec with no tracking shadow. Neither forces: a
+// non-fast-forward is rejected so doPushRef's fetch+rebase recovery runs (and a
+// genuinely diverged ref is never silently overwritten — there is no
+// server-side ref protection). This keeps one consistent non-force policy for
+// every checkpoint ref, branch or per-checkpoint.
 func tryPushRefCommon(ctx context.Context, remoteName string, ref plumbing.ReferenceName) (pushResult, error) {
 	refSpec := ref.Short()
 	if !ref.IsBranch() {
-		refSpec = "+" + ref.String() + ":" + ref.String()
+		refSpec = ref.String() + ":" + ref.String()
 	}
 
 	// Span the actual `git push` subprocess: on a slow remote (e.g. a custom
