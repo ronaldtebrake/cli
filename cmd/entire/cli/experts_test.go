@@ -458,6 +458,20 @@ func TestExpertsCommandRejectsRepoWithStaged(t *testing.T) {
 	}
 }
 
+func TestParseGitStagedScopeLinesNormalizesCRLF(t *testing.T) {
+	t.Parallel()
+	got := parseGitStagedScopeLines("billing/foo.go\r\nbilling/bar.go\r\n")
+	want := []string{"billing/foo.go", "billing/bar.go"}
+	if len(got) != len(want) {
+		t.Fatalf("scopes = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("scopes[%d] = %q, want %q (full: %#v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 func runExpertsGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmdArgs := append([]string{"-c", "commit.gpgsign=false"}, args...)

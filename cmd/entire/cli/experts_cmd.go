@@ -486,7 +486,13 @@ func stagedExpertScopes(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read staged files: %w", err)
 	}
-	trimmed := strings.TrimSpace(string(output))
+	return parseGitStagedScopeLines(string(output)), nil
+}
+
+// parseGitStagedScopeLines normalizes git name-only output into repo-relative
+// path scopes. Windows git may emit CRLF line endings; strip them before split.
+func parseGitStagedScopeLines(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
 	trimmed = strings.ReplaceAll(trimmed, "\r\n", "\n")
 	lines := strings.Split(trimmed, "\n")
 	scopes := make([]string, 0, len(lines))
@@ -499,7 +505,7 @@ func stagedExpertScopes(ctx context.Context) ([]string, error) {
 		seen[scope] = true
 		scopes = append(scopes, scope)
 	}
-	return scopes, nil
+	return scopes
 }
 
 func renderExperts(w io.Writer, resp expertsResponse) {
