@@ -114,16 +114,13 @@ func formatCheckpointPolicyValue(configured, effective string) string {
 }
 
 func formatCheckpointVersionPolicyValue(configured, effective string) string {
-	if configured == "" {
-		return effective + " (default)"
-	}
-	if checkpointpolicy.UnsupportedWrite(checkpointpolicy.Policy{
+	if configured != "" && checkpointpolicy.UnsupportedWrite(checkpointpolicy.Policy{
 		CheckpointVersion:    configured,
 		CheckpointMinVersion: checkpointpolicy.DefaultCheckpointVersion(),
 	}) {
 		return configured + " (unsupported)"
 	}
-	return configured
+	return formatCheckpointPolicyValue(configured, effective)
 }
 
 func checkpointPolicyError(message string, err error) error {
