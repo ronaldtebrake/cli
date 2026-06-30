@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Agent to run (leave empty to run all agents)"
+        description: "Agent to run (leave empty to run all real agents; vogon must be selected explicitly)"
         required: false
         type: choice
         options:
@@ -36,8 +36,13 @@ jobs:
       agents: ${{ steps.set.outputs.agents }}
     steps:
       - id: set
+        # Pass the input through env rather than interpolating it into the script:
+        # `type: choice` only constrains the UI, so a REST-API dispatch could inject
+        # shell metacharacters here otherwise.
+        env:
+          AGENT_INPUT: ${{ github.event.inputs.agent }}
         run: |
-          input="${{ github.event.inputs.agent }}"
+          input="$AGENT_INPUT"
           if [ -n "$input" ]; then
             echo "agents=[\"$input\"]" >> "$GITHUB_OUTPUT"
           else
@@ -119,16 +124,27 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          E2E_CODEX_MODEL: ${{ matrix.agent == 'codex' && 'gpt-5.1-codex-mini' || '' }}
+          # Pin per-agent models and concurrency limits to match e2e.yml so this
+          # workflow tests the same versions and avoids per-agent rate limits.
+          E2E_CODEX_MODEL: ${{ matrix.agent == 'codex' && 'gpt-5.4-mini' || '' }}
+          E2E_GEMINI_MODEL: ${{ matrix.agent == 'gemini-cli' && 'gemini-3.1-flash-lite' || '' }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           COPILOT_GITHUB_TOKEN: ${{ github.token }}
+          E2E_CONCURRENT_TEST_LIMIT: ${{ matrix.agent == 'gemini-cli' && '6' || matrix.agent == 'factoryai-droid' && '1' || matrix.agent == 'cursor-cli' && '2' || '' }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts
           E2E_ENTIRE_BIN: /usr/local/bin/entire
           E2E_CHECKPOINT_STORE: ${{ inputs.checkpoint_store }}
+        # roger-roger is deterministic, so it runs through its dedicated task,
+        # which does NOT enable --rerun-fails. Routing it through the default
+        # task (`test:e2e`) would retry a real regression and mask it.
         run: |
           mkdir -p "$E2E_ARTIFACT_DIR"
-          mise run test:e2e --agent ${{ matrix.agent }}
+          if [ "${{ matrix.agent }}" = "roger-roger" ]; then
+            mise run test:e2e:roger-roger TestExternalAgent
+          else
+            mise run test:e2e --agent ${{ matrix.agent }}
+          fi
 
       - name: Upload artifacts
         if: always()
