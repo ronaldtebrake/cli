@@ -1006,3 +1006,70 @@ func TestReviewerTimeout(t *testing.T) {
 		t.Errorf("disabled (negative) = %v, want 0 (no timeout)", got)
 	}
 }
+
+// TestResolveReviewerTimeoutArg pins the --timeout flag -> RunConfig sentinel
+// mapping: a non-positive flag value (the user passed --timeout 0) becomes the
+// negative "disabled" sentinel that turns off both the reviewer bound and the
+// judge's deadline; a positive value passes through unchanged.
+func TestResolveReviewerTimeoutArg(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   time.Duration
+		want time.Duration
+	}{
+		{"explicit zero disables", 0, -1},
+		{"negative disables", -5 * time.Minute, -1},
+		{"positive passes through", 20 * time.Minute, 20 * time.Minute},
+	}
+	for _, tc := range cases {
+		if got := resolveReviewerTimeoutArg(tc.in); got != tc.want {
+			t.Errorf("%s: resolveReviewerTimeoutArg(%v) = %v, want %v", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDefaultReviewerTimeoutValue pins the literal default so an accidental edit
+// to the constant is caught (the other timeout tests compare against the
+// constant itself and would silently follow a change).
+func TestDefaultReviewerTimeoutValue(t *testing.T) {
+	t.Parallel()
+	if defaultReviewerTimeout != 20*time.Minute {
+		t.Errorf("defaultReviewerTimeout = %v, want 20m", defaultReviewerTimeout)
+	}
+}
+
+// TestTimeoutFlag_ResolvesThroughCommand drives the real --timeout flag through
+// the command (parse only, no RunE) and the resolver, covering the full
+// flag -> resolveReviewerTimeoutArg chain: 0 (and the default) and a positive
+// override. Guards the documented "0 disables" contract against a regression
+// that bypasses the resolver.
+func TestTimeoutFlag_ResolvesThroughCommand(t *testing.T) {
+	t.Parallel()
+	parseTimeout := func(args []string) time.Duration {
+		cmd := NewCommand(Deps{})
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatalf("ParseFlags(%v): %v", args, err)
+		}
+		d, err := cmd.Flags().GetDuration("timeout")
+		if err != nil {
+			t.Fatalf("GetDuration: %v", err)
+		}
+		return d
+	}
+
+	// Default (no flag) is the nonzero default and resolves to a positive bound.
+	if d := parseTimeout(nil); d != defaultReviewerTimeout {
+		t.Errorf("default --timeout = %v, want %v", d, defaultReviewerTimeout)
+	} else if got := resolveReviewerTimeoutArg(d); got != defaultReviewerTimeout {
+		t.Errorf("default resolves to %v, want %v", got, defaultReviewerTimeout)
+	}
+	// --timeout 0 resolves to the negative disable sentinel (reviewers + judge).
+	if got := resolveReviewerTimeoutArg(parseTimeout([]string{"--timeout", "0"})); got != -1 {
+		t.Errorf("--timeout 0 resolves to %v, want -1 (disabled)", got)
+	}
+	// A positive override passes through unchanged.
+	if got := resolveReviewerTimeoutArg(parseTimeout([]string{"--timeout", "30m"})); got != 30*time.Minute {
+		t.Errorf("--timeout 30m resolves to %v, want 30m", got)
+	}
+}

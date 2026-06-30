@@ -46,6 +46,7 @@ const (
 	flagForce                = "force"
 	flagLocalDev             = "local-dev"
 	flagSearchSkill          = "search-skill"
+	flagAgentHelpSkill       = "agent-help-skill"
 	checkpointProviderGitHub = "github"
 )
 
@@ -72,6 +73,7 @@ type EnableOptions struct {
 	SuppressDoneMessage bool
 	Yes                 bool
 	SearchSkill         bool
+	AgentHelpSkill      bool
 }
 
 // applyStrategyOptions sets strategy_options on settings from CLI flags.
@@ -130,14 +132,14 @@ func hasConfigureSettingsFlags(cmd *cobra.Command) bool {
 // Bare `enable` and `enable --local/--project` remain state-toggle operations;
 // any other setup-mutating flag should share configure's behavior.
 func enableUsesSetupFlow(cmd *cobra.Command, agentName string) bool {
-	if agentName != "" || hasStrategyFlags(cmd) || cmd.Flags().Changed(flagSearchSkill) {
+	if agentName != "" || hasStrategyFlags(cmd) || cmd.Flags().Changed(flagSearchSkill) || cmd.Flags().Changed(flagAgentHelpSkill) {
 		return true
 	}
 	return hasGlobalSettingsFlags(cmd) || cmd.Flags().Changed("yes")
 }
 
 func enableNeedsAgentManagement(cmd *cobra.Command) bool {
-	return hasGlobalSettingsFlags(cmd) || cmd.Flags().Changed("yes") || cmd.Flags().Changed(flagSearchSkill)
+	return hasGlobalSettingsFlags(cmd) || cmd.Flags().Changed("yes") || cmd.Flags().Changed(flagSearchSkill) || cmd.Flags().Changed(flagAgentHelpSkill)
 }
 
 // updateStrategyOptions applies strategy flags to settings without re-running agent setup.
@@ -436,7 +438,7 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 	// When no selectFn is provided, check if we can prompt interactively.
 	// A selectFn (e.g. from --yes) bypasses the interactive prompt entirely.
 	if selectFn == nil && !interactive.CanPromptInteractively() {
-		if opts.SearchSkill {
+		if opts.SearchSkill || opts.AgentHelpSkill {
 			if len(installedNames) > 0 {
 				external.DiscoverAndRegisterAlways(ctx)
 				selectedAgentNames := make([]string, 0, len(installedNames))
@@ -445,8 +447,13 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 				}
 				return applyAgentChanges(ctx, w, selectedAgentNames, installedNames, opts)
 			}
-			printSearchSkillNonInteractiveNoAgentsGuidance(w)
-			return NewSilentError(errors.New("search skill requires an agent in non-interactive mode"))
+			if opts.SearchSkill {
+				printSkillNonInteractiveNoAgentsGuidance(w, "search skill", flagSearchSkill)
+			}
+			if opts.AgentHelpSkill {
+				printSkillNonInteractiveNoAgentsGuidance(w, "agent-help skill", flagAgentHelpSkill)
+			}
+			return NewSilentError(errors.New("skill install requires an agent in non-interactive mode"))
 		}
 		fmt.Fprintln(w, "Cannot show agent selection in non-interactive mode.")
 		fmt.Fprintln(w, "Use: entire agent add <name>")
@@ -577,7 +584,7 @@ func applyAgentChanges(ctx context.Context, w io.Writer, selectedAgentNames []st
 		removedAgents = append(removedAgents, ag)
 	}
 
-	if len(addedAgents) == 0 && len(reinstalledAgents) == 0 && len(removedAgents) == 0 && len(errs) == 0 && !opts.SearchSkill {
+	if len(addedAgents) == 0 && len(reinstalledAgents) == 0 && len(removedAgents) == 0 && len(errs) == 0 && !opts.SearchSkill && !opts.AgentHelpSkill {
 		targetFile, _ := settingsTargetFile(ctx, opts.UseLocalSettings, opts.UseProjectSettings)
 		changed, err := maybePromptVercelDeploymentDisable(ctx, w, targetFile, nil)
 		if err != nil {
@@ -622,6 +629,9 @@ func applyAgentChanges(ctx context.Context, w io.Writer, selectedAgentNames []st
 	}
 
 	if err := setupOptionalSearchSkillForNames(ctx, w, selectedAgentNames, opts); err != nil {
+		errs = append(errs, err)
+	}
+	if err := setupOptionalAgentHelpSkillForNames(ctx, w, selectedAgentNames, opts); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -924,6 +934,7 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 	cmd.Flags().BoolVar(&opts.Telemetry, flagTelemetry, true, "Enable anonymous usage analytics")
 	cmd.Flags().BoolVar(&opts.AbsoluteGitHookPath, flagAbsoluteGitHookPath, false, "Embed full binary path in git hooks (for GUI git clients that don't source shell profiles)")
 	cmd.Flags().BoolVar(&opts.SearchSkill, flagSearchSkill, false, "Install the optional Entire search skill for selected agent(s)")
+	cmd.Flags().BoolVar(&opts.AgentHelpSkill, flagAgentHelpSkill, false, "Install the stable Entire agent-help skill (points agents at `entire agent-help`) for selected agent(s)")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Accept all defaults without prompting (in a non-repo directory: init git, create private GitHub repo, commit; then enable all agents and accept telemetry)")
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 
@@ -1082,6 +1093,9 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 			return fmt.Errorf("failed to setup %s hooks: %w", ag.Type(), err)
 		}
 		if err := setupOptionalSearchSkill(ctx, w, ag, opts); err != nil {
+			return err
+		}
+		if err := setupOptionalAgentHelpSkill(ctx, w, ag, opts); err != nil {
 			return err
 		}
 	}
@@ -1596,6 +1610,9 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
 		return fmt.Errorf("failed to setup %s hooks: %w", agentName, err)
 	}
 	if err := setupOptionalSearchSkill(ctx, w, ag, opts); err != nil {
+		return err
+	}
+	if err := setupOptionalAgentHelpSkill(ctx, w, ag, opts); err != nil {
 		return err
 	}
 

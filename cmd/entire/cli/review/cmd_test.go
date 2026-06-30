@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	cli "github.com/entireio/cli/cmd/entire/cli"
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -902,6 +903,50 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 			}
 			if hasSynth != tt.wantSynth {
 				t.Errorf("SynthesisSink present=%v, want %v", hasSynth, tt.wantSynth)
+			}
+		})
+	}
+}
+
+// TestComposeMultiAgentSinks_JudgeTimeoutWired proves the resolved --timeout
+// value AND the synthesis-error callback reach the judge: composeMultiAgentSinks
+// must set the SynthesisSink's ProviderTimeout from judgeTimeout and its OnError
+// from onSynthesisError, in both the TTY and non-TTY paths. Without the former
+// the judge would silently keep its own default regardless of --timeout; without
+// the latter a failed judge could not surface in the command's exit status.
+func TestComposeMultiAgentSinks_JudgeTimeoutWired(t *testing.T) {
+	t.Parallel()
+
+	provider := &stubCmdSynthesisProvider{}
+	noopCancel := func() {}
+	const want = 17 * time.Minute
+
+	for _, isTTY := range []bool{false, true} {
+		t.Run(map[bool]string{false: "non-tty", true: "tty"}[isTTY], func(t *testing.T) {
+			t.Parallel()
+			sinks := review.ExposedComposeMultiAgentSinks(review.SinkComposeInputs{
+				Out:               &bytes.Buffer{},
+				IsTTY:             isTTY,
+				AgentNames:        []string{"a", "b"},
+				CancelRun:         noopCancel,
+				SynthesisProvider: provider,
+				JudgeTimeout:      want,
+				OnSynthesisError:  func(error) {},
+			})
+			var found bool
+			for _, s := range sinks {
+				if ss, ok := s.(review.SynthesisSink); ok {
+					found = true
+					if ss.ProviderTimeout != want {
+						t.Errorf("SynthesisSink.ProviderTimeout = %v, want %v (judgeTimeout not wired)", ss.ProviderTimeout, want)
+					}
+					if ss.OnError == nil {
+						t.Error("SynthesisSink.OnError is nil (onSynthesisError not wired) — a failed judge could not fail the command")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("no SynthesisSink composed")
 			}
 		})
 	}

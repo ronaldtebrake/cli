@@ -655,7 +655,7 @@ func (s *treeWriter) writeSessionToSubdirectory(ctx context.Context, opts WriteO
 	// Write transcript. Transcript points at full.jsonl (CLI
 	// rewind/resume/explain read it by filename); the compact transcript.jsonl,
 	// when written, is also pushed and pointed at by CompactTranscript.
-	wroteTranscript, err := s.writeTranscript(ctx, opts, sessionPath, entries)
+	wroteTranscript, compactTranscriptStart, err := s.writeTranscript(ctx, opts, sessionPath, entries)
 	if err != nil {
 		return filePaths, err
 	}
@@ -703,6 +703,7 @@ func (s *treeWriter) writeSessionToSubdirectory(ctx context.Context, opts WriteO
 		TranscriptIdentifierAtStart: opts.TranscriptIdentifierAtStart,
 		CheckpointTranscriptStart:   opts.CheckpointTranscriptStart,
 		TranscriptLinesAtStart:      opts.CheckpointTranscriptStart, // Deprecated: kept for backward compat
+		CompactTranscriptStart:      compactTranscriptStart,
 		TokenUsage:                  opts.TokenUsage,
 		SkillEventsVersion:          skillEventsVersion(opts.SkillEvents),
 		SkillEvents:                 opts.SkillEvents,
@@ -965,11 +966,13 @@ func aggregateTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 }
 
 // writeTranscript writes the transcript, compact transcript, and content hash
-// to the checkpoint entries. The compact transcript.jsonl is written into the
-// tree (so it is pushed alongside full.jsonl) but is not yet referenced by
-// metadata. Returns true when a transcript was written, false when it was
-// empty and nothing was written.
-func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, basePath string, entries map[string]object.TreeEntry) (bool, error) {
+// to the checkpoint entries. The compact transcript.jsonl (the full compacted
+// session) is written into the tree and pushed alongside full.jsonl. Returns
+// (wrote, compactStart): wrote is true when a transcript was written (false when
+// empty, nothing written); compactStart is the line offset of this checkpoint's
+// slice within the compact transcript, to record as CompactTranscriptStart, or
+// nil when no compact transcript was produced.
+func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, basePath string, entries map[string]object.TreeEntry) (bool, *int, error) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	transcriptBytes := opts.Transcript.Bytes()
 
@@ -985,13 +988,13 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 		if len(rawData) > 0 {
 			redacted, redactErr := redact.JSONLBytes(rawData)
 			if redactErr != nil {
-				return false, fmt.Errorf("failed to redact transcript from file: %w", redactErr)
+				return false, nil, fmt.Errorf("failed to redact transcript from file: %w", redactErr)
 			}
 			transcriptBytes = redacted.Bytes()
 		}
 	}
 	if len(transcriptBytes) == 0 {
-		return false, nil
+		return false, nil, nil
 	}
 
 	if opts.Agent == agent.AgentTypeCodex {
@@ -1005,7 +1008,7 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 	if err != nil {
 		chunkTranscriptSpan.RecordError(err)
 		chunkTranscriptSpan.End()
-		return false, fmt.Errorf("failed to chunk transcript: %w", err)
+		return false, nil, fmt.Errorf("failed to chunk transcript: %w", err)
 	}
 	chunkTranscriptSpan.End()
 	chunkDuration := time.Since(chunkStart)
@@ -1019,7 +1022,7 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 		if err != nil {
 			writeTranscriptBlobsSpan.RecordError(err)
 			writeTranscriptBlobsSpan.End()
-			return false, err
+			return false, nil, err
 		}
 		entries[chunkPath] = object.TreeEntry{
 			Name: chunkPath,
@@ -1038,7 +1041,7 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 	if err != nil {
 		contentHashSpan.RecordError(err)
 		contentHashSpan.End()
-		return false, err
+		return false, nil, err
 	}
 	entries[basePath+paths.ContentHashFileName] = object.TreeEntry{
 		Name: basePath + paths.ContentHashFileName,
@@ -1047,11 +1050,12 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 	}
 	contentHashSpan.End()
 
-	// Write the compact transcript (transcript.jsonl) into the tree so it is
-	// pushed alongside full.jsonl. The metadata pointer intentionally stays on
-	// full.jsonl for now — pointing it at the compact transcript is deferred to
-	// a later change.
-	s.writeCompactTranscript(logCtx, opts.Agent, opts.CheckpointTranscriptStart, transcriptBytes, basePath, entries)
+	// Write the full compact transcript (transcript.jsonl) into the tree so it
+	// is pushed alongside full.jsonl. The metadata pointer (filePaths) stays on
+	// full.jsonl, which the CLI read paths resolve by filename. compactStart is
+	// the line offset of this checkpoint's slice within the full compact output,
+	// recorded into session metadata so downstream readers can segment it.
+	compactStart := s.writeCompactTranscript(logCtx, opts.Agent, opts.CheckpointTranscriptStart, transcriptBytes, basePath, entries)
 
 	logging.Debug(logCtx, "write transcript timings",
 		slog.String("session_id", opts.SessionID),
@@ -1063,7 +1067,7 @@ func (s *treeWriter) writeTranscript(ctx context.Context, opts WriteOptions, bas
 		slog.Int("transcript_bytes", len(transcriptBytes)),
 		slog.Int("chunk_count", len(chunks)),
 	)
-	return true, nil
+	return true, compactStart, nil
 }
 
 // compactAgentName resolves the agent slug used in compact transcript lines
@@ -1077,17 +1081,23 @@ func compactAgentName(agentType types.AgentType) string {
 }
 
 // writeCompactTranscript converts the pre-redacted full transcript into the
-// compact transcript.jsonl format, scoped to this checkpoint via startLine,
-// and records it at sessionPath in the tree. Best-effort: the compact
-// transcript is derived data, so failures are logged and never fail the
-// checkpoint write. transcriptBytes must already be sanitized for the agent
-// (e.g. Codex portable-transcript sanitization); callers sanitize before
-// calling so the expensive pass runs exactly once.
-func (s *treeWriter) writeCompactTranscript(ctx context.Context, agentType types.AgentType, startLine int, transcriptBytes []byte, sessionPath string, entries map[string]object.TreeEntry) {
+// compact transcript.jsonl format and records it at sessionPath in the tree.
+// The whole session is compacted (so each checkpoint is self-contained); the
+// returned offset is the line in the compact output at which this checkpoint's
+// data begins (derived from startLine), to be stored as
+// Metadata.CompactTranscriptStart so readers can segment the slice.
+//
+// Best-effort: the compact transcript is derived data, so failures are logged
+// and never fail the checkpoint write, in which case a nil offset is returned
+// (no transcript.jsonl written, no marker to record). transcriptBytes must
+// already be sanitized for the agent (e.g. Codex portable-transcript
+// sanitization); callers sanitize before calling so the expensive pass runs
+// exactly once.
+func (s *treeWriter) writeCompactTranscript(ctx context.Context, agentType types.AgentType, startLine int, transcriptBytes []byte, sessionPath string, entries map[string]object.TreeEntry) *int {
 	compactCtx, compactSpan := perf.Start(ctx, "write_compact_transcript")
 	defer compactSpan.End()
 
-	compacted, err := transcriptcompact.Compact(redact.AlreadyRedacted(transcriptBytes), transcriptcompact.MetadataFields{
+	compacted, boundary, err := transcriptcompact.FullWithBoundary(redact.AlreadyRedacted(transcriptBytes), transcriptcompact.MetadataFields{
 		Agent:      compactAgentName(agentType),
 		CLIVersion: versioninfo.Version,
 		StartLine:  startLine,
@@ -1098,20 +1108,20 @@ func (s *treeWriter) writeCompactTranscript(ctx context.Context, agentType types
 			slog.String("agent", string(agentType)),
 			slog.String("error", err.Error()),
 		)
-		return
+		return nil
 	}
 	if len(bytes.TrimSpace(compacted)) == 0 {
 		logging.Debug(compactCtx, "compact transcript empty, skipping transcript.jsonl",
 			slog.String("agent", string(agentType)),
 		)
-		return
+		return nil
 	}
 	if len(compacted) > agent.MaxChunkSize {
 		logging.Warn(compactCtx, "compact transcript exceeds max blob size, skipping transcript.jsonl",
 			slog.String("agent", string(agentType)),
 			slog.Int("compact_bytes", len(compacted)),
 		)
-		return
+		return nil
 	}
 
 	blobHash, err := CreateBlobFromContent(s.repo, compacted)
@@ -1120,7 +1130,7 @@ func (s *treeWriter) writeCompactTranscript(ctx context.Context, agentType types
 		logging.Warn(compactCtx, "failed to create compact transcript blob, skipping transcript.jsonl",
 			slog.String("error", err.Error()),
 		)
-		return
+		return nil
 	}
 	compactPath := sessionPath + paths.CompactTranscriptFileName
 	entries[compactPath] = object.TreeEntry{
@@ -1128,6 +1138,7 @@ func (s *treeWriter) writeCompactTranscript(ctx context.Context, agentType types
 		Mode: filemode.Regular,
 		Hash: blobHash,
 	}
+	return &boundary
 }
 
 // mergeFilesTouched combines two file lists, removing duplicates.
@@ -1730,7 +1741,11 @@ func (s *GitStore) backfillTranscript(ctx context.Context, opts UpdateOptions) e
 	return s.setPrimaryRef(newCommitHash)
 }
 
-func (s *treeWriter) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPath string, entries map[string]object.TreeEntry) error {
+// updateSessionMetadata reads the session metadata blob from entries, applies
+// mutate, and rewrites the blob. Reading from the blob (rather than an in-memory
+// copy) keeps it correct when several finalize-path steps mutate the same
+// metadata in sequence — each sees the prior step's changes.
+func (s *treeWriter) updateSessionMetadata(sessionPath string, entries map[string]object.TreeEntry, mutate func(*Metadata)) error {
 	metadataPath := sessionPath + paths.MetadataFileName
 	entry, exists := entries[metadataPath]
 	if !exists {
@@ -1741,8 +1756,7 @@ func (s *treeWriter) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionP
 	if err != nil {
 		return fmt.Errorf("read session metadata: %w", err)
 	}
-	metadata.SkillEventsVersion = skillEventsVersion(skillEvents)
-	metadata.SkillEvents = skillEvents
+	mutate(metadata)
 
 	metadataJSON, err := jsonutil.MarshalIndentWithNewline(metadata, "", "  ")
 	if err != nil {
@@ -1758,6 +1772,23 @@ func (s *treeWriter) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionP
 		Hash: metadataHash,
 	}
 	return nil
+}
+
+func (s *treeWriter) replaceSkillEvents(skillEvents []agent.SkillEvent, sessionPath string, entries map[string]object.TreeEntry) error {
+	return s.updateSessionMetadata(sessionPath, entries, func(metadata *Metadata) {
+		metadata.SkillEventsVersion = skillEventsVersion(skillEvents)
+		metadata.SkillEvents = skillEvents
+	})
+}
+
+// setCompactTranscriptStart records CompactTranscriptStart in the session
+// metadata, or clears it when start is nil (no compact transcript present).
+// Used by the OPF rewrite path so the finalized session metadata reflects the
+// regenerated compact transcript.
+func (s *treeWriter) setCompactTranscriptStart(sessionPath string, start *int, entries map[string]object.TreeEntry) error {
+	return s.updateSessionMetadata(sessionPath, entries, func(metadata *Metadata) {
+		metadata.CompactTranscriptStart = start
+	})
 }
 
 // replaceTranscript writes the full transcript content, replacing any existing
@@ -1857,16 +1888,32 @@ func (s *treeWriter) replaceTranscript(ctx context.Context, transcript redact.Re
 	}
 
 	// Regenerate the compact transcript from the new content so the pushed
-	// transcript.jsonl stays current. Best-effort: on generation failure the
-	// previous transcript.jsonl entry (if any) is left in place. Codex
-	// transcripts are sanitized first to match the initial-write path
-	// (writeTranscript), which sanitizes before compaction; this finalize path
-	// otherwise passes raw bytes.
+	// transcript.jsonl stays current. Codex transcripts are sanitized first to
+	// match the initial-write path (writeTranscript), which sanitizes before
+	// compaction; this finalize path otherwise passes raw bytes.
 	compactBytes := transcript.Bytes()
 	if agentType == agent.AgentTypeCodex {
 		compactBytes = codex.SanitizePortableTranscript(compactBytes)
 	}
-	s.writeCompactTranscript(ctx, agentType, startLine, compactBytes, sessionPath, entries)
+	compactStart := s.writeCompactTranscript(ctx, agentType, startLine, compactBytes, sessionPath, entries)
+
+	// If regeneration produced no compact transcript (failure, empty, or
+	// oversized), drop any stale transcript.jsonl carried over from the prior
+	// write rather than shipping it. In the OPF rewrite path the stale file is a
+	// less-redacted compact (it predates the 8th-layer re-redaction), and its
+	// CompactTranscriptStart would point at content that no longer matches the
+	// re-redacted full transcript. The caller re-derives the root summary's
+	// compact_transcript pointer from the (now absent) tree entry.
+	if compactStart == nil {
+		delete(entries, sessionPath+paths.CompactTranscriptFileName)
+	}
+
+	// Keep the session metadata's marker consistent with the regenerated
+	// transcript.jsonl: record the new boundary when one was produced, or clear
+	// it (nil) when the compact transcript was dropped above.
+	if err := s.setCompactTranscriptStart(sessionPath, compactStart, entries); err != nil {
+		return fmt.Errorf("failed to update compact transcript start: %w", err)
+	}
 
 	return nil
 }
