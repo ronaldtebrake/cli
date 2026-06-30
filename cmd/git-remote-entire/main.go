@@ -188,6 +188,7 @@ func fatalMessage(err error, parsedURL *url.URL) string {
 			correctedURL := *parsedURL
 			correctedURL.Scheme = "entire"
 			correctedURL.Host = host
+			correctedURL.User = nil
 			corrected := correctedURL.String()
 			return fmt.Sprintf("fatal: this repository is not hosted on %s; it lives on %s.\n"+
 				"Re-run against the correct host, e.g.:\n\n    git clone %s\n",
