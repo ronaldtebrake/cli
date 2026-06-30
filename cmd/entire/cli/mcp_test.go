@@ -302,6 +302,25 @@ func TestMCPServer_InvalidRequest(t *testing.T) {
 	}
 }
 
+// runMCPServer must echo the request id verbatim (numeric or string); a
+// dropped/swapped id silently breaks multi-call MCP sessions.
+func TestMCPServer_EchoesRequestID(t *testing.T) {
+	t.Parallel()
+	resps := driveMCP(t,
+		`{"jsonrpc":"2.0","id":42,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":"abc","method":"ping"}`,
+	)
+	if len(resps) != 2 {
+		t.Fatalf("expected 2 responses, got %d", len(resps))
+	}
+	if string(resps[0].ID) != "42" {
+		t.Errorf("numeric id should round-trip verbatim, got %s", resps[0].ID)
+	}
+	if string(resps[1].ID) != `"abc"` {
+		t.Errorf("string id should round-trip verbatim, got %s", resps[1].ID)
+	}
+}
+
 // A single line larger than maxMCPMessageBytes is rejected without consuming
 // unbounded memory, and the server stops cleanly.
 func TestMCPServer_OversizedMessageRejected(t *testing.T) {
