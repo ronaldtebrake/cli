@@ -294,7 +294,7 @@ func (s *GitStore) writeFinalTaskCheckpoint(ctx context.Context, opts WriteOptio
 //	├── 1/                    # First session
 //	│   ├── metadata.json     # Metadata (session-specific, includes initial_attribution)
 //	│   ├── full.jsonl        # Raw agent transcript (CLI rewind/resume/explain)
-//	│   ├── transcript.jsonl  # Compact transcript scoped to this checkpoint (pushed; not yet referenced by metadata.json)
+//	│   ├── transcript.jsonl  # Full compacted session (slice at compact_transcript_start)
 //	│   ├── prompt.txt
 //	│   └── content_hash.txt
 //	├── 2/                    # Second session
@@ -743,10 +743,12 @@ func aggregateTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 }
 
 // writeTranscript writes the transcript, compact transcript, and content hash
-// to the checkpoint entries. The compact transcript.jsonl is written into the
-// tree (so it is pushed alongside full.jsonl) but is not yet referenced by
-// metadata. Returns true when a transcript was written, false when it was
-// empty and nothing was written.
+// to the checkpoint entries. The compact transcript.jsonl (the full compacted
+// session) is written into the tree and pushed alongside full.jsonl. Returns
+// (wrote, compactStart): wrote is true when a transcript was written (false when
+// empty, nothing written); compactStart is the line offset of this checkpoint's
+// slice within the compact transcript, to record as CompactTranscriptStart, or
+// nil when no compact transcript was produced.
 func (s *GitStore) writeTranscript(ctx context.Context, opts WriteOptions, basePath string, entries map[string]object.TreeEntry) (bool, *int, error) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	transcriptBytes := opts.Transcript.Bytes()

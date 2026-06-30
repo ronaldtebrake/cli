@@ -30,7 +30,8 @@ const (
 	TranscriptFileName       = "full.jsonl"
 	TranscriptFileNameLegacy = "full.log"
 	// CompactTranscriptFileName is the compact transcript stored alongside
-	// full.jsonl, pre-sliced to the checkpoint's own portion.
+	// full.jsonl. It holds the full compacted session; this checkpoint's slice
+	// begins at the session metadata's compact_transcript_start.
 	CompactTranscriptFileName = "transcript.jsonl"
 	MetadataFileName          = "metadata.json"
 	CheckpointFileName        = "checkpoint.json"
