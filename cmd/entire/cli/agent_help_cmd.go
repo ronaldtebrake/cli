@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
-
-	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 )
 
 // agentHelpAnnotation marks an otherwise-hidden command as worth advertising to
@@ -51,8 +50,9 @@ command tree so it always matches this binary. With no arguments it prints a
 high-level map of when to use entire and which subcommand; pass a command path
 (e.g. "agent-help checkpoint") to see that command's exact, current flags.`,
 		RunE: func(c *cobra.Command, args []string) error {
-			repoLine := agentHelpRepoLine(c.Context())
-			trailsEnabled := trailsEnabledForRepo(c.Context())
+			// Resolve the origin remote once and derive both the repo line and the
+			// trails-enablement check from it (avoids two git subprocesses per run).
+			repoLine, trailsEnabled := agentHelpRepoContext(c.Context())
 			out, err := runAgentHelp(rootCmd, args, repoLine, asJSON, trailsEnabled)
 			if err != nil {
 				return err
@@ -65,15 +65,20 @@ high-level map of when to use entire and which subcommand; pass a command path
 	return cmd
 }
 
-// agentHelpRepoLine resolves the current repo as forge/owner/repo from the
-// origin remote, returning "" when it can't be determined (no origin / detached
-// HEAD) so the renderer degrades gracefully rather than erroring.
-func agentHelpRepoLine(ctx context.Context) string {
-	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
-	if err != nil || forge == "" || owner == "" || repo == "" {
-		return ""
+// agentHelpRepoContext resolves the origin remote ONCE and derives both the repo
+// line (forge/owner/repo, or "" when it can't be determined — no origin /
+// detached HEAD — so the renderer degrades gracefully) and whether trails are
+// enabled for that scope. Previously the repo line and the trails check resolved
+// origin independently, costing two git subprocesses per `entire agent-help` run.
+func agentHelpRepoContext(ctx context.Context) (repoLine string, trailsEnabled bool) {
+	scope, err := currentTrailEnablementScope(ctx)
+	if err != nil {
+		return "", false
 	}
-	return trailEnablementRepoKey(forge, owner, repo)
+	if scope.Forge != "" && scope.Owner != "" && scope.Repo != "" {
+		repoLine = scope.RepoKey
+	}
+	return repoLine, cachedTrailsEnablementForScope(ctx, scope, time.Now()) == trailEnablementCacheEnabled
 }
 
 // runAgentHelp resolves args to a command node and renders it. It is pure (no

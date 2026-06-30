@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/codex"
@@ -402,7 +403,12 @@ func entireTrailContextInjection(scope trailEnablementScope) string {
 	}
 	var b strings.Builder
 	b.WriteString("Entire is enabled for this repo. Run `entire agent-help` to see what entire does and which subcommand to use, then `entire agent-help <command>` for that command's exact, current flags. ")
-	if repo != "" {
+	// Mirror agentHelpRepoBlock's defense-in-depth: this string is injected raw
+	// into the agent's model context (no escaping), so a repo key carrying control
+	// characters (e.g. an <sessionID>.trail-scope.json cache written by a pre-fix
+	// binary, or tampered) degrades to the generic message rather than reaching
+	// that sink.
+	if repo != "" && strings.IndexFunc(repo, unicode.IsControl) < 0 {
 		b.WriteString("This repo is auto-detected from the git origin remote as ")
 		b.WriteString(repo)
 		b.WriteString("; you are already inside it, so never ask the user for the repo name.")
