@@ -74,6 +74,7 @@ func reportAgentHelpSkillScaffold(w io.Writer, ag agent.Agent, result managedSca
 		fmt.Fprintf(w, "    %s\n", result.RelPath)
 	case managedScaffoldUnsupported:
 		fmt.Fprintf(w, "  Agent-help skill is not supported for %s\n", ag.Type())
+		fmt.Fprintf(w, "    %s discovers entire via `%s` (passive — no skill file needed)\n", ag.Type(), agentHelpCommand)
 	case managedScaffoldUnchanged:
 		fmt.Fprintf(w, "  Agent-help skill already installed for %s\n", ag.Type())
 		fmt.Fprintf(w, "    %s\n", result.RelPath)

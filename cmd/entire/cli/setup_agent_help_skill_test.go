@@ -70,7 +70,7 @@ func TestScaffoldAgentHelpSkill_CreatesManagedFiles(t *testing.T) {
 			if !strings.Contains(content, entireManagedAgentHelpSkillMarker) {
 				t.Error("scaffolded file should contain the Entire-managed marker")
 			}
-			if !strings.Contains(content, "entire agent-help") {
+			if !strings.Contains(content, agentHelpCommand) {
 				t.Errorf("scaffolded file should point at `entire agent-help`:\n%s", content)
 			}
 			if !strings.Contains(strings.ToLower(content), "never ask") {
@@ -142,7 +142,7 @@ func TestScaffoldAgentHelpSkill_UpdatesManagedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read updated content: %v", err)
 	}
-	if !strings.Contains(string(data), "entire agent-help") {
+	if !strings.Contains(string(data), agentHelpCommand) {
 		t.Error("updated managed file should contain the current template")
 	}
 	if strings.Contains(string(data), "outdated body") {
@@ -247,5 +247,13 @@ func TestSetupOptionalAgentHelpSkillForNames_DedupsAndSkipsUnsupported(t *testin
 	}
 	if !strings.Contains(out.String(), "not supported") {
 		t.Fatalf("cursor (no template) should be reported unsupported, got: %s", out.String())
+	}
+	// A no-channel agent must be pointed at the passive pull path, not left at a
+	// dead-end "not supported" line.
+	if !strings.Contains(out.String(), agentHelpCommand) {
+		t.Fatalf("unsupported agent should be pointed at `entire agent-help`, got: %s", out.String())
+	}
+	if !strings.Contains(strings.ToLower(out.String()), "passive") {
+		t.Fatalf("unsupported agent note should mention passive discovery, got: %s", out.String())
 	}
 }
