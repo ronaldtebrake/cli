@@ -18,7 +18,7 @@ func TestAgentHelpBannerSuffix(t *testing.T) {
 	t.Parallel()
 
 	got := agentHelpBannerSuffix(agent.AgentNameFactoryAIDroid)
-	if !strings.Contains(got, "entire agent-help") {
+	if !strings.Contains(got, agentHelpCommand) {
 		t.Errorf("Factory Droid banner suffix should point at `entire agent-help`, got %q", got)
 	}
 
@@ -46,7 +46,7 @@ func TestFinalizeSessionStartBanner(t *testing.T) {
 	t.Parallel()
 
 	// Factory + assembled message: pointer appended to the base.
-	if out := finalizeSessionStartBanner("base message", "", agent.AgentNameFactoryAIDroid); !strings.Contains(out, "base message") || !strings.Contains(out, "entire agent-help") {
+	if out := finalizeSessionStartBanner("base message", "", agent.AgentNameFactoryAIDroid); !strings.Contains(out, "base message") || !strings.Contains(out, agentHelpCommand) {
 		t.Errorf("Factory banner should append the pointer to the base message, got %q", out)
 	}
 
@@ -58,7 +58,7 @@ func TestFinalizeSessionStartBanner(t *testing.T) {
 	if strings.Contains(out, "base message") {
 		t.Errorf("override should replace, not append to, the base message, got %q", out)
 	}
-	if !strings.Contains(out, "entire agent-help") {
+	if !strings.Contains(out, agentHelpCommand) {
 		t.Errorf("Factory pointer must survive the ResponseMessage override, got %q", out)
 	}
 
