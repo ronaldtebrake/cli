@@ -64,11 +64,11 @@ func TestPartitionLocalRefs(t *testing.T) {
 	assert.Equal(t, []plumbing.ReferenceName{stale}, missing, "absent ref is stale")
 }
 
-func TestBatchForcePushRefs(t *testing.T) {
+func TestBatchPushRefs(t *testing.T) {
 	workDir, bareDir, refs := setupRepoWithCheckpointRefs(t)
 	t.Chdir(workDir)
 
-	require.NoError(t, batchForcePushRefs(context.Background(), bareDir, refs))
+	require.NoError(t, batchPushRefs(context.Background(), bareDir, refs))
 
 	// All refs now exist on the bare remote.
 	lsCmd := exec.CommandContext(context.Background(), "git", "ls-remote", bareDir)
@@ -81,22 +81,22 @@ func TestBatchForcePushRefs(t *testing.T) {
 	}
 }
 
-func TestBatchForcePushRefs_Empty(t *testing.T) {
+func TestBatchPushRefs_Empty(t *testing.T) {
 	t.Parallel()
 	// No refs → no git invocation, no error.
-	require.NoError(t, batchForcePushRefs(context.Background(), "unused-target", nil))
+	require.NoError(t, batchPushRefs(context.Background(), "unused-target", nil))
 }
 
-func TestBatchForcePushRefs_IsForcePush(t *testing.T) {
+// TestBatchPushRefs_AllowsFastForward: advancing a checkpoint ref to a descendant
+// commit (the normal case) pushes fine without force.
+func TestBatchPushRefs_AllowsFastForward(t *testing.T) {
 	workDir, bareDir, refs := setupRepoWithCheckpointRefs(t)
 	t.Chdir(workDir)
 	ctx := context.Background()
 
-	// First push establishes the refs on the remote.
-	require.NoError(t, batchForcePushRefs(ctx, bareDir, refs))
+	require.NoError(t, batchPushRefs(ctx, bareDir, refs))
 
-	// Re-point one ref at a new (unrelated, non-fast-forward) commit and push
-	// again. A non-force push would be rejected; the force refspec must succeed.
+	// Advance refs[0] to a child commit (fast-forward).
 	repo, err := git.PlainOpen(workDir)
 	require.NoError(t, err)
 	testutil.WriteFile(t, workDir, "two.txt", "second")
@@ -106,12 +106,52 @@ func TestBatchForcePushRefs_IsForcePush(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refs[0], head2.Hash())))
 
-	require.NoError(t, batchForcePushRefs(ctx, bareDir, refs[:1]), "force push must overwrite the remote ref")
+	require.NoError(t, batchPushRefs(ctx, bareDir, refs[:1]), "fast-forward update should push without force")
+	assert.Equal(t, head2.Hash().String(), remoteRefHash(t, bareDir, refs[0]),
+		"remote ref should advance to the descendant commit")
+}
 
-	lsCmd := exec.CommandContext(ctx, "git", "ls-remote", bareDir, refs[0].String())
+// TestBatchPushRefs_RejectsNonFastForward: a divergent (non-descendant) update is
+// rejected, and the remote ref is left untouched — the safety property that
+// distinguishes this from a force push (we have no server-side ref protection).
+func TestBatchPushRefs_RejectsNonFastForward(t *testing.T) {
+	workDir, bareDir, refs := setupRepoWithCheckpointRefs(t)
+	t.Chdir(workDir)
+	ctx := context.Background()
+
+	require.NoError(t, batchPushRefs(ctx, bareDir, refs))
+	original := remoteRefHash(t, bareDir, refs[0])
+
+	// Point refs[0] at an orphan commit (no parent) — not a descendant of what was
+	// pushed, so the update is non-fast-forward.
+	runGit := func(args ...string) string {
+		c := exec.CommandContext(ctx, "git", args...)
+		c.Dir = workDir
+		c.Env = testutil.GitIsolatedEnv()
+		out, gitErr := c.CombinedOutput()
+		require.NoError(t, gitErr, "git %v failed: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	tree := runGit("rev-parse", "HEAD^{tree}")
+	orphan := runGit("commit-tree", tree, "-m", "divergent")
+	repo, err := git.PlainOpen(workDir)
+	require.NoError(t, err)
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refs[0], plumbing.NewHash(orphan))))
+
+	err = batchPushRefs(ctx, bareDir, refs[:1])
+	require.Error(t, err, "a non-fast-forward update must be rejected, not force-pushed")
+	assert.Equal(t, original, remoteRefHash(t, bareDir, refs[0]),
+		"remote ref must be unchanged after a rejected non-fast-forward push")
+}
+
+// remoteRefHash returns the object hash a ref points at on the bare remote.
+func remoteRefHash(t *testing.T, bareDir string, ref plumbing.ReferenceName) string {
+	t.Helper()
+	lsCmd := exec.CommandContext(context.Background(), "git", "ls-remote", bareDir, ref.String())
 	lsCmd.Env = testutil.GitIsolatedEnv()
 	out, err := lsCmd.CombinedOutput()
 	require.NoError(t, err, "ls-remote failed: %s", out)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(out)), head2.Hash().String()),
-		"remote ref should now point at the new commit")
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	require.NotEmpty(t, fields, "ref %s not found on remote", ref)
+	return fields[0]
 }

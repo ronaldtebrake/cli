@@ -172,12 +172,14 @@ func (s *ManualCommitStrategy) prePushCheckpointRefs(ctx context.Context, ps pus
 	}
 
 	pushCtx, pushSpan := perf.Start(ctx, "push_checkpoint_refs")
-	pushErr := batchForcePushRefs(pushCtx, ps.pushTarget(), existing)
+	pushErr := batchPushRefs(pushCtx, ps.pushTarget(), existing)
 	pushSpan.End()
 	if pushErr != nil {
 		// Leave the refs queued; the next pre-push retries. Non-fatal so the
-		// user's push proceeds.
-		logging.Warn(ctx, "git-refs pre-push: batch push failed; refs left queued for retry",
+		// user's push proceeds. The push is fast-forward-only, so this can mean a
+		// checkpoint ref diverged on the remote (non-fast-forward) — we leave it
+		// queued rather than force-overwriting it.
+		logging.Warn(ctx, "git-refs pre-push: checkpoint ref push failed (possible non-fast-forward divergence); refs left queued, not overwritten",
 			slog.String("error", pushErr.Error()))
 		return nil
 	}

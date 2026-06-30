@@ -37,24 +37,28 @@ func partitionLocalRefs(repo *git.Repository, refs []plumbing.ReferenceName) (ex
 	return existing, stale
 }
 
-// batchForcePushRefs pushes all of refs to target in a single git push. Each
-// uses a force refspec (+ref:ref), matching how non-branch checkpoint refs are
-// already pushed: per-checkpoint refs have independent histories with no
-// remote-tracking shadow, so there is no fast-forward to preserve and no
-// fetch+rebase recovery to attempt. Batching keeps a backfill of many refs to
-// one network round-trip. It is all-or-nothing: on error the caller leaves every
-// ref queued for the next pre-push (partial-failure reconciliation is out of
-// scope for now).
-func batchForcePushRefs(ctx context.Context, target string, refs []plumbing.ReferenceName) error {
+// batchPushRefs pushes all of refs to target in a single git push,
+// fast-forward-only (NOT a force push). Batching keeps a backfill of many refs to
+// one network round-trip. Per-checkpoint refs normally advance by fast-forward
+// (each write parents on the prior tip), so the common case succeeds; a
+// non-fast-forward update — genuine divergence, e.g. the same checkpoint written
+// differently on another machine — is REJECTED rather than silently overwriting
+// the remote. We deliberately do not force: there is no server-side ref
+// protection, so a force push would make a buggy or racing client clobber good
+// remote history with no signal. On rejection the whole push errors and the
+// caller leaves the refs queued (not overwritten) for a later pre-push;
+// reconciling a genuinely diverged ref is deferred (a future rewrite path, e.g.
+// OPF, would use --force-with-lease for the cases that must replace a ref).
+func batchPushRefs(ctx context.Context, target string, refs []plumbing.ReferenceName) error {
 	if len(refs) == 0 {
 		return nil
 	}
 	refSpecs := make([]string, 0, len(refs))
 	for _, ref := range refs {
-		refSpecs = append(refSpecs, "+"+ref.String()+":"+ref.String())
+		refSpecs = append(refSpecs, ref.String()+":"+ref.String())
 	}
 	if _, err := remote.PushWithOptions(ctx, remote.PushOptions{Remote: target, RefSpecs: refSpecs}); err != nil {
-		return fmt.Errorf("batch push %d checkpoint refs: %w", len(refs), err)
+		return fmt.Errorf("push %d checkpoint refs: %w", len(refs), err)
 	}
 	return nil
 }
