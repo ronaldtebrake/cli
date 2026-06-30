@@ -6439,15 +6439,22 @@ func (s *ProjectAdditional) init() ProjectAdditional {
 
 // Ref: #/components/schemas/ProjectGrant
 type ProjectGrant struct {
-	GranteeId       string `json:"granteeId"`
-	GranteeType     string `json:"granteeType"`
-	Role            string `json:"role"`
+	GranteeId       string    `json:"granteeId"`
+	GranteeName     OptString `json:"granteeName"`
+	GranteeType     string    `json:"granteeType"`
+	Role            string    `json:"role"`
+	Source          string    `json:"source"`
 	AdditionalProps ProjectGrantAdditional
 }
 
 // GetGranteeId returns the value of GranteeId.
 func (s *ProjectGrant) GetGranteeId() string {
 	return s.GranteeId
+}
+
+// GetGranteeName returns the value of GranteeName.
+func (s *ProjectGrant) GetGranteeName() OptString {
+	return s.GranteeName
 }
 
 // GetGranteeType returns the value of GranteeType.
@@ -6460,6 +6467,11 @@ func (s *ProjectGrant) GetRole() string {
 	return s.Role
 }
 
+// GetSource returns the value of Source.
+func (s *ProjectGrant) GetSource() string {
+	return s.Source
+}
+
 // GetAdditionalProps returns the value of AdditionalProps.
 func (s *ProjectGrant) GetAdditionalProps() ProjectGrantAdditional {
 	return s.AdditionalProps
@@ -6470,6 +6482,11 @@ func (s *ProjectGrant) SetGranteeId(val string) {
 	s.GranteeId = val
 }
 
+// SetGranteeName sets the value of GranteeName.
+func (s *ProjectGrant) SetGranteeName(val OptString) {
+	s.GranteeName = val
+}
+
 // SetGranteeType sets the value of GranteeType.
 func (s *ProjectGrant) SetGranteeType(val string) {
 	s.GranteeType = val
@@ -6478,6 +6495,11 @@ func (s *ProjectGrant) SetGranteeType(val string) {
 // SetRole sets the value of Role.
 func (s *ProjectGrant) SetRole(val string) {
 	s.Role = val
+}
+
+// SetSource sets the value of Source.
+func (s *ProjectGrant) SetSource(val string) {
+	s.Source = val
 }
 
 // SetAdditionalProps sets the value of AdditionalProps.
@@ -6723,15 +6745,22 @@ func (s *RepoAdditional) init() RepoAdditional {
 
 // Ref: #/components/schemas/RepoGrant
 type RepoGrant struct {
-	GranteeId       string `json:"granteeId"`
-	GranteeType     string `json:"granteeType"`
-	Role            string `json:"role"`
+	GranteeId       string    `json:"granteeId"`
+	GranteeName     OptString `json:"granteeName"`
+	GranteeType     string    `json:"granteeType"`
+	Role            string    `json:"role"`
+	Source          string    `json:"source"`
 	AdditionalProps RepoGrantAdditional
 }
 
 // GetGranteeId returns the value of GranteeId.
 func (s *RepoGrant) GetGranteeId() string {
 	return s.GranteeId
+}
+
+// GetGranteeName returns the value of GranteeName.
+func (s *RepoGrant) GetGranteeName() OptString {
+	return s.GranteeName
 }
 
 // GetGranteeType returns the value of GranteeType.
@@ -6744,6 +6773,11 @@ func (s *RepoGrant) GetRole() string {
 	return s.Role
 }
 
+// GetSource returns the value of Source.
+func (s *RepoGrant) GetSource() string {
+	return s.Source
+}
+
 // GetAdditionalProps returns the value of AdditionalProps.
 func (s *RepoGrant) GetAdditionalProps() RepoGrantAdditional {
 	return s.AdditionalProps
@@ -6754,6 +6788,11 @@ func (s *RepoGrant) SetGranteeId(val string) {
 	s.GranteeId = val
 }
 
+// SetGranteeName sets the value of GranteeName.
+func (s *RepoGrant) SetGranteeName(val OptString) {
+	s.GranteeName = val
+}
+
 // SetGranteeType sets the value of GranteeType.
 func (s *RepoGrant) SetGranteeType(val string) {
 	s.GranteeType = val
@@ -6762,6 +6801,11 @@ func (s *RepoGrant) SetGranteeType(val string) {
 // SetRole sets the value of Role.
 func (s *RepoGrant) SetRole(val string) {
 	s.Role = val
+}
+
+// SetSource sets the value of Source.
+func (s *RepoGrant) SetSource(val string) {
+	s.Source = val
 }
 
 // SetAdditionalProps sets the value of AdditionalProps.
