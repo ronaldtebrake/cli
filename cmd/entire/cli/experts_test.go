@@ -427,6 +427,52 @@ func TestExpertsCommandRelativizesAbsoluteDeletedPathScope(t *testing.T) {
 	}
 }
 
+func TestExpertsCommandRelativizesDeletedPathScopeFromSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	runExpertsGit(t, dir, "init")
+	runExpertsGit(t, dir, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	path := filepath.Join(dir, "cmd", "entire", "cli", "deleted.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package cli\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runExpertsGit(t, dir, "add", "cmd/entire/cli/deleted.go")
+	runExpertsGit(t, dir, "-c", "user.email=test@example.com", "-c", "user.name=Test User", "commit", "-m", "initial")
+	runExpertsGit(t, dir, "rm", "cmd/entire/cli/deleted.go")
+	subdir := filepath.Join(dir, "cmd")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(subdir)
+	paths.ClearWorktreeRootCache()
+	t.Cleanup(paths.ClearWorktreeRootCache)
+
+	fake := &fakeExpertsClient{body: `{"repo_full_name":"acme/widget","scopes":["cmd/entire/cli/deleted.go"],"query":null,"branch":"main","source":"db","profiles":[]}`}
+	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
+		return fake, nil
+	})
+	defer restore()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"experts", "entire/cli/deleted.go", "--json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute experts deleted path from subdir: %v", err)
+	}
+	body, ok := fake.gotBody.(expertsRequest)
+	if !ok {
+		t.Fatalf("body type = %T", fake.gotBody)
+	}
+	if len(body.Scopes) != 1 || body.Scopes[0] != "cmd/entire/cli/deleted.go" {
+		t.Fatalf("scopes = %#v", body.Scopes)
+	}
+}
+
 func TestExpertsCommandDoesNotRewritePathScope503AsCodeSearch(t *testing.T) {
 	fake := &fakeExpertsClient{status: http.StatusServiceUnavailable, body: `{"error":"Database unavailable"}`}
 	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {

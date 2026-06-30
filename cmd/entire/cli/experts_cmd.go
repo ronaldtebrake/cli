@@ -400,10 +400,20 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 	}
 
 	if looksLikeExpertPath(input) {
+		missingCandidates := make([]string, 0, 3)
 		if filepath.IsAbs(input) {
-			scope, err := localPathScope(root, input, input)
+			missingCandidates = append(missingCandidates, input)
+		} else {
+			if cwdAbs, err := filepath.Abs(input); err != nil {
+				return "", false, false, fmt.Errorf("resolve cwd-relative path: %w", err)
+			} else {
+				missingCandidates = append(missingCandidates, cwdAbs, filepath.Join(root, input))
+			}
+		}
+		for _, candidate := range uniqueStrings(missingCandidates) {
+			scope, err := localPathScope(root, candidate, input)
 			if err != nil {
-				return "", false, false, err
+				continue
 			}
 			return scope, true, true, nil
 		}
