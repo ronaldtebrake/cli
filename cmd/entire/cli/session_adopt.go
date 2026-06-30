@@ -39,7 +39,7 @@ func newAdoptCmd() *cobra.Command {
 		Long: `Adopt an active session from another worktree into the current repository.
 
 This is useful when an agent starts in one repository or worktree, then moves
-and makes changes in another. Adoption copies the live session state into the
+and makes changes in another. Adoption moves the live session state into the
 current repo and seeds it with the current repo's uncommitted file changes so
 the next commit can be linked normally.
 
@@ -172,6 +172,10 @@ func adoptFromExternalSessionStore(
 		if err := targetStore.Save(ctx, next); err != nil {
 			return fmt.Errorf("save adopted session state: %w", err)
 		}
+		retired := retireAdoptedSourceSession(sourceState, next)
+		if err := sourceStore.Save(ctx, &retired); err != nil {
+			return fmt.Errorf("retire source session state: %w", err)
+		}
 		adopted = next
 		filesTouched = touched
 		return nil
@@ -180,6 +184,21 @@ func adoptFromExternalSessionStore(
 		return nil, nil, fmt.Errorf("adopt external session state: %w", err)
 	}
 	return adopted, filesTouched, nil
+}
+
+func retireAdoptedSourceSession(source, target *session.State) session.State {
+	now := time.Now()
+	retired := cloneAdoptSourceState(source)
+	retired.Phase = session.PhaseEnded
+	retired.EndedAt = &now
+	retired.FullyCondensed = true
+	retired.Owner = nil
+	retired.FilesTouched = nil
+	retired.TurnID = ""
+	retired.TurnCheckpointIDs = nil
+	retired.AdoptedIntoWorktreePath = target.WorktreePath
+	retired.AdoptedIntoWorktreeID = target.WorktreeID
+	return retired
 }
 
 func adoptFromSameSessionStore(ctx context.Context, sourceWorktree string, sourceState *session.State, opts adoptOptions) (*session.State, []string, error) {
@@ -423,6 +442,8 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.RealignAttributionBase(head.Hash().String())
 	adopted.WorktreePath = worktreeRoot
 	adopted.WorktreeID = worktreeID
+	adopted.AdoptedIntoWorktreePath = ""
+	adopted.AdoptedIntoWorktreeID = ""
 	adopted.Branch = branch
 	adopted.LastInteractionTime = &now
 	adopted.Phase = session.PhaseActive

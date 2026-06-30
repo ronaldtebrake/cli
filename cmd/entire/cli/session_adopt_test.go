@@ -48,7 +48,7 @@ func TestSessionAdopt_HelpDistinguishesForceAndYes(t *testing.T) {
 	}
 }
 
-func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
+func TestSessionAdopt_MovesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetRepo := setupAdoptRepo(t)
 
@@ -127,6 +127,125 @@ func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	}
 	if !bytes.Contains(out.Bytes(), []byte("Review tracked files before committing")) {
 		t.Fatalf("output = %q, want tracked-file attribution warning", out.String())
+	}
+}
+
+func TestSessionAdopt_ExternalStoreRetiresSourceSession(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-external-retire-source"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		LastPrompt:            "continue work in target repo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
+	}
+
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted == nil {
+		t.Fatal("expected adopted target session state")
+	}
+	if adopted.Phase != session.PhaseActive || adopted.EndedAt != nil {
+		t.Fatalf("target state Phase/EndedAt = %q/%v, want active/nil", adopted.Phase, adopted.EndedAt)
+	}
+
+	sourceAfter, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfter == nil {
+		t.Fatal("expected source session state to remain as a retired record")
+	}
+	if sourceAfter.Phase != session.PhaseEnded {
+		t.Fatalf("source Phase = %q, want ended", sourceAfter.Phase)
+	}
+	if sourceAfter.EndedAt == nil {
+		t.Fatal("source EndedAt = nil, want retirement timestamp")
+	}
+	if isAdoptableSourceSession(sourceAfter) {
+		t.Fatalf("source state remains adoptable after external adoption: %#v", sourceAfter)
+	}
+
+	t.Chdir(sourceRepo)
+	sourceAgent := &mockLifecycleAgent{name: agent.AgentNameClaudeCode, agentType: agent.AgentTypeClaudeCode}
+	if err := handleLifecycleSessionStart(context.Background(), sourceAgent, &agent.Event{
+		Type:      agent.SessionStart,
+		SessionID: sessionID,
+	}); err != nil {
+		t.Fatalf("SessionStart in the adopted-away source repo should no-op without disrupting the hook, got: %v", err)
+	}
+	sourceAfterSessionStart, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfterSessionStart == nil {
+		entries, readErr := os.ReadDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+		if readErr != nil {
+			t.Fatalf("source state disappeared after SessionStart; read state dir: %v", readErr)
+		}
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("source state disappeared after SessionStart; state dir contains %v", names)
+	}
+	if sourceAfterSessionStart.Phase != session.PhaseEnded {
+		t.Fatalf("source Phase after SessionStart = %q, want ended", sourceAfterSessionStart.Phase)
+	}
+	if sourceAfterSessionStart.EndedAt == nil {
+		t.Fatal("source EndedAt after SessionStart = nil, want retirement timestamp")
+	}
+
+	err = strategy.NewManualCommitStrategy().InitializeSession(
+		context.Background(),
+		sessionID,
+		agent.AgentTypeClaudeCode,
+		"",
+		"source prompt after adoption",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("InitializeSession in the adopted-away source repo should no-op without disrupting the hook, got: %v", err)
+	}
+
+	sourceAfterTurnStart, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfterTurnStart.Phase != session.PhaseEnded {
+		t.Fatalf("source Phase after rejected TurnStart = %q, want ended", sourceAfterTurnStart.Phase)
+	}
+	if sourceAfterTurnStart.EndedAt == nil {
+		t.Fatal("source EndedAt after rejected TurnStart = nil, want retirement timestamp")
 	}
 }
 

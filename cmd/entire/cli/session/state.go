@@ -113,6 +113,16 @@ type State struct {
 	// Derived from .git/worktrees/<name>/, stable across git worktree move
 	WorktreeID string `json:"worktree_id,omitempty"`
 
+	// AdoptedIntoWorktreePath marks a source-side tombstone left behind after
+	// `entire session adopt` moves this session into another repository/worktree.
+	// Hook TurnStart must not reactivate tombstoned source records, otherwise the
+	// same session ID can diverge in two session stores.
+	AdoptedIntoWorktreePath string `json:"adopted_into_worktree_path,omitempty"`
+
+	// AdoptedIntoWorktreeID is the target worktree ID paired with
+	// AdoptedIntoWorktreePath when available.
+	AdoptedIntoWorktreeID string `json:"adopted_into_worktree_id,omitempty"`
+
 	// Branch is the git branch HEAD pointed at the last time this session took a
 	// turn. Captured on each turn start so it tracks branches created or renamed
 	// after the session began. Empty when HEAD was detached or for sessions
