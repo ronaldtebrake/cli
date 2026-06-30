@@ -1558,6 +1558,12 @@ func collectUntrackedFiles(ctx context.Context) ([]string, error) {
 	return files, nil
 }
 
+// CollectUntrackedFiles collects untracked, non-ignored paths relative to the
+// repository root.
+func CollectUntrackedFiles(ctx context.Context) ([]string, error) {
+	return collectUntrackedFiles(ctx)
+}
+
 // NOTE: The following git tree helper functions have been moved to checkpoint/ package:
 // - FlattenTree -> checkpoint.FlattenTree
 // - CreateBlobFromContent -> checkpoint.CreateBlobFromContent

@@ -2284,6 +2284,12 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		if state.BaseCommit == "" {
 			return errPartialState
 		}
+		if state.AdoptedIntoWorktreePath != "" {
+			logging.Info(logging.WithComponent(ctx, "hooks"), "skipping adopted-away source session",
+				slog.String("session_id", sessionID),
+				slog.String("adopted_into_worktree", state.AdoptedIntoWorktreePath))
+			return ErrMutationSkip
+		}
 		if transErr := TransitionAndLog(ctx, state, session.EventTurnStart, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
 			logging.Warn(logging.WithComponent(ctx, "hooks"), "turn start transition failed",
 				slog.String("session_id", sessionID),
