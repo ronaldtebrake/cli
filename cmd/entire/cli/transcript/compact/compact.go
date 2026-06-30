@@ -135,10 +135,17 @@ func Compact(redacted redact.RedactedBytes, opts MetadataFields) ([]byte, error)
 // StartLine). This reuses each format's existing, independently-tested slicing
 // behavior — line offsets for JSONL/Copilot/Droid/pi, message-index for
 // OpenCode/Gemini, response-item index for Codex — rather than threading source
-// indices through every emitter. The only imprecision is an off-by-one when a
-// single logical message (a streaming assistant message split across the
-// boundary, or a tool_result that also carries text) straddles the exact
-// StartLine; the result is deterministic and harmless for segmentation.
+// indices through every emitter.
+//
+// A single compact line can carry content from both sides of StartLine when its
+// source straddles the boundary — most notably same-ID streaming assistant
+// fragments, which compaction merges into one line. No integer line offset can
+// split within a line, so the boundary rounds toward inclusion: such a merged
+// line is counted as part of this checkpoint's slice. fullCompactLines[boundary:]
+// therefore never drops this checkpoint's content, but its first line may repeat
+// up to one merged line that began in the previous checkpoint. Downstream
+// segmenters must tolerate this bounded head overlap. See the straddle case in
+// TestFullWithBoundary_StraddlingAssistantFragments_RoundsToInclusion.
 func FullWithBoundary(redacted redact.RedactedBytes, opts MetadataFields) (full []byte, boundary int, err error) {
 	fullOpts := opts
 	fullOpts.StartLine = 0

@@ -329,7 +329,11 @@ type Metadata struct {
 	// CompactTranscriptStart is the line offset in the compact transcript.jsonl
 	// at which this checkpoint's data begins. transcript.jsonl stores the full
 	// compacted session (each checkpoint is self-contained), so readers segment
-	// this checkpoint's slice as compactLines[CompactTranscriptStart:].
+	// this checkpoint's slice as compactLines[CompactTranscriptStart:]. The slice
+	// never drops this checkpoint's content, but its first line may repeat up to
+	// one compact line that began in the previous checkpoint (when a streaming
+	// message straddles the boundary and compaction merges it into one line), so
+	// segmenters must tolerate a bounded head overlap.
 	//
 	// A nil pointer marks a legacy checkpoint whose transcript.jsonl holds only
 	// this checkpoint's delta (CLI versions before the full-compact-transcript
@@ -412,7 +416,9 @@ type SessionFilePaths struct {
 	Transcript string `json:"transcript,omitempty"`
 	// CompactTranscript points at the compact transcript.jsonl when one was
 	// generated alongside full.jsonl. Omitted otherwise (non-compactable,
-	// empty, or oversized transcripts, and older CLI versions).
+	// empty, or oversized transcripts, and older CLI versions). transcript.jsonl
+	// holds the full compacted session; this checkpoint's slice begins at the
+	// session metadata's compact_transcript_start (see Metadata.CompactTranscriptStart).
 	CompactTranscript string `json:"compact_transcript,omitempty"`
 	ContentHash       string `json:"content_hash,omitempty"`
 	Prompt            string `json:"prompt"`
@@ -430,7 +436,7 @@ type SessionFilePaths struct {
 //	├── 1/                    # First session
 //	│   ├── metadata.json     # Session-specific Metadata
 //	│   ├── full.jsonl        # Raw agent transcript
-//	│   ├── transcript.jsonl  # Compact transcript scoped to this checkpoint
+//	│   ├── transcript.jsonl  # Full compacted session (slice at compact_transcript_start)
 //	│   ├── prompt.txt
 //	│   └── content_hash.txt
 //	├── 2/                    # Second session

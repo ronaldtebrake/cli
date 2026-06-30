@@ -196,7 +196,7 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 ├── 0/                   # First session (0-based indexing)
 │   ├── metadata.json    # Session-specific Metadata
 │   ├── full.jsonl       # Raw agent transcript (CLI rewind/resume/explain)
-│   ├── transcript.jsonl # Compact transcript, scoped to this checkpoint
+│   ├── transcript.jsonl # Full compacted session (slice at compact_transcript_start)
 │   ├── prompt.txt       # Checkpoint-scoped user prompts
 │   └── content_hash.txt # sha256 of full.jsonl (dedup short-circuit)
 ├── 1/                   # Second session
@@ -208,11 +208,23 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 
 **Compact transcript (`transcript.jsonl`):** generated best-effort from
 `full.jsonl` via `transcript/compact` on every committed write and on
-transcript replacement during finalization. Unlike `full.jsonl` (the
-cumulative session transcript, scoped at read time via
-`checkpoint_transcript_start`), `transcript.jsonl` is pre-sliced to the
-checkpoint's own portion (`compact.Compact` is called with
-`StartLine = checkpoint_transcript_start`), so it needs no offset to consume.
+transcript replacement during finalization. Like `full.jsonl`, it stores the
+**full compacted session** on every checkpoint (via `compact.FullWithBoundary`),
+so each checkpoint is self-contained — the session is reconstructable from any
+single surviving checkpoint, robust to a mid-history checkpoint being lost,
+reverted, or dropped during a rebase. This checkpoint's slice begins at the
+session metadata's `compact_transcript_start` (a line offset into
+`transcript.jsonl`, in compact-output coordinates — distinct from
+`checkpoint_transcript_start`, which indexes raw `full.jsonl` lines).
+Consumers segment this checkpoint's content as `compactLines[compact_transcript_start:]`.
+The marker rounds toward inclusion when a streaming message straddles the
+boundary (compaction merges same-ID fragments into one line that cannot be
+split), so the slice never drops this checkpoint's content but its head may
+repeat at most one merged line from the previous checkpoint — segmenters must
+tolerate that bounded overlap. A nil/absent `compact_transcript_start` marks a
+legacy checkpoint whose `transcript.jsonl` holds only its own delta (pre-change
+CLI versions); read it as-is from line 0.
+
 It is written into the checkpoint tree and pushed alongside `full.jsonl`. The
 root `metadata.json` `sessions[].transcript` pointer keeps targeting
 `full.jsonl`; when a compact transcript was generated the session entry also

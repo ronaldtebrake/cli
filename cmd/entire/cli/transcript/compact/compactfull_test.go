@@ -98,6 +98,48 @@ func TestCompactFull_StartLineBeyondEnd_BoundaryAtEnd(t *testing.T) {
 	}
 }
 
+// TestFullWithBoundary_StraddlingAssistantFragments_RoundsToInclusion pins the
+// documented behavior when StartLine falls between two same-ID streaming
+// assistant fragments: compaction merges them into one line, which no integer
+// boundary can split. The boundary rounds to inclusion (0 here), so the merged
+// line — carrying both the pre-start and post-start fragment — stays in the
+// slice. This never drops this checkpoint's content (FRAG_B), at the cost of
+// the slice head repeating one merged line from the previous checkpoint (FRAG_A).
+func TestFullWithBoundary_StraddlingAssistantFragments_RoundsToInclusion(t *testing.T) {
+	t.Parallel()
+
+	input := redact.AlreadyRedacted([]byte(
+		`{"type":"assistant","timestamp":"t0","message":{"id":"msg_1","content":[{"type":"text","text":"FRAG_A"}]}}
+{"type":"assistant","timestamp":"t1","message":{"id":"msg_1","content":[{"type":"text","text":"FRAG_B"}]}}
+`))
+	// StartLine=1 lands between the two fragments of the same streaming message.
+	opts := MetadataFields{Agent: "claude-code", CLIVersion: "0.5.1", StartLine: 1}
+
+	full, boundary, err := FullWithBoundary(input, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The two fragments merge into a single compact line.
+	fullLines := nonEmptyLines(full)
+	if len(fullLines) != 1 {
+		t.Fatalf("expected 1 merged compact line, got %d:\n%s", len(fullLines), full)
+	}
+	// Rounds to inclusion: the merged line stays in the slice.
+	if boundary != 0 {
+		t.Fatalf("boundary: got %d, want 0 (merged straddling line included)", boundary)
+	}
+	// The slice retains this checkpoint's content (FRAG_B) and, unavoidably, the
+	// pre-start fragment (FRAG_A) merged into the same line.
+	slice := strings.Join(fullLines[boundary:], "\n")
+	if !strings.Contains(slice, "FRAG_B") {
+		t.Errorf("slice dropped this checkpoint's content FRAG_B:\n%s", slice)
+	}
+	if !strings.Contains(slice, "FRAG_A") {
+		t.Errorf("expected merged line to retain FRAG_A (inclusive rounding):\n%s", slice)
+	}
+}
+
 func TestCompactFull_GeminiIndexFormat_Boundary(t *testing.T) {
 	t.Parallel()
 
