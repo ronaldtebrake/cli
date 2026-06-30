@@ -209,9 +209,10 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 	// the banner marker is only claimed inside this branch so a non-writer
 	// winner can't consume the user's only banner.
 	_, hookResponseSpan := perf.Start(ctx, "write_hook_response")
-	if event.ResponseMessage != "" {
-		message = event.ResponseMessage
-	}
+	// Apply any agent-supplied ResponseMessage override, then append the
+	// agent-help banner pointer so it survives the override — banner-only agents
+	// (Factory Droid) have no other in-session channel for it.
+	message = finalizeSessionStartBanner(message, event.ResponseMessage, ag.Name())
 	if writer, ok := agent.AsHookResponseWriter(ag); ok {
 		bannerFirst, bErr := strategy.ClaimSessionStartBanner(ctx, event.SessionID)
 		if bErr != nil {
@@ -275,6 +276,32 @@ func sessionStartMessage(agentName types.AgentName, emptyRepo bool) string {
 		return "\n\nEntire CLI found no commits yet — checkpoints will activate after your first commit."
 	}
 	return "\n\nEntire CLI will link this conversation to your next commit."
+}
+
+// agentHelpBannerSuffix returns the SessionStart banner suffix that points an
+// agent at `entire agent-help`. It targets Factory AI Droid, which is banner-only
+// — no model-context injection and no agent-help skill file — so the SessionStart
+// banner is its sole in-session channel for the pointer. Every other agent gets
+// the pointer via context injection (Claude/Codex/Gemini/OpenCode/Pi), a skill
+// file (Claude/Codex/Gemini), or the passive `entire status` surface
+// (Cursor/Copilot), so this returns "" for them to avoid a duplicate pointer.
+func agentHelpBannerSuffix(agentName types.AgentName) string {
+	if agentName == agent.AgentNameFactoryAIDroid {
+		return fmt.Sprintf("\n  Run `%s` to see entire's commands and flags.", agentHelpCommand)
+	}
+	return ""
+}
+
+// finalizeSessionStartBanner applies an agent-supplied ResponseMessage override
+// (if any) and THEN appends the agent-help banner pointer, so the pointer
+// survives even when the agent supplies its own banner text. Order matters: a
+// ResponseMessage override replaces the assembled message wholesale, so the
+// pointer must be appended after it, not before.
+func finalizeSessionStartBanner(message, responseMessage string, agentName types.AgentName) string {
+	if responseMessage != "" {
+		message = responseMessage
+	}
+	return message + agentHelpBannerSuffix(agentName)
 }
 
 // handleLifecycleModelUpdate persists the model name for the current session.
