@@ -70,15 +70,18 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 	// disable Entire checkpoint work, not make Git reject the user's operation.
 	repo, err := gitrepo.OpenCurrent(g.ctx)
 	if err != nil {
-		logging.Warn(g.ctx, "checkpoint policy read skipped for git hook",
+		logging.Warn(g.ctx, "checkpoint policy read failed; skipping git hook",
 			slog.String("error", err.Error()))
-		return false
+		if interactive.CanPromptInteractively() {
+			fmt.Fprintf(os.Stderr, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
+		}
+		return true
 	}
 	defer repo.Close()
 
 	state, err := checkpointpolicy.ReadLocal(g.ctx, repo)
 	if err != nil {
-		logging.Warn(g.ctx, "checkpoint policy read failed; skipping git hook checkpoint work",
+		logging.Warn(g.ctx, "checkpoint policy read failed; skipping git hook",
 			slog.String("error", err.Error()))
 		if interactive.CanPromptInteractively() {
 			fmt.Fprintf(os.Stderr, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
@@ -91,7 +94,7 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 		return false
 	}
 
-	logging.Warn(g.ctx, "checkpoint policy unsupported; skipping git hook checkpoint work",
+	logging.Warn(g.ctx, "checkpoint policy unsupported; skipping git hook",
 		slog.String("checkpoint_version", policy.CheckpointVersion),
 		slog.String("checkpoint_min_version", policy.CheckpointMinVersion))
 	if interactive.CanPromptInteractively() {

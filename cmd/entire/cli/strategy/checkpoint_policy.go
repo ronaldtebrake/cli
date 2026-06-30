@@ -17,9 +17,6 @@ import (
 func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (checkpointpolicy.Policy, error) {
 	state, err := checkpointpolicy.ReadLocal(ctx, repo)
 	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read failed",
-			slog.String("error", err.Error()),
-		)
 		return checkpointpolicy.Policy{}, err
 	}
 	return state.Policy, nil

@@ -350,3 +350,17 @@ func TestHooksGitCommitMsgSkipsWhenPolicyUnreadable(t *testing.T) {
 		t.Fatalf("commit message changed under unreadable policy:\ngot:\n%s\nwant:\n%s", got, message)
 	}
 }
+
+func TestGitHookPolicySkipsWhenRepoCannotOpen(t *testing.T) {
+	t.Chdir(t.TempDir())
+	paths.ClearWorktreeRootCache()
+
+	g := &gitHookContext{
+		hookName: "commit-msg",
+		ctx:      context.Background(),
+	}
+
+	if !g.skipUnsupportedCheckpointPolicy() {
+		t.Fatal("expected git hook to skip when repository cannot be opened")
+	}
+}

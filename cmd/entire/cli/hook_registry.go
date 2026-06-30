@@ -159,6 +159,9 @@ func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName st
 		return fmt.Errorf("failed to parse hook event: %w", parseErr)
 	}
 
+	checkpointWritingNilEventHook := event == nil && agentName == agent.AgentNameClaudeCode && hookName == claudecode.HookNamePostTodo
+	eventType := agent.EventType(0)
+
 	if event != nil {
 		// Cross-agent guard: when Cursor IDE invokes a hook configured under
 		// .claude/settings.json (because .cursor/hooks.json is missing), the
@@ -172,25 +175,47 @@ func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName st
 			)
 			return nil
 		}
-		skipHook, err := shouldSkipAgentHookForPolicy(ctx, worktreeRoot, cmd.ErrOrStderr(), ag, event.Type)
+		eventType = event.Type
+	}
+
+	if event != nil || checkpointWritingNilEventHook {
+		policy, err := agentHookPolicy(ctx, worktreeRoot)
 		if err != nil {
+			logging.Warn(ctx, "checkpoint policy read failed for agent hook",
+				slog.String("error", err.Error()))
+			if eventType == agent.SessionStart {
+				// Let the agent start; the warning explains that checkpoint capture is
+				// disabled until the policy can be read.
+				if err := writeUnsupportedPolicySessionStartWarning(cmd.ErrOrStderr(), ag, sessionStartPolicyReadErrorWarning(err)); err != nil {
+					span.RecordError(err)
+					return err
+				}
+				return nil
+			}
+			fmt.Fprint(cmd.ErrOrStderr(), agentCheckpointCaptureDisabledReadErrorMessage(err))
 			span.RecordError(err)
-			return err
+			return NewSilentError(err)
 		}
-		if skipHook {
-			return nil
+		if shouldSkipAgentHookForPolicy(policy) {
+			if eventType == agent.SessionStart {
+				// Let the agent start; the warning explains that checkpoint capture is
+				// disabled until the CLI is upgraded.
+				if err := writeUnsupportedPolicySessionStartWarning(cmd.ErrOrStderr(), ag, sessionStartPolicyWarning(policy)); err != nil {
+					span.RecordError(err)
+					return err
+				}
+				return nil
+			}
+			fmt.Fprint(cmd.ErrOrStderr(), agentCheckpointCaptureDisabledMessage(policy))
+			span.RecordError(errUnsupportedCheckpointPolicy)
+			return NewSilentError(errUnsupportedCheckpointPolicy)
 		}
+	}
+
+	if event != nil {
 		// Lifecycle event — use the generic dispatcher
 		hookErr = DispatchLifecycleEvent(ctx, ag, event)
-	} else if agentName == agent.AgentNameClaudeCode && hookName == claudecode.HookNamePostTodo {
-		skipHook, err := shouldSkipAgentHookForPolicy(ctx, worktreeRoot, cmd.ErrOrStderr(), ag, 0)
-		if err != nil {
-			span.RecordError(err)
-			return err
-		}
-		if skipHook {
-			return nil
-		}
+	} else if checkpointWritingNilEventHook {
 		// PostTodo is Claude-specific: creates incremental checkpoints during subagent execution
 		hookErr = handleClaudeCodePostTodo(ctx)
 	}
@@ -200,37 +225,18 @@ func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName st
 	return hookErr
 }
 
-func shouldSkipAgentHookForPolicy(ctx context.Context, worktreeRoot string, errW io.Writer, ag agent.Agent, eventType agent.EventType) (skipHook bool, err error) {
+func agentHookPolicy(ctx context.Context, worktreeRoot string) (checkpointpolicy.Policy, error) {
 	repo, err := gitrepo.OpenPath(worktreeRoot)
 	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read skipped for agent hook",
-			slog.String("error", err.Error()))
-		return false, nil
+		return checkpointpolicy.Policy{}, unreadableCheckpointPolicyError(err)
 	}
 	defer repo.Close()
 
-	policy, err := checkpointPolicyForCheckpointData(ctx, repo)
-	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read failed for agent hook",
-			slog.String("error", err.Error()))
-		if eventType == agent.SessionStart {
-			// Let the agent start; the warning explains that checkpoint capture is
-			// disabled until the policy can be read.
-			return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyReadErrorWarning(err))
-		}
-		fmt.Fprint(errW, agentCheckpointCaptureDisabledReadErrorMessage(err))
-		return false, NewSilentError(err)
-	}
-	if checkpointpolicy.CanSatisfyPolicy(policy) {
-		return false, nil
-	}
-	if eventType == agent.SessionStart {
-		// Let the agent start; the warning explains that checkpoint capture is
-		// disabled until the CLI is upgraded.
-		return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyWarning(policy))
-	}
-	fmt.Fprint(errW, agentCheckpointCaptureDisabledMessage(policy))
-	return false, NewSilentError(errUnsupportedCheckpointPolicy)
+	return checkpointPolicyForCheckpointData(ctx, repo)
+}
+
+func shouldSkipAgentHookForPolicy(policy checkpointpolicy.Policy) bool {
+	return !checkpointpolicy.CanSatisfyPolicy(policy)
 }
 
 func sessionStartPolicyWarning(policy checkpointpolicy.Policy) string {

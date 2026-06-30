@@ -13,6 +13,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -227,6 +228,23 @@ func TestExecuteAgentHookSessionStartSkipsCaptureWhenPolicyUnreadable(t *testing
 	hintPath := filepath.Join(repoRoot, ".git", session.SessionStateDirName, sessionID+".agent")
 	_, statErr := os.Stat(hintPath)
 	require.True(t, os.IsNotExist(statErr), "session-start must not claim the session when checkpoint policy is unreadable")
+}
+
+func TestAgentHookPolicyFailsWhenRepoCannotOpen(t *testing.T) {
+	_, err := agentHookPolicy(context.Background(), filepath.Join(t.TempDir(), "missing"))
+
+	require.ErrorIs(t, err, errUnreadableCheckpointPolicy)
+	require.Contains(t, err.Error(), "failed to open repository")
+}
+
+func TestShouldSkipAgentHookForPolicy(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, shouldSkipAgentHookForPolicy(checkpointpolicy.DefaultPolicy()))
+	require.True(t, shouldSkipAgentHookForPolicy(checkpointpolicy.Policy{
+		CheckpointVersion:    "refs-v1",
+		CheckpointMinVersion: "branch-v1",
+	}))
 }
 
 func TestExecuteAgentHookTurnStartFailsWhenPolicyUnsupported(t *testing.T) {
