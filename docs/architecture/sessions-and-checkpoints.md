@@ -159,6 +159,13 @@ and map each back to its branch; for sessions recorded before the field existed
 it falls back to deriving the branch from the session's last checkpoint ID found
 in branch-only commit trailers.
 
+`entire session adopt` moves an active session from a source repo or worktree
+into the current worktree. Adoption preserves the live transcript path, validates
+that the source state still belongs to the requested source worktree, rewrites
+the session's branch/worktree/base metadata to the target, clears target-local
+checkpoint windows and checkpoint IDs, and snapshots the target's current file
+changes so the next commit can link to the adopted session.
+
 ### Temporary Checkpoints
 
 Branch: `entire/<commit[:7]>-<worktreeHash[:6]>`

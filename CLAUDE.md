@@ -29,12 +29,15 @@ pointing at the canonical group form. Newer experimental command families are
 discoverable through `entire labs` and may remain hidden from root help while
 their canonical paths are still runnable.
 
-- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `resume`, `current`.
+- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `adopt`, `resume`, `current`.
   `resume` with a branch arg switches to it and resumes its session; with no arg
   it opens an interactive picker of stopped sessions (across all worktrees),
   resolving each to its branch and pointing at the owning worktree when the
   branch is checked out elsewhere. Resume keeps an existing local session log
   as-is by default (`--force` overwrites it from the checkpoint).
+  `adopt` moves an active session from another repo or worktree into the current
+  worktree and resets target-local checkpoint bookkeeping so future commits link
+  to the adopted session from the new location.
 - `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `tokens`, `search`, plus
   the deprecated `rewind` (functional, prints a cobra deprecation message, will
   be removed in a future release)

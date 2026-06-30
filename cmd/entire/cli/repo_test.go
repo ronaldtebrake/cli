@@ -94,6 +94,41 @@ func TestParseVisibility(t *testing.T) {
 	}
 }
 
+func TestRepoDetailRow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("includes the entire:// remote", func(t *testing.T) {
+		t.Parallel()
+		row := repoDetailRow(coreapi.Repo{
+			ID:              "01KS6KFJR2XS6PZ188MVYE07AN",
+			Name:            "web",
+			OwningProjectId: "01KS6KFJR2XS6PZ188MVYE07AP",
+			ClusterHost:     coreapi.NewOptString("aws-us-east-2.entire.io"),
+			Path:            coreapi.NewOptString("acme/web"),
+			State:           coreapi.NewOptRepoState(coreapi.RepoStateActive),
+		})
+		if len(row) != len(repoDetailColumns) {
+			t.Fatalf("row has %d cells, want %d (one per column)", len(row), len(repoDetailColumns))
+		}
+		if want := "entire://aws-us-east-2.entire.io/acme/web"; row[len(row)-1] != want {
+			t.Errorf("REMOTE cell = %q, want %q", row[len(row)-1], want)
+		}
+	})
+
+	t.Run("shows - when the remote is not yet resolvable", func(t *testing.T) {
+		t.Parallel()
+		row := repoDetailRow(coreapi.Repo{
+			ID:              "01KS6KFJR2XS6PZ188MVYE07AN",
+			Name:            "web",
+			OwningProjectId: "01KS6KFJR2XS6PZ188MVYE07AP",
+			ClusterHost:     coreapi.NewOptString("aws-us-east-2.entire.io"),
+		})
+		if row[len(row)-1] != "-" {
+			t.Errorf("REMOTE cell = %q, want %q", row[len(row)-1], "-")
+		}
+	})
+}
+
 func TestRepoCreateOutput_StampsRemote(t *testing.T) {
 	t.Parallel()
 	repo := &coreapi.Repo{

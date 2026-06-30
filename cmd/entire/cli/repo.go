@@ -46,6 +46,22 @@ func repoRow(r coreapi.Repo) []string {
 	return []string{r.ID, r.Name, r.OwningProjectId, r.ClusterHost.Or("-"), state}
 }
 
+// repoDetailColumns / repoDetailRow extend the shared repo view with the
+// entire:// clone URL for the single-repo `get` output. The list view stays on
+// the lean repoColumns — a full clone URL per row would bloat the table — but a
+// person inspecting one repo wants the URL they can paste into `git clone`
+// (COR-699). REMOTE is "-" until the repo is provisioned enough to have a
+// resolvable cluster host + path.
+var repoDetailColumns = []string{"ID", "NAME", "PROJECT", "CLUSTER", "STATE", "REMOTE"}
+
+func repoDetailRow(r coreapi.Repo) []string {
+	remote := repoRemoteURL(r)
+	if remote == "" {
+		remote = "-"
+	}
+	return append(repoRow(r), remote)
+}
+
 // repoRemoteURL synthesizes the entire:// clone/remote URL for a repo from
 // its resolved cluster host and path — the form `git clone` and
 // `git remote add` accept, which git-remote-entire reads back as the repo
@@ -166,7 +182,7 @@ func newRepoGetCmd() *cobra.Command {
 		Short: "Show a repository by name or ULID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreObject(cmd, repoColumns, repoRow, func(ctx context.Context, c *coreapi.Client) (*coreapi.Repo, error) {
+			return runCoreObject(cmd, repoDetailColumns, repoDetailRow, func(ctx context.Context, c *coreapi.Client) (*coreapi.Repo, error) {
 				repoID, err := resolveRepoRef(ctx, c, args[0], project)
 				if err != nil {
 					return nil, err

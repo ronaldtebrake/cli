@@ -113,6 +113,16 @@ type State struct {
 	// Derived from .git/worktrees/<name>/, stable across git worktree move
 	WorktreeID string `json:"worktree_id,omitempty"`
 
+	// AdoptedIntoWorktreePath marks a source-side tombstone left behind after
+	// `entire session adopt` moves this session into another repository/worktree.
+	// Hook TurnStart must not reactivate tombstoned source records, otherwise the
+	// same session ID can diverge in two session stores.
+	AdoptedIntoWorktreePath string `json:"adopted_into_worktree_path,omitempty"`
+
+	// AdoptedIntoWorktreeID is the target worktree ID paired with
+	// AdoptedIntoWorktreePath when available.
+	AdoptedIntoWorktreeID string `json:"adopted_into_worktree_id,omitempty"`
+
 	// Branch is the git branch HEAD pointed at the last time this session took a
 	// turn. Captured on each turn start so it tracks branches created or renamed
 	// after the session began. Empty when HEAD was detached or for sessions
@@ -384,8 +394,7 @@ func (s *State) NormalizeAfterLoad(ctx context.Context) {
 	// will see 0 for these fields and fall back to scoping from the transcript start.
 	// This is acceptable since CLI upgrades are monotonic and the worst case is
 	// redundant transcript content in a condensation, not data loss.
-	s.CondensedTranscriptLines = 0
-	s.TranscriptLinesAtStart = 0
+	s.ClearLegacyTranscriptOffsets()
 
 	// Backfill AttributionBaseCommit for sessions created before this field existed.
 	// Without this, a mid-turn commit would migrate BaseCommit and the fallback in
@@ -400,6 +409,14 @@ func (s *State) NormalizeAfterLoad(ctx context.Context) {
 	if s.DivergenceNoticeShown && s.AttributionBaseCommit == s.BaseCommit {
 		s.DivergenceNoticeShown = false
 	}
+}
+
+// ClearLegacyTranscriptOffsets clears deprecated transcript offset fields so
+// callers that intentionally reset CheckpointTranscriptStart do not re-persist
+// stale legacy state.
+func (s *State) ClearLegacyTranscriptOffsets() {
+	s.CondensedTranscriptLines = 0
+	s.TranscriptLinesAtStart = 0
 }
 
 // RealignAttributionBase sets AttributionBaseCommit to newBase and clears any

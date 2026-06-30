@@ -242,6 +242,11 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 	// so ErrStateNotFound is the normal first-session path — only warn on
 	// genuinely unexpected errors, matching the rest of this file.
 	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
+		if state.AdoptedIntoWorktreePath != "" {
+			logging.Info(logCtx, "skipping adopted-away source session start",
+				slog.String("adopted_into_worktree", state.AdoptedIntoWorktreePath))
+			return strategy.ErrMutationSkip
+		}
 		persistEventMetadataToState(event, state)
 		if transErr := strategy.TransitionAndLog(ctx, state, session.EventSessionStart, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
 			logging.Warn(logCtx, "session start transition failed",
