@@ -321,10 +321,21 @@ type Metadata struct {
 
 	// Transcript position at checkpoint start - tracks what was added during this checkpoint
 	TranscriptIdentifierAtStart string `json:"transcript_identifier_at_start,omitempty"` // Last identifier when checkpoint started (UUID for Claude, message ID for Gemini)
-	CheckpointTranscriptStart   int    `json:"checkpoint_transcript_start,omitempty"`    // Transcript line offset at start of this checkpoint's data
+	CheckpointTranscriptStart   int    `json:"checkpoint_transcript_start,omitempty"`    // Raw transcript (full.jsonl) line offset at start of this checkpoint's data
 
 	// Deprecated: Use CheckpointTranscriptStart instead. Written for backward compatibility with older CLI versions.
 	TranscriptLinesAtStart int `json:"transcript_lines_at_start,omitempty"`
+
+	// CompactTranscriptStart is the line offset in the compact transcript.jsonl
+	// at which this checkpoint's data begins. transcript.jsonl stores the full
+	// compacted session (each checkpoint is self-contained), so readers segment
+	// this checkpoint's slice as compactLines[CompactTranscriptStart:].
+	//
+	// A nil pointer marks a legacy checkpoint whose transcript.jsonl holds only
+	// this checkpoint's delta (CLI versions before the full-compact-transcript
+	// change), which is read as-is from line 0. A pointer is used so that "absent"
+	// (legacy delta file) is distinguishable from 0 (full file, first checkpoint).
+	CompactTranscriptStart *int `json:"compact_transcript_start,omitempty"`
 
 	// Token usage for this checkpoint
 	TokenUsage *types.TokenUsage `json:"token_usage,omitempty"`
@@ -377,6 +388,18 @@ func (m Metadata) GetTranscriptStart() int {
 		return m.CheckpointTranscriptStart
 	}
 	return m.TranscriptLinesAtStart
+}
+
+// GetCompactTranscriptStart returns the line offset in transcript.jsonl at which
+// this checkpoint's data begins, and whether the offset was recorded. ok=false
+// means a legacy checkpoint whose transcript.jsonl holds only this checkpoint's
+// delta (read it from line 0); ok=true with offset 0 means the full-compact file
+// whose first checkpoint starts at the beginning.
+func (m Metadata) GetCompactTranscriptStart() (offset int, ok bool) {
+	if m.CompactTranscriptStart == nil {
+		return 0, false
+	}
+	return *m.CompactTranscriptStart, true
 }
 
 // SessionFilePaths contains the absolute paths to session files from the git tree root.
