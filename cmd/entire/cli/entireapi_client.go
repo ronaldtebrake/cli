@@ -28,12 +28,21 @@ import (
 func runAuthenticatedActivityAPI(ctx context.Context, errW io.Writer, insecureHTTP bool, fn func(context.Context, *api.Client) error) error {
 	client, err := auth.NewEntireAPICellClient(ctx, insecureHTTP, nil)
 	if err != nil {
-		if !errors.Is(err, auth.ErrNoCellForJurisdiction) {
-			logging.Debug(ctx, "activity/recap: entire-api cell client unavailable, using data API", "error", err.Error())
-		}
+		logCellClientFallback(ctx, err)
 		return runAuthenticatedDataAPI(ctx, errW, insecureHTTP, fn)
 	}
 	return fn(ctx, client)
+}
+
+// logCellClientFallback records, at debug, that an activity/recap command fell
+// back from the entire-api cell to the data API. The expected cases — the
+// region has no cell yet, or the caller isn't logged in — aren't logged: they
+// are normal during rollout and on first use, not diagnosable failures.
+func logCellClientFallback(ctx context.Context, err error) {
+	if errors.Is(err, auth.ErrNoCellForJurisdiction) || errors.Is(err, auth.ErrNotLoggedIn) {
+		return
+	}
+	logging.Debug(ctx, "activity/recap: entire-api cell client unavailable, using data API", "error", err.Error())
 }
 
 // forgeToMirrorProvider maps a gitremote forge identifier (e.g. "gh") to the
@@ -79,10 +88,7 @@ func currentRepoID(ctx context.Context) string {
 // and failed/suspended placements are skipped — they can't answer for the repo.
 func firstActiveRepoID(mirrors []coreapi.Mirror) string {
 	for i := range mirrors {
-		if mirrors[i].IsArchived.Or(false) {
-			continue
-		}
-		if st := mirrors[i].Status.Or(coreapi.MirrorStatusReady); st == coreapi.MirrorStatusFailed || st == coreapi.MirrorStatusSuspended {
+		if !isActiveMirror(mirrors[i]) {
 			continue
 		}
 		if id := strings.TrimSpace(mirrors[i].MirrorId); id != "" {

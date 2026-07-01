@@ -18,7 +18,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
-	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/recap"
 )
@@ -190,14 +189,14 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 // the caller isn't logged in — recap tolerates the latter, rendering and letting
 // the server answer 401 rather than hard-failing. Every other failure surfaces.
 func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, string, error) {
-	if client, err := auth.NewEntireAPICellClient(ctx, insecureHTTP, nil); err == nil {
-		return client, currentRepoID(ctx), nil
-	} else if !errors.Is(err, auth.ErrNoCellForJurisdiction) {
-		// Best-effort upgrade: fall back to the data API on any cell failure. Its
-		// path below tolerates a missing login (renders, lets the server 401), so
-		// the not-logged-in case keeps working; log non-obvious failures.
-		logging.Debug(ctx, "recap: entire-api cell client unavailable, using data API", "error", err.Error())
+	// Best-effort upgrade: on any cell failure fall back to the data API path
+	// below, which tolerates a missing login (renders, lets the server 401) so
+	// the not-logged-in case keeps working.
+	cellClient, cellErr := auth.NewEntireAPICellClient(ctx, insecureHTTP, nil)
+	if cellErr == nil {
+		return cellClient, currentRepoID(ctx), nil
 	}
+	logCellClientFallback(ctx, cellErr)
 
 	if insecureHTTP {
 		auth.EnableInsecureHTTP()
