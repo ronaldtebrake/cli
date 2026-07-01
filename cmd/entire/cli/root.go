@@ -121,6 +121,9 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(hideAsAlias(newTraceCmd(), "entire doctor trace"))
 	cmd.AddCommand(newSearchCmd()) // 'entire search' = 'checkpoint search' (hidden, no hint)
 
+	// Hidden labs commands (listed via `entire labs`; not deprecation shortcuts).
+	cmd.AddCommand(newExpertsCmd()) // agent/workflow provenance
+
 	// Deprecated top-level commands (functional; the constructors mark them
 	// Deprecated, which also excludes them from help and completion).
 	cmd.AddCommand(newResetCmd())
