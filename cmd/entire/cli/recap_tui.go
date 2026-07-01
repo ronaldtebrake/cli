@@ -21,7 +21,10 @@ type recapTUIOptions struct {
 	View  recap.ViewMode
 	Agent string
 	Repo  string
-	Color bool
+	// RepoName is the human owner/repo display name for the scoped repo; Repo is
+	// the ?repo= query value (a repo_id ULID when routed to a cell).
+	RepoName string
+	Color    bool
 }
 
 type recapDataMsg struct {
@@ -35,9 +38,10 @@ type recapErrMsg struct {
 }
 
 type recapTUIModel struct {
-	ctx    context.Context
-	client *api.Client
-	repo   string
+	ctx      context.Context
+	client   *api.Client
+	repo     string
+	repoName string
 
 	rangeKey recap.RangeKey
 	view     recap.ViewMode
@@ -77,6 +81,7 @@ func newRecapTUIModel(ctx context.Context, client *api.Client, opts recapTUIOpti
 		ctx:       ctx,
 		client:    client,
 		repo:      opts.Repo,
+		repoName:  opts.RepoName,
 		rangeKey:  opts.Range,
 		view:      opts.View,
 		agent:     opts.Agent,
@@ -244,11 +249,12 @@ func (m recapTUIModel) withViewport() recapTUIModel {
 	}
 	if m.resp != nil {
 		m.viewport.SetContent(recap.RenderStaticRecap(m.resp, recap.RenderOptions{
-			Range: m.rangeKey,
-			View:  m.view,
-			Agent: m.agent,
-			Width: m.width,
-			Color: m.color,
+			Range:    m.rangeKey,
+			View:     m.view,
+			Agent:    m.agent,
+			Width:    m.width,
+			Color:    m.color,
+			RepoName: m.repoName,
 		}))
 	}
 	return m

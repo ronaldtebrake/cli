@@ -138,13 +138,22 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 		return err
 	}
 	rangeKey := f.rangeKey()
+	// The ?repo= value is a repo_id ULID when routed to a cell, which the recap
+	// response echoes back; show the human owner/repo name instead. Only when
+	// actually scoped (a repo query was sent), so an unscoped recap isn't
+	// mislabelled as scoped to the current repo.
+	repoName := ""
+	if repoSlug != "" {
+		repoName = currentRepoSlug(ctx)
+	}
 	if f.useTUI(interactive.IsTerminalWriter(w), interactive.CanPromptInteractively(), IsAccessibleMode()) {
 		return runRecapTUI(ctx, client, recapTUIOptions{
-			Range: rangeKey,
-			View:  mode,
-			Agent: f.agentName(),
-			Repo:  repoSlug,
-			Color: color,
+			Range:    rangeKey,
+			View:     mode,
+			Agent:    f.agentName(),
+			Repo:     repoSlug,
+			RepoName: repoName,
+			Color:    color,
 		})
 	}
 	start, end := rangeKey.Bounds(time.Now())
@@ -153,11 +162,12 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 		return handleRecapFetchError(errW, err)
 	}
 	fmt.Fprint(w, recap.RenderStaticRecap(resp, recap.RenderOptions{
-		Range: rangeKey,
-		View:  mode,
-		Agent: f.agentName(),
-		Width: terminalWidth(w),
-		Color: color,
+		Range:    rangeKey,
+		View:     mode,
+		Agent:    f.agentName(),
+		Width:    terminalWidth(w),
+		Color:    color,
+		RepoName: repoName,
 	}))
 	fmt.Fprintln(w)
 	return nil
