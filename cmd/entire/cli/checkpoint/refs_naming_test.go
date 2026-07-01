@@ -27,9 +27,9 @@ func TestRefName(t *testing.T) {
 		want plumbing.ReferenceName
 	}{
 		{
-			name: "legacy hex shards on first two",
+			name: "legacy hex shards on last two",
 			cid:  "a1b2c3d4e5f6",
-			want: "refs/entire/checkpoints/a1/a1b2c3d4e5f6",
+			want: "refs/entire/checkpoints/f6/a1b2c3d4e5f6",
 		},
 		{
 			name: "ulid shards on last two",
@@ -67,7 +67,7 @@ func TestParseRef(t *testing.T) {
 	}{
 		{
 			name:   "legacy round-trip",
-			ref:    "refs/entire/checkpoints/a1/a1b2c3d4e5f6",
+			ref:    "refs/entire/checkpoints/f6/a1b2c3d4e5f6",
 			wantID: "a1b2c3d4e5f6",
 			wantOK: true,
 		},
@@ -83,13 +83,13 @@ func TestParseRef(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name:   "shard does not match id (legacy in last-two bucket)",
-			ref:    "refs/entire/checkpoints/f6/a1b2c3d4e5f6",
+			name:   "shard does not match id (wrong bucket)",
+			ref:    "refs/entire/checkpoints/a1/a1b2c3d4e5f6",
 			wantOK: false,
 		},
 		{
 			name:   "extra path segment",
-			ref:    "refs/entire/checkpoints/a1/a1b2c3d4e5f6/0",
+			ref:    "refs/entire/checkpoints/f6/a1b2c3d4e5f6/0",
 			wantOK: false,
 		},
 		{

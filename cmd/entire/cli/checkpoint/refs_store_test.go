@@ -165,17 +165,17 @@ func TestGitRefsStore_RefSharding(t *testing.T) {
 	store := newRefsStore(t)
 	ctx := context.Background()
 
-	// A legacy hex checkpoint stores under a first-two-char shard and round-trips.
+	// A legacy hex checkpoint stores under a last-two-char shard and round-trips.
 	legacy := id.MustCheckpointID("a1b2c3d4e5f6")
 	refsWrite(t, store, legacy, "s-legacy", "t")
-	_, err := store.repo.Reference("refs/entire/checkpoints/a1/a1b2c3d4e5f6", true)
+	_, err := store.repo.Reference("refs/entire/checkpoints/f6/a1b2c3d4e5f6", true)
 	require.NoError(t, err)
 	summary, err := store.Read(ctx, legacy)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
 	assert.Equal(t, legacy, summary.CheckpointID)
 
-	// ULIDs shard on the last two chars (the ref namespace is ULID-ready). Only
+	// ULIDs shard on the last two chars too (the ref namespace is ULID-ready). Only
 	// the ref-naming layer is asserted here: storing a ULID checkpoint also needs
 	// id.CheckpointID JSON (un)marshaling to accept ULIDs, which lands with the
 	// deferred ULID-generation switch.
@@ -212,9 +212,9 @@ func TestGitRefsStore_SeparateCheckpointsSeparateRefs(t *testing.T) {
 	refsWrite(t, store, cid1, "s1", "t1")
 	refsWrite(t, store, cid2, "s2", "t2")
 
-	_, err := store.repo.Reference("refs/entire/checkpoints/a1/a1b2c3d4e5f6", true)
+	_, err := store.repo.Reference("refs/entire/checkpoints/f6/a1b2c3d4e5f6", true)
 	require.NoError(t, err)
-	_, err = store.repo.Reference("refs/entire/checkpoints/f6/f6e5d4c3b2a1", true)
+	_, err = store.repo.Reference("refs/entire/checkpoints/a1/f6e5d4c3b2a1", true)
 	require.NoError(t, err)
 
 	infos, err := store.List(ctx)

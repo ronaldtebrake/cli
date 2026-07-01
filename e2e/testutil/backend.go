@@ -38,16 +38,13 @@ func envIsGitRefs(key string) bool {
 func UsingGitRefs() bool { return checkpointStoreMode() == storeModeGitRefs }
 
 // checkpointShard returns the two-char ref shard for a checkpoint ID, matching
-// cmd/entire/cli/checkpoint/id.ShardFor: the first two chars for a 12-hex legacy
-// ID, the last two for a 26-char ULID.
+// cmd/entire/cli/checkpoint/id.ShardFor: the last two chars, for both legacy
+// 12-hex IDs and 26-char ULIDs.
 func checkpointShard(id string) string {
 	if len(id) < 2 {
 		return id
 	}
-	if len(id) == 26 {
-		return id[len(id)-2:]
-	}
-	return id[:2]
+	return id[len(id)-2:]
 }
 
 // checkpointRefName returns refs/entire/checkpoints/<shard>/<id> for the git-refs

@@ -159,14 +159,12 @@ func TestCheckpointID_ShardFor(t *testing.T) {
 		input string
 		want  string
 	}{
-		// Legacy hex shards on the first two chars (preserves the v1 layout).
-		{"legacy", "a1b2c3d4e5f6", "a1"},
-		{"legacy other", "abcdef123456", "ab"},
-		// ULID shards on the LAST two chars.
+		// Every format shards on the LAST two chars (single positional rule).
+		{"legacy", "a1b2c3d4e5f6", "f6"},
+		{"legacy other", "abcdef123456", "56"},
 		{"ulid", sampleULID, "ZN"},
 		{"ulid trailing", "0123456789ABCDEFGHJKMNPQRS", "RS"},
-		// Unknown falls back to the prefix (first-two) layout.
-		{"unknown", "XYZ", "XY"},
+		{"unknown", "XYZ", "YZ"},
 		// Short-string fallbacks.
 		{"empty", "", ""},
 		{"one char", "a", "a"},
