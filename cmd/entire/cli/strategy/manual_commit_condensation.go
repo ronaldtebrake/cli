@@ -20,6 +20,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -147,9 +148,15 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	}
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	condenseStart := time.Now()
-	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
-		return nil, err
+	policy, err := readLocalCheckpointPolicy(logCtx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint policy could not be read: %w", err)
 	}
+	if !checkpointpolicy.CanSatisfyPolicy(policy) {
+		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
+		return nil, errors.New("checkpoint policy cannot be satisfied by this Entire CLI")
+	}
+	checkpointVersion := checkpointpolicy.Normalize(policy).CheckpointVersion
 
 	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
 	ref, hasShadowBranch := resolveShadowRef(repo, shadowBranchName, o.shadowRef)
@@ -266,6 +273,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		CheckpointID:                checkpointID,
 		SessionID:                   state.SessionID,
 		Strategy:                    StrategyNameManualCommit,
+		CheckpointVersion:           checkpointVersion,
 		Branch:                      branchName,
 		Transcript:                  redactedTranscript,
 		Prompts:                     sessionData.Prompts,

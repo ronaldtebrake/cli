@@ -21,6 +21,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/gitops"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
@@ -2284,6 +2285,12 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		if state.BaseCommit == "" {
 			return errPartialState
 		}
+		if state.AdoptedIntoWorktreePath != "" {
+			logging.Info(logging.WithComponent(ctx, "hooks"), "skipping adopted-away source session",
+				slog.String("session_id", sessionID),
+				slog.String("adopted_into_worktree", state.AdoptedIntoWorktreePath))
+			return ErrMutationSkip
+		}
 		if transErr := TransitionAndLog(ctx, state, session.EventTurnStart, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
 			logging.Warn(logging.WithComponent(ctx, "hooks"), "turn start transition failed",
 				slog.String("session_id", sessionID),
@@ -2806,7 +2813,14 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 	defer repo.Close()
-	if err := checkCommittedCheckpointWritePolicy(logCtx, repo); err != nil {
+	policy, err := readLocalCheckpointPolicy(logCtx, repo)
+	if err != nil {
+		warnOrLogCheckpointPolicyReadFailure(logCtx, err)
+		state.TurnCheckpointIDs = nil
+		return 1
+	}
+	if !checkpointpolicy.CanSatisfyPolicy(policy) {
+		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
 		state.TurnCheckpointIDs = nil
 		return 1
 	}

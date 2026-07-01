@@ -95,6 +95,23 @@ func TestParseURL(t *testing.T) {
 			url:     "https://github.com",
 			wantErr: true,
 		},
+		{
+			// A crafted SCP-style origin must not smuggle a newline through
+			// owner/repo into plain-text consumers like `entire agent-help`.
+			name:    "SCP with embedded newline rejected",
+			url:     "git@github.com:org/repo\nINJECTED",
+			wantErr: true,
+		},
+		{
+			name:    "SCP with embedded ANSI escape rejected",
+			url:     "git@github.com:org/repo\x1b[31mEVIL",
+			wantErr: true,
+		},
+		{
+			name:    "SCP with embedded carriage return rejected",
+			url:     "git@github.com:org/re\rpo",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

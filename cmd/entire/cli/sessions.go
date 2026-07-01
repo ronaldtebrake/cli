@@ -168,6 +168,7 @@ Commands:
   stop     Stop one or more active sessions
   current  Show the active session for the current worktree
   attach   Attach an existing agent session
+  adopt    Adopt an active session from another worktree
   resume   Switch to a branch and resume its session
 
 Examples:
@@ -178,6 +179,7 @@ Examples:
   entire session stop                      Interactive stop
   entire session current                   Active session for cwd
   entire session attach <session-id>       Attach an external session
+  entire session adopt <session-id> --from ../repo  Adopt a moved session
   entire session resume <branch>           Resume from a branch`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := paths.WorktreeRoot(cmd.Context()); err != nil {
@@ -193,6 +195,7 @@ Examples:
 	cmd.AddCommand(newStopCmd())
 	cmd.AddCommand(newSessionCurrentCmd())
 	cmd.AddCommand(newAttachCmd())
+	cmd.AddCommand(newAdoptCmd())
 	cmd.AddCommand(newResumeCmd())
 
 	return cmd

@@ -172,14 +172,36 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			}
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
 				errW := cmd.ErrOrStderr()
-				stop := startSpinner(errW, fmt.Sprintf("Cloning %s/%s into %s", owner, repo, clusterHost))
-				// nil onStatus: the one-shot's single spinner shows liveness; the
+				// Two-phase progress: a "Placing" spinner covers the fast
+				// CreateMirror call (placement, <15s), then a separate "Cloning"
+				// spinner covers the clone-readiness poll. An already-ready mirror
+				// completes the first poll faster than the spinner's initial delay,
+				// so the Cloning line never paints and we go straight to the clone
+				// instructions.
+				placing := startSpinner(errW, fmt.Sprintf("Placing mirror %s/%s into %s", owner, repo, clusterHost))
+				placed := false
+				var cloning func(success bool)
+				// nil onStatus: the one-shot's spinners show liveness; the
 				// per-mirror progress lines are the wizard's concern.
-				outcome, err := createAndAwaitMirror(ctx, c, owner, repo, clusterHost, noWait, waitTimeout, nil)
-				// Only a confirmed-ready clone earns the ✓; everything else
-				// (empty, --no-wait, suspended, failed, timeout) erases the line
-				// and lets reportOneShotMirror print the specific outcome.
-				stop(err == nil && outcome.polled && outcome.status == coreapi.MirrorStatusReady)
+				outcome, err := createAndAwaitMirror(ctx, c, owner, repo, clusterHost, noWait, waitTimeout,
+					func(created *coreapi.CreatedMirror) {
+						placing(true)
+						placed = true
+						// Only start a Cloning spinner when there's a clone to await.
+						if !noWait && !created.Empty {
+							cloning = startSpinner(errW, fmt.Sprintf("Cloning %s/%s into %s", owner, repo, clusterHost))
+						}
+					}, nil)
+				if !placed {
+					// CreateMirror failed before onCreated fired — erase the line.
+					placing(false)
+				}
+				if cloning != nil {
+					// Only a confirmed-ready clone earns the ✓; everything else
+					// (suspended, failed, timeout) erases the line and lets
+					// reportOneShotMirror print the specific outcome.
+					cloning(err == nil && outcome.polled && outcome.status == coreapi.MirrorStatusReady)
+				}
 				return reportOneShotMirror(cmd.OutOrStdout(), errW, outcome, err)
 			})
 		},
@@ -206,7 +228,11 @@ type mirrorCreateOutcome struct {
 // status. The returned error is the create error (when outcome.created is nil)
 // or the wait error — a status sentinel (errMirrorCloneFailed /
 // errMirrorSuspended) or a timeout; callers read outcome.status for the state.
-func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, clusterHost string, noWait bool, timeout time.Duration, onStatus func(coreapi.MirrorStatus)) (mirrorCreateOutcome, error) {
+//
+// onCreated (may be nil) fires once the placement is registered, before any
+// clone polling — it separates the fast "placing" phase from the slow "cloning"
+// wait so callers can render them as distinct steps.
+func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, clusterHost string, noWait bool, timeout time.Duration, onCreated func(*coreapi.CreatedMirror), onStatus func(coreapi.MirrorStatus)) (mirrorCreateOutcome, error) {
 	created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
 		Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
 		Owner:       owner,
@@ -215,6 +241,9 @@ func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, c
 	})
 	if err != nil {
 		return mirrorCreateOutcome{}, err
+	}
+	if onCreated != nil {
+		onCreated(created)
 	}
 	outcome := mirrorCreateOutcome{created: created}
 	if created.Empty {
@@ -254,9 +283,9 @@ func reportOneShotMirror(out, errW io.Writer, outcome mirrorCreateOutcome, err e
 		return err
 	}
 	if created.Created {
-		fmt.Fprintf(out, "Registered mirror %s\n", created.MirrorId)
+		fmt.Fprintf(out, "\nRegistered mirror %s\n", created.MirrorId)
 	} else {
-		fmt.Fprintf(out, "Mirror already exists (%s)\n", created.MirrorId)
+		fmt.Fprintf(out, "\nMirror exists (%s)\n", created.MirrorId)
 	}
 	fmt.Fprintf(out, "  %s\n", created.MirrorUrl)
 
@@ -361,19 +390,99 @@ func newRepoMirrorListCmd() *cobra.Command {
 
 func newRepoMirrorGetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <mirror-id>",
-		Short: "Show a mirror by ULID",
-		Args:  cobra.ExactArgs(1),
+		Use:   "get <mirror>",
+		Short: "Show a mirror by ULID or clone URL",
+		Long: "Show a mirror. <mirror> is either a mirror ULID or an entire:// clone " +
+			"URL\n(entire://<cluster>/gh/<owner>/<repo>) — the form `mirror list` " +
+			"prints and `git clone` accepts.",
+		Example: "  entire repo mirror get 01KS6KFJR2XS6PZ188MVYE07AN\n" +
+			"  entire repo mirror get entire://aws-us-east-2.entire.io/gh/octocat/hello-world",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCoreObject(cmd, mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) (*coreapi.Mirror, error) {
-				sc, err := c.GetMirror(ctx, coreapi.GetMirrorParams{MirrorId: args[0]})
+				mirrorID, err := resolveMirrorRef(ctx, c, args[0])
 				if err != nil {
 					return nil, err
 				}
-				return sc, nil
+				return c.GetMirror(ctx, coreapi.GetMirrorParams{MirrorId: mirrorID})
 			})
 		},
 	}
+}
+
+// resolveMirrorRef turns a mirror reference into its ULID. A ULID passes
+// through unchanged. Otherwise the ref is parsed as an entire:// clone URL and
+// resolved by listing the caller-visible mirrors for that (cluster, provider,
+// owner) and matching the repo — there is no get-by-coords endpoint, only
+// GetMirror(ULID). The clone URL carries the cluster, so the match is
+// unambiguous even when the same upstream is mirrored on several clusters.
+func resolveMirrorRef(ctx context.Context, c *coreapi.Client, ref string) (string, error) {
+	if looksLikeULID(ref) {
+		return ref, nil
+	}
+	clusterHost, provider, owner, repo, err := parseMirrorCloneURL(ref)
+	if err != nil {
+		return "", fmt.Errorf("%w; pass a mirror ULID or a clone URL (entire://<cluster>/gh/<owner>/<repo>)", err)
+	}
+	mirrors, err := fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]coreapi.Mirror, string, error) {
+		params := coreapi.ListMirrorsParams{
+			Cluster:  coreapi.NewOptString(clusterHost),
+			Provider: coreapi.NewOptString(provider),
+			Owner:    coreapi.NewOptString(owner),
+		}
+		if cursor != "" {
+			params.PageToken = coreapi.NewOptString(cursor)
+		}
+		out, lerr := c.ListMirrors(ctx, params)
+		if lerr != nil {
+			return nil, "", lerr
+		}
+		return out.Mirrors, out.NextPageToken.Or(""), nil
+	})
+	if err != nil {
+		return "", err
+	}
+	// ListMirrors has no repo filter, so the owner-scoped page is matched on
+	// repo client-side. Owner/repo are stored lowercase; EqualFold guards
+	// against a differently-cased clone URL.
+	for _, m := range mirrors {
+		if strings.EqualFold(m.Repo, repo) {
+			return m.MirrorId, nil
+		}
+	}
+	return "", noMirrorErr(ref)
+}
+
+// parseMirrorCloneURL decomposes an entire:// mirror clone URL into its
+// coordinates:
+//
+//	entire://<clusterHost>/gh/<owner>/<repo>
+//
+// Only the github ("gh") provider path is recognized — the only provider
+// mirrors support today. The cluster host is validated the same way the
+// create/remove verbs validate it, so a host carrying URL metacharacters is
+// rejected at the boundary rather than flowing into the list filter.
+func parseMirrorCloneURL(raw string) (clusterHost, provider, owner, repo string, err error) {
+	u, perr := url.Parse(raw)
+	if perr != nil || u.Scheme != "entire" {
+		return "", "", "", "", fmt.Errorf("%q is not an entire:// clone URL", raw)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 3 || parts[0] != "gh" {
+		return "", "", "", "", fmt.Errorf("%q must be entire://<cluster>/gh/<owner>/<repo>", raw)
+	}
+	if verr := validateClusterHost(u.Host); verr != nil {
+		return "", "", "", "", verr
+	}
+	// Trim a trailing .git so a URL pasted from `git remote -v` resolves the
+	// same as the bare clone URL (matching gitremote.ParseURL). GitHub repo
+	// names can contain dots, so only the suffix is trimmed, not all dots.
+	repo = strings.ToLower(strings.TrimSuffix(parts[2], ".git"))
+	return u.Host, string(coreapi.CreateMirrorInputBodyProviderGithub), strings.ToLower(parts[1]), repo, nil
+}
+
+func noMirrorErr(ref string) error {
+	return fmt.Errorf("no mirror matching %q (run `entire repo mirror list` to see clone URLs, or pass a ULID)", ref)
 }
 
 func newRepoMirrorRemoveCmd() *cobra.Command {

@@ -703,12 +703,16 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// Handle summary generation — uses raw transcript. Imported history was
 	// already rejected above, before the content load.
 	if generate {
+		if err := ensureCheckpointPolicyAllowsCheckpointData(ctx, lookup.repo); err != nil {
+			stopLoad(false)
+			return err
+		}
 		stopLoad(false) // generation prints its own progress to w/errW
 		writeStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
 		if openErr != nil {
 			return fmt.Errorf("open checkpoint store: %w", openErr)
 		}
-		if err := generateCheckpointSummary(ctx, w, errW, lookup.repo, writeStores.Persistent, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
+		if err := generateCheckpointSummary(ctx, w, errW, writeStores.Persistent, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
 			return err
 		}
 		// Reload to get the updated summary.
@@ -920,7 +924,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 // summaryTimeoutSeconds is the per-invocation --summary-timeout-seconds flag
 // value (0 = unset). Effective precedence for the deadline: flag > settings >
 // package default. See resolveSummaryTimeout for the resolution.
-func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, repo *git.Repository, store checkpoint.Writer, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
+func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store checkpoint.Writer, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
 	// Check if summary already exists
 	if content.Metadata.Summary != nil && !force {
 		return renderExplainFailure(errW, "Summary already exists", []explainRow{
@@ -942,9 +946,6 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, repo *git
 		return renderExplainFailure(errW, "Checkpoint has no transcript content (scoped)", []explainRow{
 			{Label: "id", Value: checkpointID.String()},
 		}, fmt.Errorf("checkpoint %s has no transcript content for this checkpoint (scoped)", checkpointID))
-	}
-	if err := ensureCommittedCheckpointWritePolicy(ctx, repo); err != nil {
-		return err
 	}
 	provider, err := resolveCheckpointSummaryProvider(ctx, w)
 	if err != nil {

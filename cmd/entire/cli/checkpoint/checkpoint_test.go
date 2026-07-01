@@ -4796,9 +4796,9 @@ func readSummaryFromBranch(t *testing.T, repo *git.Repository, checkpointID id.C
 	return summary
 }
 
-// readSessionMetadataAtIndex reads the per-session Metadata for
-// session at numbered subfolder `index` (0-based) under the checkpoint.
-func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID, index int) Metadata {
+// readSessionMetadata reads the per-session Metadata for the first session
+// (numbered subfolder "0") under the checkpoint.
+func readSessionMetadata(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID) Metadata {
 	t.Helper()
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	if err != nil {
@@ -4816,9 +4816,9 @@ func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID
 	if err != nil {
 		t.Fatalf("get checkpoint subtree: %v", err)
 	}
-	sessionTree, err := checkpointTree.Tree(strconv.Itoa(index))
+	sessionTree, err := checkpointTree.Tree("0")
 	if err != nil {
-		t.Fatalf("get session subtree %d: %v", index, err)
+		t.Fatalf("get session subtree 0: %v", err)
 	}
 	sessionFile, err := sessionTree.File(paths.MetadataFileName)
 	if err != nil {
@@ -4947,7 +4947,7 @@ func TestCommittedMetadata_InvestigateFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("WriteCommitted: %v", err)
 	}
 
-	meta := readSessionMetadataAtIndex(t, repo, checkpointID, 0)
+	meta := readSessionMetadata(t, repo, checkpointID)
 	if meta.Kind != "agent_investigate" {
 		t.Errorf("Kind: got %q, want agent_investigate", meta.Kind)
 	}

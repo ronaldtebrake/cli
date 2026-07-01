@@ -37,7 +37,11 @@ func reviewerModelName(r reviewtypes.AgentReviewer) string {
 // defaultReviewerTimeout bounds a single reviewer's run when the caller
 // doesn't set RunConfig.ReviewerTimeout. A stuck agent is cancelled (its
 // process killed) and marked failed rather than hanging the review forever.
-const defaultReviewerTimeout = 10 * time.Minute
+//
+// A full reviewer pass (read the diff, run skills, write the report) regularly
+// runs past 10m, especially for the consolidating judge, so the default is 20m;
+// override with --timeout (0 disables).
+const defaultReviewerTimeout = 20 * time.Minute
 
 // reviewerTimeout resolves the effective per-reviewer timeout, distinguishing
 // the three RunConfig.ReviewerTimeout states the zero value alone can't:

@@ -44,8 +44,18 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	}
 
 	refs := checkpoint.ResolveRefs(ctx)
-	if !syncCheckpointPolicyForPrePush(ctx, ps) {
-		return nil
+	repo, repoErr := OpenRepository(ctx)
+	if repoErr != nil {
+		logging.Warn(ctx, "checkpoint policy pre-push: failed to open repository; allowing checkpoint push",
+			slog.String("error", repoErr.Error()),
+		)
+	} else {
+		defer repo.Close()
+		syncCheckpointPolicyForPrePush(ctx, repo, ps)
+		if !checkpointPolicyAllowsGitHook(ctx, repo) {
+			// Policy failures should skip checkpoint pushes, not abort the user's push.
+			return nil
+		}
 	}
 
 	// OPF pre-push rewrite: if OPF is configured, resolve the user's
@@ -75,7 +85,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 			logging.Info(ctx, "OPF skipped for this push (user choice or settings)")
 		case OPFRun:
 			_, opfSpan := perf.Start(ctx, "opf_pre_push_rewrite")
-			repo, repoErr := OpenRepository(ctx)
 			if repoErr != nil {
 				opfSpan.RecordError(repoErr)
 				opfSpan.End()
@@ -84,7 +93,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 				)
 				return repoErr
 			}
-			defer repo.Close()
 			if _, rewriteErr := RewriteUnpushedV1WithOPF(ctx, repo, ps.pushTarget()); rewriteErr != nil {
 				opfSpan.RecordError(rewriteErr)
 				opfSpan.End()

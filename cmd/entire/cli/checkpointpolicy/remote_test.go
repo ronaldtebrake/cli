@@ -21,7 +21,8 @@ func TestSyncRemotePolicyDefaultsWhenRemoteMissing(t *testing.T) {
 	got, err := checkpointpolicy.Sync(t.Context(), repo, checkpointpolicy.Target{Remote: bareDir, Dir: localDir})
 	require.NoError(t, err)
 	require.Equal(t, checkpointpolicy.SourceDefaults, got.Source)
-	require.Equal(t, checkpointpolicy.DefaultPolicy(), got.Policy)
+	require.Empty(t, got.Policy)
+	require.Equal(t, checkpointpolicy.DefaultPolicy(), checkpointpolicy.Normalize(got.Policy))
 	require.True(t, got.Hash.IsZero())
 	require.True(t, got.RemoteHash.IsZero())
 }

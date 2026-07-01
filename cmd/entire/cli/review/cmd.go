@@ -134,9 +134,11 @@ Flags:
   --models       list the models each agent advertises (optionally --agent NAME)
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
-  --timeout DUR  max time each reviewer may run before it's cancelled and
-                 marked failed (default 10m; 0 disables). Siblings and the
-                 judge proceed.
+  --timeout DUR  max time each reviewer may run before it's cancelled and marked
+                 failed; also bounds the consolidating judge, whose timeout or
+                 error fails the review with no verdict (default 20m; 0 disables
+                 both bounds). A timed-out reviewer's siblings and the judge
+                 still proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
                  Default: first existing of origin/HEAD, origin/main,
@@ -207,14 +209,12 @@ To tag an already-finished session as a review, use
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
 			}
-			// --timeout 0 disables the per-reviewer bound. The RunConfig zero
-			// value means "use the default", so translate an explicit 0 to a
-			// negative disable sentinel. (The flag defaults to 10m, so the value is
-			// only 0 when the user passed --timeout 0.)
-			timeoutArg := reviewTimeout
-			if timeoutArg == 0 {
-				timeoutArg = -1
-			}
+			// Map the flag to the RunConfig timeout convention: a non-positive
+			// value (the user passed --timeout 0) means "disable", encoded as the
+			// negative sentinel, which disables BOTH the per-reviewer bound and the
+			// judge's deadline. A positive value passes through and bounds both.
+			// (The flag's default is nonzero, so 0 only appears on --timeout 0.)
+			timeoutArg := resolveReviewerTimeoutArg(reviewTimeout)
 			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, timeoutArg, deps)
 		},
 	}
@@ -236,7 +236,7 @@ To tag an already-finished session as a review, use
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
-	cmd.Flags().DurationVar(&reviewTimeout, "timeout", defaultReviewerTimeout, "max time each reviewer may run before it is cancelled and marked failed (0 disables)")
+	cmd.Flags().DurationVar(&reviewTimeout, "timeout", defaultReviewerTimeout, "max time each reviewer may run before it is cancelled and marked failed; also bounds the consolidating judge, whose timeout or error fails the review (0 disables both)")
 	// The listing modes and the action modes each select a distinct command
 	// behavior; combining them silently runs one and drops the rest, so reject
 	// the combination up front with a clear cobra error.
@@ -696,6 +696,18 @@ func reviewAgentNames(deps Deps) []string {
 		}
 	}
 	return names
+}
+
+// resolveReviewerTimeoutArg maps the --timeout flag value to the RunConfig
+// timeout convention used by reviewerTimeout and the judge's providerContext: a
+// non-positive value (the user passed --timeout 0) becomes the negative
+// "disabled" sentinel; a positive value passes through unchanged. The flag's
+// default is nonzero, so 0 only reaches here when the user explicitly set it.
+func resolveReviewerTimeoutArg(flagValue time.Duration) time.Duration {
+	if flagValue <= 0 {
+		return -1
+	}
+	return flagValue
 }
 
 // runReview executes the main review flow.
@@ -1188,6 +1200,7 @@ func runMultiAgentPath(
 		agentNames[i] = r.Name()
 	}
 	aggregateOutput := ""
+	var synthErr error
 
 	// The single consolidating judge (resolved and validated by the caller)
 	// turns the reviewers' reports into the final verdict.
@@ -1204,8 +1217,12 @@ func runMultiAgentPath(
 		profileName:       profileName,
 		task:              profile.Task,
 		masterName:        masterLabel,
+		judgeTimeout:      timeout,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result
+		},
+		onSynthesisError: func(err error) {
+			synthErr = err
 		},
 	})
 	if tuiSink, ok := findTUISink(sinks); ok {
@@ -1218,11 +1235,33 @@ func runMultiAgentPath(
 	runMultiCfg.EnrichSummary = reviewSummaryTokenEnricher(worktreeRoot, headSHA)
 	summary, waitErr := RunMulti(runCtx, reviewers, runMultiCfg, sinks)
 	if shouldAbortMultiReview(summary, waitErr) && runCtx.Err() == nil && ctx.Err() == nil {
+		// Operational failure, not a usage error — don't dump the command help.
+		cmd.SilenceUsage = true
 		return multiReviewFailureError(waitErr)
 	}
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
 	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, aggregateOutput)
+	// The judge produces the review's primary deliverable — the consolidated
+	// verdict. If it was attempted but failed (provider error or timeout), the
+	// run produced no verdict, so exit non-zero instead of reporting success.
+	// The reviewers' partial output is still recorded above. Skip when the run
+	// was cancelled (Ctrl+C cancels both ctx and runCtx), which is not a failure.
+	if synthErr != nil && ctx.Err() == nil && runCtx.Err() == nil {
+		// Operational failure, not a usage error — don't dump the command help.
+		cmd.SilenceUsage = true
+		return judgeFailureError(masterLabel, synthErr)
+	}
 	return nil
+}
+
+// judgeFailureError reports a judge (synthesis) failure as the command's error
+// so a missing verdict surfaces in the exit status. The provider's own message
+// was already printed to the output; this drives the non-zero exit.
+func judgeFailureError(judge string, err error) error {
+	if judge != "" {
+		return fmt.Errorf("review verdict unavailable: judge %s failed: %w", judge, err)
+	}
+	return fmt.Errorf("review verdict unavailable: %w", err)
 }
 
 // handlePickerError maps picker error sentinels to the appropriate
@@ -1259,7 +1298,13 @@ type multiAgentSinkInputs struct {
 	profileName       string
 	task              string
 	masterName        string
+	// judgeTimeout bounds the judge's consolidation call, following the same
+	// three-state convention as the reviewer timeout (positive: use it; zero:
+	// default; negative: disabled). Set from the resolved --timeout so one knob
+	// governs both reviewers and the judge.
+	judgeTimeout      time.Duration
 	onSynthesisResult func(result string)
+	onSynthesisError  func(err error)
 }
 
 type singleAgentSinkInputs struct {
@@ -1287,17 +1332,19 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 		sinks = append(sinks, tui)
 		if in.synthesisProvider != nil {
 			postRunOut := &bytes.Buffer{}
-			sinks = append(sinks, DumpSink{W: postRunOut, RenderWriter: in.out})
+			sinks = append(sinks, DumpSink{W: postRunOut})
 			sinks = append(sinks, SynthesisSink{
-				Provider:     in.synthesisProvider,
-				Writer:       postRunOut,
-				RenderWriter: in.out,
-				PerRunPrompt: in.perRunPrompt,
-				ProfileName:  in.profileName,
-				Task:         in.task,
-				MasterName:   in.masterName,
-				RunContext:   in.runContext,
-				OnResult:     in.onSynthesisResult,
+				Provider:        in.synthesisProvider,
+				Writer:          postRunOut,
+				RenderWriter:    in.out,
+				PerRunPrompt:    in.perRunPrompt,
+				ProfileName:     in.profileName,
+				Task:            in.task,
+				MasterName:      in.masterName,
+				RunContext:      in.runContext,
+				ProviderTimeout: in.judgeTimeout,
+				OnResult:        in.onSynthesisResult,
+				OnError:         in.onSynthesisError,
 				OnStart: func() {
 					tui.FinalPhaseStarted(finalJudgeDisplayName(in.masterName))
 				},
@@ -1316,14 +1363,16 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 	sinks = append(sinks, DumpSink{W: in.out})
 	if in.synthesisProvider != nil {
 		sinks = append(sinks, SynthesisSink{
-			Provider:     in.synthesisProvider,
-			Writer:       in.out,
-			PerRunPrompt: in.perRunPrompt,
-			ProfileName:  in.profileName,
-			Task:         in.task,
-			MasterName:   in.masterName,
-			RunContext:   in.runContext,
-			OnResult:     in.onSynthesisResult,
+			Provider:        in.synthesisProvider,
+			Writer:          in.out,
+			PerRunPrompt:    in.perRunPrompt,
+			ProfileName:     in.profileName,
+			Task:            in.task,
+			MasterName:      in.masterName,
+			RunContext:      in.runContext,
+			ProviderTimeout: in.judgeTimeout,
+			OnResult:        in.onSynthesisResult,
+			OnError:         in.onSynthesisError,
 		})
 	}
 	return sinks
@@ -1443,6 +1492,12 @@ func writePostReviewManifest(
 	if summary.Cancelled || len(summary.AgentRuns) == 0 {
 		return
 	}
+
+	// Detach from the run context: a Ctrl+C during a slow finalize cancels ctx
+	// after the workers finished, and must not discard their findings.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+
 	manifest, states, err := localReviewManifestFromCurrentState(ctx, worktreeRoot, headSHA, summary, aggregateOutput)
 	if err != nil {
 		logging.Debug(ctx, "review manifest not written", slog.String("error", err.Error()))
@@ -1543,7 +1598,7 @@ func composeSingleAgentSinks(in singleAgentSinkInputs) []reviewtypes.Sink {
 	postRunOut := &bytes.Buffer{}
 	return []reviewtypes.Sink{
 		tui,
-		DumpSink{W: postRunOut, RenderWriter: in.out},
+		DumpSink{W: postRunOut},
 		tuiPostRunCompleteSink{tui: tui, buf: postRunOut, out: in.out},
 	}
 }

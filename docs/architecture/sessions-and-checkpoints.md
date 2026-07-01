@@ -159,6 +159,13 @@ and map each back to its branch; for sessions recorded before the field existed
 it falls back to deriving the branch from the session's last checkpoint ID found
 in branch-only commit trailers.
 
+`entire session adopt` moves an active session from a source repo or worktree
+into the current worktree. Adoption preserves the live transcript path, validates
+that the source state still belongs to the requested source worktree, rewrites
+the session's branch/worktree/base metadata to the target, clears target-local
+checkpoint windows and checkpoint IDs, and snapshots the target's current file
+changes so the next commit can link to the adopted session.
+
 ### Temporary Checkpoints
 
 Branch: `entire/<commit[:7]>-<worktreeHash[:6]>`
@@ -196,7 +203,7 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 ├── 0/                   # First session (0-based indexing)
 │   ├── metadata.json    # Session-specific Metadata
 │   ├── full.jsonl       # Raw agent transcript (CLI rewind/resume/explain)
-│   ├── transcript.jsonl # Compact transcript, scoped to this checkpoint
+│   ├── transcript.jsonl # Full compacted session (slice at compact_transcript_start)
 │   ├── prompt.txt       # Checkpoint-scoped user prompts
 │   └── content_hash.txt # sha256 of full.jsonl (dedup short-circuit)
 ├── 1/                   # Second session
@@ -208,11 +215,23 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
 
 **Compact transcript (`transcript.jsonl`):** generated best-effort from
 `full.jsonl` via `transcript/compact` on every committed write and on
-transcript replacement during finalization. Unlike `full.jsonl` (the
-cumulative session transcript, scoped at read time via
-`checkpoint_transcript_start`), `transcript.jsonl` is pre-sliced to the
-checkpoint's own portion (`compact.Compact` is called with
-`StartLine = checkpoint_transcript_start`), so it needs no offset to consume.
+transcript replacement during finalization. Like `full.jsonl`, it stores the
+**full compacted session** on every checkpoint (via `compact.FullWithBoundary`),
+so each checkpoint is self-contained — the session is reconstructable from any
+single surviving checkpoint, robust to a mid-history checkpoint being lost,
+reverted, or dropped during a rebase. This checkpoint's slice begins at the
+session metadata's `compact_transcript_start` (a line offset into
+`transcript.jsonl`, in compact-output coordinates — distinct from
+`checkpoint_transcript_start`, which indexes raw `full.jsonl` lines).
+Consumers segment this checkpoint's content as `compactLines[compact_transcript_start:]`.
+The marker rounds toward inclusion when a streaming message straddles the
+boundary (compaction merges same-ID fragments into one line that cannot be
+split), so the slice never drops this checkpoint's content but its head may
+repeat at most one merged line from the previous checkpoint — segmenters must
+tolerate that bounded overlap. A nil/absent `compact_transcript_start` marks a
+legacy checkpoint whose `transcript.jsonl` holds only its own delta (pre-change
+CLI versions); read it as-is from line 0.
+
 It is written into the checkpoint tree and pushed alongside `full.jsonl`. The
 root `metadata.json` `sessions[].transcript` pointer keeps targeting
 `full.jsonl`; when a compact transcript was generated the session entry also
@@ -220,8 +239,13 @@ carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted
 otherwise) so external readers can find it next to `full.jsonl`.
 CLI read paths (rewind/resume/explain) read `full.jsonl` by filename. Compact
 generation is best-effort: failures are logged but never fail the checkpoint
-write, and during finalization a failed regeneration keeps the previous
-`transcript.jsonl`.
+write. It is also **skipped when the compacted output exceeds the 50MB blob cap**
+— unlike `full.jsonl`, `transcript.jsonl` is not chunked, so a very long session
+whose full compaction exceeds the cap will lack a compact transcript on those
+checkpoints. This is a known limitation; `full.jsonl` remains authoritative and
+the compact transcript is regenerable from it. During the OPF finalize rewrite, a
+failed or skipped regeneration **drops** the prior `transcript.jsonl` and clears
+`compact_transcript_start` rather than shipping a stale, less-redacted compact.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json
@@ -289,28 +313,57 @@ points at a commit whose tree contains `policy.json`:
 }
 ```
 
-`checkpoint_version` is the checkpoint format new writes should use.
-`checkpoint_min_version` is the oldest checkpoint format clients must be able
-to read for this repo. Missing policy fields default to `branch-v1`.
+Either field may be omitted. An empty policy file means both fields inherit the
+CLI defaults:
 
-Policy follows the configured checkpoint remote. `entire policy checkpoint`
+```json
+{}
+```
+
+`checkpoint_version` selects the checkpoint format for new writes. If no policy
+is configured, a policy omits `checkpoint_version`, or the field was set to an
+empty string with `entire checkpoint policy --checkpoint-version ""`, the CLI
+writes its default checkpoint version. The quotes are required so the shell
+passes an empty value instead of omitting the flag value. If another client
+configures a `checkpoint_version` this CLI cannot write, explicit
+checkpoint-data writers fail until the CLI is upgraded.
+
+`checkpoint_min_version` is an upgrade nudge and checkpoint-data write guard.
+Clients that cannot read that version warn users to upgrade. Explicit
+checkpoint-data writers fail until the CLI is upgraded. If no policy is
+configured, a policy omits `checkpoint_min_version`, or the field was set to an
+empty string with `entire checkpoint policy --checkpoint-min-version ""`, the
+CLI uses its default minimum checkpoint version for policy decisions.
+
+Unsetting a field is still evaluated against the normal downgrade guard. If the
+field's current effective version is newer than the default inherited after
+unsetting, `entire checkpoint policy` rejects the change unless `--force` is
+passed.
+
+`entire checkpoint policy` validates requested policy values against the
+current CLI, so it rejects setting unsupported checkpoint versions.
+
+Policy follows the configured checkpoint remote. `entire checkpoint policy`
 fetches the latest remote policy before validating requested changes, updates
 the local policy ref, and pushes only `refs/entire/policies/checkpoint`.
 Policy commits use the same signing settings as checkpoint commits.
 
-Hooks that run while ordinary git operations must keep working offline:
-post-commit and agent lifecycle hooks read only the local policy ref. If the
-local policy requires checkpoint writes this CLI does not support, they skip
-writing checkpoint data and warn only when running in an interactive terminal.
-The pre-push hook is the regular online sync point: it compares the remote
-policy ref with the local ref, fetches updated policy when needed, and evaluates
-the refreshed policy before pushing `entire/checkpoints/v1`. If policy refresh
-fails, the hook warns or logs the failure and lets the normal push continue.
+Agent session-start hooks warn that checkpoint capture is disabled for the
+session and exit successfully. Other agent hooks fail with a checkpoint-disabled
+message so the agent can see that no Entire checkpoints will be generated until
+the CLI is upgraded.
+
+Git hooks never block Git because of checkpoint policy. When the policy cannot
+be satisfied, Git hooks log the violation, warn only in an interactive
+terminal, skip Entire checkpoint work, and exit successfully. Pre-push refreshes
+policy first, then applies the same skip behavior to checkpoint push work.
 
 User-driven commands warn when the local policy indicates the CLI should be
-upgraded. Commands that need to decode checkpoint contents, such as
-`entire checkpoint explain` and `entire session resume`, fail when the target
-checkpoint uses an unsupported `checkpoint_version`.
+upgraded. Explicit checkpoint-data writers such as `entire session attach`,
+`entire checkpoint explain --generate`, and `entire import <agent>` fail when
+the local policy cannot be satisfied. Commands that need to decode checkpoint
+contents, such as `entire checkpoint explain` and `entire session resume`, fail
+when the target checkpoint uses an unsupported `checkpoint_version`.
 
 ### Checkpoint ID Linking
 

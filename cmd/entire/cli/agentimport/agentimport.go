@@ -66,16 +66,12 @@ type Importer interface {
 // Importer implementation appended here — no init() / runtime registration.
 var importers = []Importer{
 	claudeImporter{},
-}
-
-// Get returns the importer registered under name.
-func Get(name string) (Importer, bool) {
-	for _, imp := range importers {
-		if imp.Name() == name {
-			return imp, true
-		}
-	}
-	return nil, false
+	cursorImporter{},
+	piImporter{},
+	factoryImporter{},
+	codexImporter{},
+	copilotImporter{},
+	geminiImporter{},
 }
 
 // All returns every supported importer, sorted by name.
@@ -83,6 +79,16 @@ func All() []Importer {
 	out := append([]Importer(nil), importers...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
+}
+
+// Get returns the importer registered for name.
+func Get(name string) (Importer, bool) {
+	for _, imp := range importers {
+		if imp.Name() == name {
+			return imp, true
+		}
+	}
+	return nil, false
 }
 
 // Options configures an import run.
