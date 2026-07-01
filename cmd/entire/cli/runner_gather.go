@@ -25,6 +25,13 @@ const (
 	tuneMaxTrailsForFindings = 8  // trails to pull findings from in the trails tier
 )
 
+const (
+	sourceCheckpoint  = "checkpoint"
+	sourceCheckpoints = "checkpoints"
+	sourceTrail       = "trail"
+	sourceTrails      = "trails"
+)
+
 // tuneSources selects which data tiers gatherTuningContext collects.
 type tuneSources struct {
 	repo        bool
@@ -52,9 +59,9 @@ func parseTuneSources(list []string) (tuneSources, error) {
 			s.repo = true
 		case "pr", "prs", "issue", "issues":
 			s.prs = true
-		case "checkpoint", "checkpoints":
+		case sourceCheckpoint, sourceCheckpoints:
 			s.checkpoints = true
-		case "trail", "trails":
+		case sourceTrail, sourceTrails:
 			s.trails = true
 		default:
 			return s, fmt.Errorf("unknown source %q (valid: repo, prs, checkpoints, trails, all)", item)
