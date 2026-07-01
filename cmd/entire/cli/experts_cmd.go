@@ -27,7 +27,7 @@ type expertsAPIClient interface {
 }
 
 var newExpertsAPIClient = func(ctx context.Context, insecureHTTP bool) (expertsAPIClient, error) {
-	return NewAuthenticatedAPIClient(ctx, insecureHTTP)
+	return NewAuthenticatedEntireAPICellClient(ctx, insecureHTTP)
 }
 
 func setExpertsClientFactoryForTest(

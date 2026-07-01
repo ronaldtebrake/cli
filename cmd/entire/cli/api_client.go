@@ -47,3 +47,11 @@ func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Cli
 
 	return api.NewClient(token), nil
 }
+
+// NewAuthenticatedEntireAPICellClient creates an API client for repo-scoped
+// entire-api routes (e.g. experts). It exchanges the login JWT for a
+// jurisdictional identity token and dials the home entire-api cell directly
+// when the configured data host is the entire.io BFF (COR-666).
+func NewAuthenticatedEntireAPICellClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
+	return auth.NewEntireAPICellClient(ctx, insecureHTTP)
+}
