@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -167,7 +168,7 @@ func TestExpertsTUIListScrollsSelectedAgentIntoView(t *testing.T) {
 	for i := range profiles {
 		m.cursor = i
 		got := m.renderList(m.listPaneWidth(), m.bodyHeight())
-		if !strings.Contains(got, "▸ Agent "+fmt.Sprint(i)) {
+		if !strings.Contains(got, "▸ Agent "+strconv.Itoa(i)) {
 			t.Fatalf("cursor=%d: selected agent not visible in list pane:\n%s", i, got)
 		}
 	}
