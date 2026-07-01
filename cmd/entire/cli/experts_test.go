@@ -24,20 +24,29 @@ const expertsTestRepoULID = "0123456789ABCDEFGHJKMNPQRS"
 var defaultExpertsReposBody = `{"repos":[{"id":"` + expertsTestRepoULID + `","full_name":"acme/widget"}],"from_db":true}`
 
 type fakeExpertsClient struct {
-	status    int
-	body      string
-	reposBody string // GET /api/v1/repos body; defaults to acme/widget -> expertsTestRepoULID
+	status     int
+	body       string
+	reposBody  string   // GET /api/v1/repos body; defaults to acme/widget -> expertsTestRepoULID
+	reposPages []string // when set, paginated GET /api/v1/repos responses in order
 
-	gotPath    string
-	gotBody    any
-	gotGetPath string
+	gotPath     string
+	gotBody     any
+	gotGetPath  string
+	gotGetPaths []string
 }
 
 // Get serves the accessible-repo discovery list used to resolve owner/repo -> ULID.
 func (f *fakeExpertsClient) Get(_ context.Context, path string) (*http.Response, error) {
 	f.gotGetPath = path
-	body := f.reposBody
-	if body == "" {
+	f.gotGetPaths = append(f.gotGetPaths, path)
+	var body string
+	switch {
+	case len(f.reposPages) > 0:
+		body = f.reposPages[0]
+		f.reposPages = f.reposPages[1:]
+	case f.reposBody != "":
+		body = f.reposBody
+	default:
 		body = defaultExpertsReposBody
 	}
 	return &http.Response{
@@ -613,6 +622,43 @@ func TestParseGitStagedScopeLinesNormalizesCRLF(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("scopes[%d] = %q, want %q (full: %#v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestResolveExpertsRepoIDPaginatesAccessibleRepoList(t *testing.T) {
+	const otherULID = "0123456789ABCDEFGHJKMNPR"
+	fake := &fakeExpertsClient{
+		reposPages: []string{
+			`{"repos":[{"id":"` + otherULID + `","full_name":"other/repo"}],"next_page_token":"page2"}`,
+			`{"repos":[{"id":"` + expertsTestRepoULID + `","full_name":"acme/widget"}]}`,
+		},
+		body: `{"repo_full_name":"acme/widget","scopes":["api/x.go"],"query":null,"branch":"main","source":"db","profiles":[]}`,
+	}
+	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
+		return fake, nil
+	})
+	defer restore()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"experts", "api/x.go", "--repo", "acme/widget", "--json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute experts with paginated repo list: %v", err)
+	}
+	if len(fake.gotGetPaths) != 2 {
+		t.Fatalf("GET paths = %#v, want two paginated requests", fake.gotGetPaths)
+	}
+	if fake.gotGetPaths[0] != "/api/v1/repos" {
+		t.Fatalf("first GET = %q", fake.gotGetPaths[0])
+	}
+	if fake.gotGetPaths[1] != "/api/v1/repos?page_token=page2" {
+		t.Fatalf("second GET = %q", fake.gotGetPaths[1])
+	}
+	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
+		t.Fatalf("path = %q", fake.gotPath)
 	}
 }
 

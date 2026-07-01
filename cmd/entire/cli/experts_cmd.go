@@ -50,6 +50,19 @@ type expertsFlags struct {
 	insecureHTTP bool
 }
 
+const (
+	expertsDefaultLimit = 8
+	expertsMaxLimit     = 20
+)
+
+// expertLocalScopeResult is the outcome of interpreting a scope argument as a
+// local filesystem path (vs a natural-language query).
+type expertLocalScopeResult struct {
+	scope        string
+	isLocal      bool
+	validateRepo bool // when true, cross-check git origin against --repo
+}
+
 type expertsRequest struct {
 	Scopes        []string `json:"scopes,omitempty"`
 	Query         *string  `json:"query,omitempty"`
@@ -174,7 +187,7 @@ func newExpertsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&f.repo, "repo", "", "Repository as owner/repo")
 	cmd.Flags().StringVar(&f.branch, "branch", "", "Branch to inspect")
-	cmd.Flags().IntVar(&f.limit, "limit", 8, "Maximum profiles to return")
+	cmd.Flags().IntVar(&f.limit, "limit", expertsDefaultLimit, "Maximum profiles to return (1–20; values above 20 are clamped)")
 	cmd.Flags().BoolVar(&f.json, "json", false, "Print JSON")
 	cmd.Flags().BoolVar(&f.staged, "staged", false, "Use staged file paths as scopes")
 	cmd.Flags().BoolVar(&f.tui, "tui", false, "Browse provenance in an interactive viewer (TTY only)")
@@ -190,10 +203,10 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		return errors.New("--staged cannot be used with --repo")
 	}
 	if f.limit <= 0 {
-		f.limit = 8
+		f.limit = expertsDefaultLimit
 	}
-	if f.limit > 20 {
-		f.limit = 20
+	if f.limit > expertsMaxLimit {
+		f.limit = expertsMaxLimit
 	}
 
 	// The data API (entire-api) is repo-ULID keyed. --repo may be a ULID (used
@@ -234,18 +247,18 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		if strings.TrimSpace(f.repo) != "" && looksLikeExpertPath(input) {
 			req.Scopes = []string{normalizeExpertScope(input)}
 		} else {
-			scope, isLocalScope, validateLocalRepo, err := localExpertScope(ctx, input)
+			local, err := localExpertScope(ctx, input)
 			if err != nil {
 				return err
 			}
-			if isLocalScope {
-				if !repoIsULID && repoOverride != "" && validateLocalRepo {
+			if local.isLocal {
+				if !repoIsULID && repoOverride != "" && local.validateRepo {
 					currentRepo, err := resolveExpertsRepo(ctx, "")
 					if err == nil && !strings.EqualFold(currentRepo, repoFullName) {
 						return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
 					}
 				}
-				req.Scopes = []string{scope}
+				req.Scopes = []string{local.scope}
 			} else {
 				query := input
 				req.Query = &query
@@ -347,30 +360,51 @@ func expertsAPIPath(repoID string) string {
 // can't see). A ULID is passed straight through by the caller, so this is only
 // hit for the owner/repo form.
 func resolveExpertsRepoID(ctx context.Context, client expertsAPIClient, fullName string) (string, error) {
-	resp, err := client.Get(ctx, "/api/v1/repos")
+	repos, err := listExpertsAccessibleRepos(ctx, client)
 	if err != nil {
-		return "", fmt.Errorf("list repos: %w", err)
-	}
-	defer resp.Body.Close()
-	if err := api.CheckResponse(resp); err != nil {
-		return "", fmt.Errorf("list repos: %w", err)
-	}
-	var body struct {
-		Repos []struct {
-			ID       string `json:"id"`
-			FullName string `json:"full_name"`
-		} `json:"repos"`
-	}
-	if err := api.DecodeJSON(resp, &body); err != nil {
-		return "", fmt.Errorf("decode repos: %w", err)
+		return "", err
 	}
 	want := strings.ToLower(fullName)
-	for _, r := range body.Repos {
+	for _, r := range repos {
 		if r.ID != "" && strings.ToLower(r.FullName) == want {
 			return r.ID, nil
 		}
 	}
 	return "", fmt.Errorf("repo %q is not among your accessible repos on this API (is it onboarded to Entire, and do you have access?)", fullName)
+}
+
+type expertsRepoListItem struct {
+	ID       string `json:"id"`
+	FullName string `json:"full_name"`
+}
+
+// listExpertsAccessibleRepos returns every repo the caller can read on this data
+// API. entire-api's GET /repos currently returns the full SpiceDB-filtered set in
+// one response (no page_token), but the loop is forward-compatible if pagination
+// is added — same pattern as fetchAllPages in core list commands.
+func listExpertsAccessibleRepos(ctx context.Context, client expertsAPIClient) ([]expertsRepoListItem, error) {
+	return fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]expertsRepoListItem, string, error) {
+		path := "/api/v1/repos"
+		if cursor != "" {
+			path += "?" + url.Values{"page_token": {cursor}}.Encode()
+		}
+		resp, err := client.Get(ctx, path)
+		if err != nil {
+			return nil, "", fmt.Errorf("list repos: %w", err)
+		}
+		defer resp.Body.Close()
+		if err := api.CheckResponse(resp); err != nil {
+			return nil, "", fmt.Errorf("list repos: %w", err)
+		}
+		var body struct {
+			Repos         []expertsRepoListItem `json:"repos"`
+			NextPageToken string                `json:"next_page_token,omitempty"`
+		}
+		if err := api.DecodeJSON(resp, &body); err != nil {
+			return nil, "", fmt.Errorf("decode repos: %w", err)
+		}
+		return body.Repos, body.NextPageToken, nil
+	})
 }
 
 // expertsWebBaseURL is the origin used to build user-facing session links.
@@ -415,13 +449,15 @@ func expertsSessionURL(repoFullName, sessionID string) string {
 		expertsWebBaseURL(), url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(sessionID))
 }
 
-func localExpertScope(ctx context.Context, input string) (string, bool, bool, error) {
+func localExpertScope(ctx context.Context, input string) (expertLocalScopeResult, error) {
 	root, err := paths.WorktreeRoot(ctx)
 	if err != nil {
 		if looksLikeExpertPath(input) {
-			return normalizeExpertScope(input), true, false, nil
+			return expertLocalScopeResult{
+				scope: normalizeExpertScope(input), isLocal: true,
+			}, nil
 		}
-		return "", false, false, nil
+		return expertLocalScopeResult{}, nil
 	}
 
 	candidates := make([]string, 0, 2)
@@ -430,7 +466,7 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 	} else {
 		cwdAbs, err := filepath.Abs(input)
 		if err != nil {
-			return "", false, false, fmt.Errorf("resolve cwd-relative path: %w", err)
+			return expertLocalScopeResult{}, fmt.Errorf("resolve cwd-relative path: %w", err)
 		}
 		candidates = append(candidates, cwdAbs, filepath.Join(root, input))
 	}
@@ -442,16 +478,16 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 			if os.IsNotExist(err) {
 				continue
 			}
-			return "", false, false, fmt.Errorf("stat local scope: %w", err)
+			return expertLocalScopeResult{}, fmt.Errorf("stat local scope: %w", err)
 		}
 		scope, err := localPathScope(root, candidate, input)
 		if err != nil {
-			return "", false, false, err
+			return expertLocalScopeResult{}, err
 		}
 		if info.IsDir() && !strings.HasSuffix(scope, "/") {
 			scope += "/"
 		}
-		return scope, true, true, nil
+		return expertLocalScopeResult{scope: scope, isLocal: true, validateRepo: true}, nil
 	}
 
 	if looksLikeExpertPath(input) {
@@ -461,7 +497,7 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 		} else {
 			cwdAbs, err := filepath.Abs(input)
 			if err != nil {
-				return "", false, false, fmt.Errorf("resolve cwd-relative path: %w", err)
+				return expertLocalScopeResult{}, fmt.Errorf("resolve cwd-relative path: %w", err)
 			}
 			missingCandidates = append(missingCandidates, cwdAbs, filepath.Join(root, input))
 		}
@@ -470,11 +506,13 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 			if err != nil {
 				continue
 			}
-			return scope, true, false, nil
+			return expertLocalScopeResult{scope: scope, isLocal: true}, nil
 		}
-		return normalizeExpertScope(input), true, false, nil
+		return expertLocalScopeResult{
+			scope: normalizeExpertScope(input), isLocal: true,
+		}, nil
 	}
-	return "", false, false, nil
+	return expertLocalScopeResult{}, nil
 }
 
 func localPathScope(root, candidate, original string) (string, error) {
