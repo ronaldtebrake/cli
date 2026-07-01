@@ -190,7 +190,13 @@ func addPiReviewTokens(total reviewtypes.Tokens, usage *piReviewUsage) reviewtyp
 	if usage == nil {
 		return total
 	}
-	total.In += usage.Input + usage.CacheRead + usage.CacheWrite
+	// Pi's usage shape is normalized across providers. For OpenAI-shaped
+	// backends, cached input is reported as a subset of input tokens; summing
+	// cacheRead/cacheWrite into Tokens.In would therefore double-count. The
+	// review event contract has only aggregate input/output fields, so report
+	// the provider's top-level input total and leave cache detail to transcript
+	// token accounting, which stores cache fields separately.
+	total.In += usage.Input
 	total.Out += usage.Output
 	return total
 }
