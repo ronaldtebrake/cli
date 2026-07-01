@@ -130,8 +130,9 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	return nil
 }
 
-// prePushCheckpointRefs drains the per-checkpoint push queue and batch force-pushes
-// the recorded refs (git-refs primary). Transient push failures are logged and
+// prePushCheckpointRefs drains the per-checkpoint push queue and batch-pushes the
+// recorded refs fast-forward-only (git-refs primary; never a force push — a
+// diverged ref is recovered via fetch+replay). Transient push failures are logged and
 // swallowed — like the v1 path, they must not block the user's git push — and the
 // refs stay queued for the next pre-push. OPF is not applied (it is descoped for
 // the git-refs store for now).
