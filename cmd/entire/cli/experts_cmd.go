@@ -241,7 +241,7 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 			if isLocalScope {
 				if !repoIsULID && repoOverride != "" && validateLocalRepo {
 					currentRepo, err := resolveExpertsRepo(ctx, "")
-					if err == nil && currentRepo != repoFullName {
+					if err == nil && !strings.EqualFold(currentRepo, repoFullName) {
 						return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
 					}
 				}

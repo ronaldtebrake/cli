@@ -498,6 +498,79 @@ func TestExpertsCommandRelativizesDeletedPathScopeFromSubdirectory(t *testing.T)
 	}
 }
 
+func TestExpertsCommandAcceptsCaseInsensitiveRepoOverrideForLocalScope(t *testing.T) {
+	dir := t.TempDir()
+	runExpertsGit(t, dir, "init")
+	runExpertsGit(t, dir, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	file := filepath.Join(dir, "cmd", "entire", "cli", "experts.go")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("package cli\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	paths.ClearWorktreeRootCache()
+	t.Cleanup(paths.ClearWorktreeRootCache)
+
+	fake := &fakeExpertsClient{body: `{"repo_full_name":"acme/widget","scopes":["cmd/"],"query":null,"branch":"main","source":"db","profiles":[]}`}
+	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
+		return fake, nil
+	})
+	defer restore()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	// "cmd" is a local directory scope (not the --repo+path shortcut), so the
+	// origin vs --repo cross-check runs — GitHub names are case-insensitive.
+	root.SetArgs([]string{"experts", "cmd", "--repo", "Acme/Widget", "--json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute experts with case-different --repo: %v\n%s", err, out.String())
+	}
+	body, ok := fake.gotBody.(expertsRequest)
+	if !ok {
+		t.Fatalf("body type = %T", fake.gotBody)
+	}
+	if len(body.Scopes) != 1 || body.Scopes[0] != "cmd/" {
+		t.Fatalf("scopes = %#v", body.Scopes)
+	}
+}
+
+func TestExpertsCommandRejectsMismatchedRepoOverrideForLocalScope(t *testing.T) {
+	dir := t.TempDir()
+	runExpertsGit(t, dir, "init")
+	runExpertsGit(t, dir, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	file := filepath.Join(dir, "cmd", "entire", "cli", "experts.go")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("package cli\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	paths.ClearWorktreeRootCache()
+	t.Cleanup(paths.ClearWorktreeRootCache)
+
+	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
+		return &fakeExpertsClient{}, nil
+	})
+	defer restore()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"experts", "cmd", "--repo", "other/repo"})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "local path belongs to acme/widget, not --repo other/repo") {
+		t.Fatalf("error = %v\nout = %s", err, out.String())
+	}
+}
+
 func TestExpertsCommandDoesNotRewritePathScope503AsCodeSearch(t *testing.T) {
 	fake := &fakeExpertsClient{status: http.StatusServiceUnavailable, body: `{"error":"Database unavailable"}`}
 	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
