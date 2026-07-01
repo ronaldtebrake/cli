@@ -169,6 +169,31 @@ func TestPiReviewer_ParseTokensDedupesTurnEndForSameMessage(t *testing.T) {
 	}
 }
 
+func TestPiReviewer_ParseTokensDedupesNoIDTurnEndForSameUsage(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`{"type":"agent_start"}`,
+		`{"type":"turn_start"}`,
+		`{"type":"message_end","message":{"role":"assistant","usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1},"stopReason":"stop"}}`,
+		`{"type":"turn_end","message":{"role":"assistant","usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1},"stopReason":"stop"}}`,
+		`{"type":"agent_end"}`,
+	}, "\n")
+
+	events := collectPiReviewEvents(input)
+	var tokens []reviewtypes.Tokens
+	for _, ev := range events {
+		if tok, ok := ev.(reviewtypes.Tokens); ok {
+			tokens = append(tokens, tok)
+		}
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("token events = %d, want 1: %#v", len(tokens), events)
+	}
+	if got := tokens[0]; got.In != 10 || got.Out != 5 {
+		t.Fatalf("Tokens = %#v, want In=10 Out=5", got)
+	}
+}
+
 func collectPiReviewEvents(input string) []reviewtypes.Event {
 	ch := parsePiReviewOutput(strings.NewReader(input))
 	var events []reviewtypes.Event

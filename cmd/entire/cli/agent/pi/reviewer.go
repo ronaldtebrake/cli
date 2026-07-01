@@ -51,6 +51,8 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 		scanner.Buffer(make([]byte, min(1024*1024, piReviewMaxScannerBuf)), piReviewMaxScannerBuf)
 		messageIDsWithTextDelta := map[string]struct{}{}
 		messageIDsWithUsage := map[string]struct{}{}
+		messageUsageByTurn := map[int]map[piReviewUsageKey]struct{}{}
+		turnNumber := 0
 		tokens := reviewtypes.Tokens{}
 		finished := false
 		success := true
@@ -67,7 +69,9 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 			}
 
 			switch env.Type {
-			case "session", "agent_start", "turn_start", "queue_update", "compaction_start", "compaction_end", "auto_retry_start", "auto_retry_end":
+			case "turn_start":
+				turnNumber++
+			case "session", "agent_start", "queue_update", "compaction_start", "compaction_end", "auto_retry_start", "auto_retry_end":
 				// Session/control events do not map to user-visible review output.
 			case "message_update":
 				if text := env.AssistantMessageEvent.TextDelta(); text != "" {
@@ -80,7 +84,7 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 						success = false
 					}
 					if env.Message.Usage != nil {
-						emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage)
+						emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage, messageUsageByTurn, turnNumber)
 					}
 					if _, sawDelta := messageIDsWithTextDelta[env.MessageID()]; !sawDelta {
 						if text := piReviewMessageText(env.Message.Content); text != "" {
@@ -99,7 +103,7 @@ func parsePiReviewOutput(r io.Reader) <-chan reviewtypes.Event {
 					success = false
 				}
 				if env.Message.Usage != nil {
-					emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage)
+					emitPiReviewTokens(out, env, &tokens, messageIDsWithUsage, messageUsageByTurn, turnNumber)
 				}
 			case "agent_end":
 				finished = true
@@ -172,18 +176,52 @@ type piReviewUsage struct {
 	CacheWrite int `json:"cacheWrite"`
 }
 
-func emitPiReviewTokens(out chan<- reviewtypes.Event, env piReviewEnvelope, total *reviewtypes.Tokens, seen map[string]struct{}) {
+type piReviewUsageKey struct {
+	Input      int
+	Output     int
+	CacheRead  int
+	CacheWrite int
+}
+
+func emitPiReviewTokens(out chan<- reviewtypes.Event, env piReviewEnvelope, total *reviewtypes.Tokens, seen map[string]struct{}, messageUsageByTurn map[int]map[piReviewUsageKey]struct{}, turnNumber int) {
 	if env.Message.Usage == nil || total == nil {
 		return
 	}
-	if key := env.MessageID(); key != "" {
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
+	if shouldSkipPiReviewUsage(env, seen, messageUsageByTurn, turnNumber) {
+		return
 	}
 	*total = addPiReviewTokens(*total, env.Message.Usage)
 	out <- *total
+}
+
+func shouldSkipPiReviewUsage(env piReviewEnvelope, seen map[string]struct{}, messageUsageByTurn map[int]map[piReviewUsageKey]struct{}, turnNumber int) bool {
+	usage := env.Message.Usage
+	if usage == nil {
+		return true
+	}
+	sig := piReviewUsageKey{Input: usage.Input, Output: usage.Output, CacheRead: usage.CacheRead, CacheWrite: usage.CacheWrite}
+	if env.Type == "message_end" && messageUsageByTurn != nil {
+		if messageUsageByTurn[turnNumber] == nil {
+			messageUsageByTurn[turnNumber] = map[piReviewUsageKey]struct{}{}
+		}
+		messageUsageByTurn[turnNumber][sig] = struct{}{}
+	}
+	if key := env.MessageID(); key != "" {
+		if _, ok := seen[key]; ok {
+			return true
+		}
+		seen[key] = struct{}{}
+		return false
+	}
+	// Pi streams can emit usage on both message_end and turn_end. Some realistic
+	// streams omit ids on both events, so fall back to the current turn's usage
+	// signature to avoid counting a no-id turn_end duplicate of the message_end.
+	if env.Type == "turn_end" && messageUsageByTurn != nil {
+		if _, ok := messageUsageByTurn[turnNumber][sig]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func addPiReviewTokens(total reviewtypes.Tokens, usage *piReviewUsage) reviewtypes.Tokens {
