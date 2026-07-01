@@ -398,6 +398,26 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 	}
 }
 
+func TestReviewEditNonInteractiveRefusesWithScriptedAlternatives(t *testing.T) {
+	setupCmdTestRepo(t)
+
+	rootCmd := cli.NewRootCmd()
+	errBuf := &bytes.Buffer{}
+	rootCmd.SetErr(errBuf)
+	rootCmd.SetArgs([]string{"review", "--edit"})
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected non-interactive --edit to fail")
+	}
+	got := errBuf.String()
+	for _, want := range []string{"--edit requires an interactive terminal", "entire review --configure --set-agents", "entire review --list"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("--edit error missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestRunReview_FlagOverrideSkipsPicker verifies that --agent flag bypasses
 // the interactive picker even when multiple eligible agents are configured.
 func TestRunReview_FlagOverrideSkipsPicker(t *testing.T) {

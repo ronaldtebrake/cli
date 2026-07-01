@@ -160,7 +160,7 @@ func TestWriteReviewCompletionFooter_PointsToFindings(t *testing.T) {
 	writeReviewCompletionFooter(&b, manifest)
 
 	got := b.String()
-	for _, want := range []string{"Review complete.", "entire review --findings"} {
+	for _, want := range []string{"Review complete.", "entire review --findings claude-session"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("footer missing %q:\n%s", want, got)
 		}
@@ -185,7 +185,13 @@ func TestPrintReviewFindingsList_ListsSessionsWithoutLocalPath(t *testing.T) {
 	}
 	var b strings.Builder
 
-	printReviewFindingsList(&b, []LocalReviewManifest{manifest})
+	printReviewFindingsList(&b, []LocalReviewManifest{
+		manifest,
+		{
+			CreatedAt:       time.Date(2026, 5, 8, 11, 0, 0, 0, time.UTC),
+			AggregateOutput: "aggregate-only finding",
+		},
+	})
 
 	got := b.String()
 	if strings.Contains(got, "/tmp/local-build/entire") {
@@ -193,6 +199,87 @@ func TestPrintReviewFindingsList_ListsSessionsWithoutLocalPath(t *testing.T) {
 	}
 	if !strings.Contains(got, "claude-session") {
 		t.Fatalf("findings list missing session handle:\n%s", got)
+	}
+	if !strings.Contains(got, "view: entire review --findings claude-session") {
+		t.Fatalf("findings list missing view command:\n%s", got)
+	}
+	if !strings.Contains(got, "view: entire review --findings 20260508T110000") {
+		t.Fatalf("findings list missing timestamp fallback handle:\n%s", got)
+	}
+}
+
+func TestReviewFindingsCommand_WithHandlePrintsFullDetail(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.InitRepo(t, tmp)
+	testutil.WriteFile(t, tmp, "f.txt", "init")
+	testutil.GitAdd(t, tmp, "f.txt")
+	testutil.GitCommit(t, tmp, "init")
+	t.Chdir(tmp)
+
+	if err := writeLocalReviewManifest(context.Background(), LocalReviewManifest{
+		CreatedAt: time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC),
+		Sources: []ManifestSource{{
+			SessionID: "claude-session",
+			Label:     "Claude Code",
+			Output:    "Full finding body that must not be hidden behind a picker.",
+		}},
+		AggregateOutput: "Aggregate detail for agents.",
+	}); err != nil {
+		t.Fatalf("writeLocalReviewManifest: %v", err)
+	}
+
+	cmd := NewCommand(Deps{})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--findings", "claude-session"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute review --findings handle: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Review findings from",
+		"Full finding body that must not be hidden behind a picker.",
+		"Aggregate detail for agents.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("detail output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestReviewFindingsCommand_UnknownHandleListsValidHandles(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.InitRepo(t, tmp)
+	testutil.WriteFile(t, tmp, "f.txt", "init")
+	testutil.GitAdd(t, tmp, "f.txt")
+	testutil.GitCommit(t, tmp, "init")
+	t.Chdir(tmp)
+
+	if err := writeLocalReviewManifest(context.Background(), LocalReviewManifest{
+		CreatedAt: time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC),
+		Sources: []ManifestSource{{
+			SessionID: "claude-session",
+			Label:     "Claude Code",
+			Output:    "finding",
+		}},
+	}); err != nil {
+		t.Fatalf("writeLocalReviewManifest: %v", err)
+	}
+
+	cmd := NewCommand(Deps{})
+	var errOut strings.Builder
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--findings", "missing-session"})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected unknown findings handle to fail")
+	}
+	got := errOut.String()
+	for _, want := range []string{"no local review findings match", "claude-session"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("unknown-handle error missing %q:\n%s", want, got)
+		}
 	}
 }
 
