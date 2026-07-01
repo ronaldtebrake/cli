@@ -142,10 +142,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 // local format), which is independent of the storage backend, so a blocked
 // policy skips the ref push (leaving refs queued) rather than pushing.
 func (s *ManualCommitStrategy) prePushCheckpointRefs(ctx context.Context, ps pushSettings) error {
-	if !syncCheckpointPolicyForPrePush(ctx, ps) {
-		return nil
-	}
-
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		logging.Warn(ctx, "git-refs pre-push: open repo failed; skipping checkpoint push",
@@ -153,6 +149,14 @@ func (s *ManualCommitStrategy) prePushCheckpointRefs(ctx context.Context, ps pus
 		return nil
 	}
 	defer repo.Close()
+
+	// Refresh the checkpoint policy from the remote, then skip the ref push
+	// (leaving refs queued) if the policy is diverged or the local format is
+	// unsupported — same gate the v1 path uses.
+	syncCheckpointPolicyForPrePush(ctx, repo, ps)
+	if !checkpointPolicyAllowsGitHook(ctx, repo) {
+		return nil
+	}
 
 	queue, err := checkpoint.PushQueueForRepo(ctx, repo)
 	if err != nil {

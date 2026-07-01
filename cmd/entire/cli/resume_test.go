@@ -1195,7 +1195,7 @@ func TestCheckRemoteMetadata_ReturnsUnsupportedVersionFromRemote(t *testing.T) {
 		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		agent.AgentTypeClaudeCode,
 	)
-	rewriteExportCheckpointVersionToRefsV1(t, repo, checkpointID)
+	rewriteExportCheckpointVersionToRefsV2(t, repo, checkpointID)
 
 	localRef, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	if err != nil {
