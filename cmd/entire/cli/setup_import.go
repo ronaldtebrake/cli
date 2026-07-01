@@ -42,36 +42,39 @@ var (
 // Interactive runs present a multi-select with nothing pre-checked, so import
 // only happens when the user actively selects agents. Non-interactive runs
 // (`--yes` or no TTY) auto-import all eligible agents.
-func maybeOfferSessionImport(ctx context.Context, w io.Writer, agents []agent.Agent, opts EnableOptions, firstRun bool) error {
+func maybeOfferSessionImport(ctx context.Context, w io.Writer, agents []agent.Agent, opts EnableOptions, firstRun bool) {
 	if !firstRun {
-		return nil
+		return
 	}
 
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
 		// No worktree root => nothing to import against. Enabling still succeeds.
 		logging.Warn(ctx, "session import offer skipped: no worktree root", "error", err)
-		return nil
+		return
 	}
 
 	eligible := sessionImportDiscover(ctx, agents, repoRoot)
 	if len(eligible) == 0 {
-		return nil
+		return
 	}
 
 	selected := eligible
 	if !opts.Yes && interactive.CanPromptInteractively() {
-		selected, err = sessionImportPrompt(w, eligible)
+		selected, err = sessionImportPrompt(ctx, w, eligible)
 		if err != nil {
-			return err
+			// Best-effort: a prompt/UI failure must never fail enable. Log,
+			// note it, and skip import.
+			logging.Warn(ctx, "session import offer skipped: prompt failed", "error", err)
+			fmt.Fprintf(w, "Note: could not show import prompt: %v\n", err)
+			return
 		}
 	}
 	if len(selected) == 0 {
-		return nil
+		return
 	}
 
 	sessionImportRun(ctx, w, repoRoot, selected)
-	return nil
 }
 
 // discoverImportableAgents keeps the selected agents that have a registered
@@ -116,7 +119,7 @@ func importerForAgent(ag agent.Agent) agentimport.Importer {
 // promptImportSelection shows the agent multi-select (all unchecked) and
 // returns the chosen subset. An empty selection (or user abort) returns an
 // empty slice, which the caller treats as "skip import".
-func promptImportSelection(w io.Writer, eligible []eligibleImport) ([]eligibleImport, error) {
+func promptImportSelection(ctx context.Context, w io.Writer, eligible []eligibleImport) ([]eligibleImport, error) {
 	byName := make(map[string]eligibleImport, len(eligible))
 	options := make([]huh.Option[string], 0, len(eligible))
 	for _, e := range eligible {
@@ -135,8 +138,9 @@ func promptImportSelection(w io.Writer, eligible []eligibleImport) ([]eligibleIm
 				Value(&chosen),
 		),
 	)
-	if err := form.Run(); err != nil {
-		// Cancellation returns nil here => skip import; other errors propagate.
+	if err := form.RunWithContext(ctx); err != nil {
+		// Cancellation (including a cancelled ctx) returns nil here => skip
+		// import; other errors are surfaced for the caller to downgrade.
 		return nil, handleFormCancellation(w, "Import", err)
 	}
 

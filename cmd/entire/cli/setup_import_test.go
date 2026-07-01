@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -58,7 +59,7 @@ func TestImporterForAgent_UnknownTypeReturnsNil(t *testing.T) {
 
 // withImportSeams overrides the package seams and restores them after the test.
 // Tests using it must not call t.Parallel (shared package state).
-func withImportSeams(t *testing.T, discover func(context.Context, []agent.Agent, string) []eligibleImport, prompt func(io.Writer, []eligibleImport) ([]eligibleImport, error), run func(context.Context, io.Writer, string, []eligibleImport)) {
+func withImportSeams(t *testing.T, discover func(context.Context, []agent.Agent, string) []eligibleImport, prompt func(context.Context, io.Writer, []eligibleImport) ([]eligibleImport, error), run func(context.Context, io.Writer, string, []eligibleImport)) {
 	t.Helper()
 	oldDiscover, oldPrompt, oldRun := sessionImportDiscover, sessionImportPrompt, sessionImportRun
 	t.Cleanup(func() {
@@ -85,10 +86,7 @@ func TestMaybeOfferSessionImport_FirstRunGate(t *testing.T) {
 			return []eligibleImport{{displayName: "X", sessionCount: 1}}
 		}, nil, nil)
 
-	err := maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, false /* firstRun */)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, false /* firstRun */)
 	if called {
 		t.Error("discovery ran on a non-first-run enable; the offer must be gated to first run")
 	}
@@ -108,7 +106,7 @@ func TestMaybeOfferSessionImport_NonInteractiveAutoImportsAll(t *testing.T) {
 	promptCalled := false
 	withImportSeams(t,
 		func(context.Context, []agent.Agent, string) []eligibleImport { return eligible },
-		func(io.Writer, []eligibleImport) ([]eligibleImport, error) {
+		func(context.Context, io.Writer, []eligibleImport) ([]eligibleImport, error) {
 			promptCalled = true
 			return nil, nil
 		},
@@ -116,10 +114,7 @@ func TestMaybeOfferSessionImport_NonInteractiveAutoImportsAll(t *testing.T) {
 	)
 
 	// opts.Yes forces the non-interactive path even if a TTY is present.
-	err := maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{Yes: true}, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{Yes: true}, true)
 	if promptCalled {
 		t.Error("prompt shown under --yes; non-interactive enable must not prompt")
 	}
@@ -140,10 +135,7 @@ func TestMaybeOfferSessionImport_NoEligibleIsNoOp(t *testing.T) {
 		func(context.Context, io.Writer, string, []eligibleImport) { runCalled = true },
 	)
 
-	err := maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{Yes: true}, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{Yes: true}, true)
 	if runCalled {
 		t.Error("import ran with nothing discoverable; expected a silent no-op")
 	}
@@ -163,16 +155,13 @@ func TestMaybeOfferSessionImport_InteractiveUsesSelection(t *testing.T) {
 	var ran []eligibleImport
 	withImportSeams(t,
 		func(context.Context, []agent.Agent, string) []eligibleImport { return eligible },
-		func(_ io.Writer, e []eligibleImport) ([]eligibleImport, error) {
+		func(_ context.Context, _ io.Writer, e []eligibleImport) ([]eligibleImport, error) {
 			return e[:1], nil // user picks only the first
 		},
 		func(_ context.Context, _ io.Writer, _ string, sel []eligibleImport) { ran = sel },
 	)
 
-	err := maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, true)
 	if len(ran) != 1 || ran[0].displayName != testAgentClaude {
 		t.Fatalf("imported %+v, want only the user-selected Claude Code", ran)
 	}
@@ -189,15 +178,37 @@ func TestMaybeOfferSessionImport_EmptySelectionSkips(t *testing.T) {
 		func(context.Context, []agent.Agent, string) []eligibleImport {
 			return []eligibleImport{{displayName: testAgentClaude, sessionCount: 3}}
 		},
-		func(io.Writer, []eligibleImport) ([]eligibleImport, error) { return nil, nil },
+		func(context.Context, io.Writer, []eligibleImport) ([]eligibleImport, error) { return nil, nil },
 		func(context.Context, io.Writer, string, []eligibleImport) { runCalled = true },
 	)
 
-	err := maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, true)
 	if runCalled {
 		t.Error("import ran after an empty selection; expected skip")
+	}
+}
+
+func TestMaybeOfferSessionImport_PromptErrorIsBestEffort(t *testing.T) {
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	t.Chdir(dir)
+	t.Setenv("ENTIRE_TEST_TTY", "1")
+
+	runCalled := false
+	withImportSeams(t,
+		func(context.Context, []agent.Agent, string) []eligibleImport {
+			return []eligibleImport{{displayName: testAgentClaude, sessionCount: 3}}
+		},
+		func(context.Context, io.Writer, []eligibleImport) ([]eligibleImport, error) {
+			return nil, errors.New("terminal exploded")
+		},
+		func(context.Context, io.Writer, string, []eligibleImport) { runCalled = true },
+	)
+
+	// A prompt failure must never fail enable: the offer is best-effort, so this
+	// simply returns and does not panic or propagate.
+	maybeOfferSessionImport(context.Background(), io.Discard, nil, EnableOptions{}, true)
+	if runCalled {
+		t.Error("import ran after a prompt error; expected skip")
 	}
 }

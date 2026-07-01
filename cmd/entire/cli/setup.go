@@ -1208,9 +1208,7 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 
 	// Offer to import pre-existing agent history for the just-selected agents.
 	// First-run only; best-effort (never fails enable).
-	if err := maybeOfferSessionImport(ctx, w, agents, opts, firstRun); err != nil {
-		return err
-	}
+	maybeOfferSessionImport(ctx, w, agents, opts, firstRun)
 
 	if opts.SuppressDoneMessage {
 		// Bootstrap finalize will print its own completion summary after
@@ -1703,9 +1701,7 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
 
 	// Offer to import pre-existing history for the just-configured agent.
 	// First-run only; best-effort (never fails enable).
-	if err := maybeOfferSessionImport(ctx, w, []agent.Agent{ag}, opts, firstRun); err != nil {
-		return err
-	}
+	maybeOfferSessionImport(ctx, w, []agent.Agent{ag}, opts, firstRun)
 
 	if opts.SuppressDoneMessage {
 		// Bootstrap finalize will print its own completion summary.
