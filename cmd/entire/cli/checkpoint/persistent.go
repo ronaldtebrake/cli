@@ -1299,6 +1299,16 @@ func (s *GitStore) Read(ctx context.Context, checkpointID id.CheckpointID) (*Che
 		return nil, nil //nolint:nilnil,nilerr // Checkpoint directory not found
 	}
 
+	return readSummaryFromCheckpointTree(checkpointTree)
+}
+
+// readSummaryFromCheckpointTree reads the root CheckpointSummary from a checkpoint
+// tree (the tree holding metadata.json plus the numbered session dirs). It is
+// shared by the git-branch store (which descends to <shard>/<id>) and the
+// git-refs store (whose ref tree is the checkpoint tree directly). It returns
+// (nil, nil) when metadata.json is absent so callers normalize a missing
+// checkpoint to ErrCheckpointNotFound via the contract.
+func readSummaryFromCheckpointTree(checkpointTree *FetchingTree) (*CheckpointSummary, error) {
 	// Read root metadata.json as CheckpointSummary (auto-fetches blob if needed)
 	metadataFile, err := checkpointTree.File(paths.MetadataFileName)
 	if err != nil {
@@ -1351,7 +1361,12 @@ func (s *GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Chec
 	if err != nil {
 		return nil, err
 	}
+	return readSessionMetadataFromTree(sessionTree, sessionIndex)
+}
 
+// readSessionMetadataFromTree parses metadata.json from a session tree. Shared by
+// both persistent backends, which differ only in how they navigate to the tree.
+func readSessionMetadataFromTree(sessionTree *FetchingTree, sessionIndex int) (*Metadata, error) {
 	metadataFile, err := sessionTree.File(paths.MetadataFileName)
 	if err != nil {
 		return nil, fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
@@ -1377,18 +1392,13 @@ func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpoint
 	if err != nil {
 		return nil, "", err
 	}
+	return readSessionMetadataAndPromptsFromTree(sessionTree, sessionIndex)
+}
 
-	metadataFile, err := sessionTree.File(paths.MetadataFileName)
+func readSessionMetadataAndPromptsFromTree(sessionTree *FetchingTree, sessionIndex int) (*Metadata, string, error) {
+	metadata, err := readSessionMetadataFromTree(sessionTree, sessionIndex)
 	if err != nil {
-		return nil, "", fmt.Errorf("metadata.json not found for session %d: %w", sessionIndex, err)
-	}
-	metadataContent, err := metadataFile.Contents()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read session metadata: %w", err)
-	}
-	var metadata Metadata
-	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
-		return nil, "", fmt.Errorf("failed to parse session metadata: %w", err)
+		return nil, "", err
 	}
 
 	var prompts string
@@ -1398,7 +1408,7 @@ func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpoint
 		}
 	}
 
-	return &metadata, prompts, nil
+	return metadata, prompts, nil
 }
 
 func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
@@ -1406,7 +1416,10 @@ func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.Check
 	if err != nil {
 		return "", err
 	}
+	return readSessionPromptsFromTree(sessionTree)
+}
 
+func readSessionPromptsFromTree(sessionTree *FetchingTree) (string, error) {
 	file, err := sessionTree.File(paths.PromptFileName)
 	if err != nil {
 		return "", nil //nolint:nilerr // Missing prompt.txt means no recorded prompts.
@@ -1428,7 +1441,10 @@ func (s *GitStore) ReadSessionContent(ctx context.Context, checkpointID id.Check
 	if err != nil {
 		return nil, err
 	}
+	return readSessionContentFromTree(ctx, sessionTree)
+}
 
+func readSessionContentFromTree(ctx context.Context, sessionTree *FetchingTree) (*SessionContent, error) {
 	result := &SessionContent{}
 
 	// Read session-specific metadata (auto-fetches blob if needed)
