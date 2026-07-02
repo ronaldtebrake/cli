@@ -1949,12 +1949,6 @@ func escapeInlineCodeText(s string) string {
 	return strings.ReplaceAll(s, "`", "‘")
 }
 
-// runExplainDefault shows all checkpoints on the current branch.
-// This is the default view when no flags are provided.
-func runExplainDefault(ctx context.Context, w, errW io.Writer, noPager bool) error {
-	return runExplainBranchDefault(ctx, w, errW, noPager)
-}
-
 // branchCheckpointsLimit is the max checkpoints to show in branch view
 const branchCheckpointsLimit = 100
 
@@ -2329,8 +2323,8 @@ func isShadowBranchReachable(ctx context.Context, repo *git.Repository, baseComm
 // convertTemporaryCheckpoint converts a EphemeralCheckpointInfo to a RewindPoint.
 // Returns nil if the checkpoint should be skipped (no tree changes or can't be read).
 //
-// Filtering uses hasAnyChanges (O(1) tree hash comparison) rather than hasCodeChanges
-// (O(files) full diff). This means metadata-only checkpoints (.entire/ changes without
+// Filtering uses hasAnyChanges (O(1) tree hash comparison) rather than a full
+// O(files) diff. This means metadata-only checkpoints (.entire/ changes without
 // code changes) are kept — only true no-ops (identical tree as parent) are dropped.
 // This trade-off is intentional for list-view performance.
 func convertTemporaryCheckpoint(repo *git.Repository, tc checkpoint.EphemeralCheckpointInfo) *strategy.RewindPoint {
@@ -2428,12 +2422,6 @@ func runExplainBranchWithFilter(ctx context.Context, w, errW io.Writer, noPager 
 	return nil
 }
 
-// runExplainBranchDefault shows all checkpoints on the current branch grouped by date.
-// This is a convenience wrapper that calls runExplainBranchWithFilter with no filter.
-func runExplainBranchDefault(ctx context.Context, w, errW io.Writer, noPager bool) error {
-	return runExplainBranchWithFilter(ctx, w, errW, noPager, "")
-}
-
 // outputExplainContent outputs content with optional pager support.
 func outputExplainContent(w io.Writer, content string, noPager bool) {
 	if noPager {
@@ -2486,94 +2474,6 @@ func runExplainCommit(ctx context.Context, w, errW io.Writer, commitRef string, 
 	// Delegate to checkpoint detail view, forwarding the full flag set so
 	// --generate / --raw-transcript / --force work via --commit as well.
 	return runExplainCheckpoint(ctx, w, errW, checkpointID.String(), noPager, verbose, full, rawTranscript, generate, force, searchAll, summaryTimeoutSeconds)
-}
-
-// formatSessionInfo formats session information for display.
-//
-// NOTE: This function has no production caller — `entire explain --session`
-// flows through formatBranchCheckpoints (the list view filtered by session),
-// not through here. It is kept for tests that exercise the per-checkpoint
-// markdown body shape used elsewhere; restyling it for the brand format was
-// not worth the diff. If the CLI ever grows a session-detail surface, revisit.
-func formatSessionInfo(session *strategy.Session, sourceRef string, checkpoints []checkpointDetail) string {
-	var sb strings.Builder
-
-	// Session header
-	fmt.Fprintf(&sb, "Session: %s\n", session.ID)
-	fmt.Fprintf(&sb, "Strategy: %s\n", session.Strategy)
-
-	if !session.StartTime.IsZero() {
-		fmt.Fprintf(&sb, "Started: %s\n", session.StartTime.Format("2006-01-02 15:04:05"))
-	}
-
-	if sourceRef != "" {
-		fmt.Fprintf(&sb, "Source Ref: %s\n", sourceRef)
-	}
-
-	fmt.Fprintf(&sb, "Checkpoints: %d\n", len(checkpoints))
-
-	// Checkpoint details
-	for _, cp := range checkpoints {
-		sb.WriteString("\n")
-
-		// Checkpoint header
-		taskMarker := ""
-		if cp.IsTaskCheckpoint {
-			taskMarker = " [Task]"
-		}
-		fmt.Fprintf(&sb, "─── Checkpoint %d [%s] %s%s ───\n",
-			cp.Index, cp.ShortID, cp.Timestamp.Format("2006-01-02 15:04"), taskMarker)
-		sb.WriteString("\n")
-
-		// Display all interactions in this checkpoint
-		for i, inter := range cp.Interactions {
-			// For multiple interactions, add a sub-header
-			if len(cp.Interactions) > 1 {
-				fmt.Fprintf(&sb, "### Interaction %d\n\n", i+1)
-			}
-
-			// Prompt section
-			if inter.Prompt != "" {
-				sb.WriteString("## Prompt\n\n")
-				sb.WriteString(inter.Prompt)
-				sb.WriteString("\n\n")
-			}
-
-			// Response section
-			if len(inter.Responses) > 0 {
-				sb.WriteString("## Responses\n\n")
-				sb.WriteString(strings.Join(inter.Responses, "\n\n"))
-				sb.WriteString("\n\n")
-			}
-
-			// Files modified for this interaction
-			if len(inter.Files) > 0 {
-				fmt.Fprintf(&sb, "Files Modified (%d):\n", len(inter.Files))
-				for _, file := range inter.Files {
-					fmt.Fprintf(&sb, "  - %s\n", file)
-				}
-				sb.WriteString("\n")
-			}
-		}
-
-		// If no interactions, show message and/or files
-		if len(cp.Interactions) == 0 {
-			// Show commit message as summary when no transcript available
-			if cp.Message != "" {
-				sb.WriteString(cp.Message)
-				sb.WriteString("\n\n")
-			}
-			// Show aggregate files if available
-			if len(cp.Files) > 0 {
-				fmt.Fprintf(&sb, "Files Modified (%d):\n", len(cp.Files))
-				for _, file := range cp.Files {
-					fmt.Fprintf(&sb, "  - %s\n", file)
-				}
-			}
-		}
-	}
-
-	return sb.String()
 }
 
 // pagerLookupEnv is overridable for tests so pager env-gate behavior can be
@@ -2923,54 +2823,7 @@ func transcriptOffset(transcriptBytes []byte, agentType types.AgentType) int {
 	return countLines(transcriptBytes)
 }
 
-// hasCodeChanges returns true if the commit has changes to non-metadata files.
-// Uses a full tree diff to distinguish code changes from .entire/ metadata-only changes.
-// Returns false only if the commit has a parent AND only modified .entire/ metadata files.
-//
-// WARNING: This is expensive via go-git (resolves many tree/blob objects from packfiles).
-// For list views with many checkpoints, use hasAnyChanges instead.
-func hasCodeChanges(commit *object.Commit) bool {
-	// First commit on shadow branch captures working copy state - always meaningful
-	if commit.NumParents() == 0 {
-		return true
-	}
-
-	parent, err := commit.Parent(0)
-	if err != nil {
-		return true // Can't check, assume meaningful
-	}
-
-	commitTree, err := commit.Tree()
-	if err != nil {
-		return true
-	}
-
-	parentTree, err := parent.Tree()
-	if err != nil {
-		return true
-	}
-
-	changes, err := parentTree.Diff(commitTree)
-	if err != nil {
-		return true
-	}
-
-	// Check if any non-metadata file was changed
-	for _, change := range changes {
-		name := change.To.Name
-		if name == "" {
-			name = change.From.Name
-		}
-		// Skip .entire/ metadata files
-		if !strings.HasPrefix(name, ".entire/") {
-			return true
-		}
-	}
-
-	return false
-}
-
-// hasAnyChanges is a lightweight alternative to hasCodeChanges that compares
+// hasAnyChanges compares
 // tree hashes without doing a full diff. Returns true if the commit's tree
 // differs from its parent's tree. This may include metadata-only changes,
 // but is O(1) instead of O(files) — suitable for list views.
