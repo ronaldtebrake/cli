@@ -361,9 +361,7 @@ policy first, then applies the same skip behavior to checkpoint push work.
 User-driven commands warn when the local policy indicates the CLI should be
 upgraded. Explicit checkpoint-data writers such as `entire session attach`,
 `entire checkpoint explain --generate`, and `entire import <agent>` fail when
-the local policy cannot be satisfied. Commands that need to decode checkpoint
-contents, such as `entire checkpoint explain` and `entire session resume`, fail
-when the target checkpoint uses an unsupported `checkpoint_version`.
+the local policy cannot be satisfied.
 
 ### Checkpoint ID Linking
 
