@@ -17,6 +17,8 @@ import (
 // like the one-shot warning, stays non-fatal (no res.err) rather than being
 // reported as a plain "registered" success or a hard failure.
 func TestCreateOneMirror_Suspended(t *testing.T) {
+	t.Parallel()
+
 	ctx := t.Context()
 	suspended := &coreapi.CreatedMirror{MirrorId: "m1", MirrorUrl: "entire://c/gh/o/r", Suspended: true}
 	c, paths := serveMirrorCreate(t, suspended, false)
