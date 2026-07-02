@@ -40,10 +40,14 @@ func Theme() huh.Theme {
 		// the terminal's default text color, which already inverts with the
 		// background. A pinned base16 slot (e.g. black "0") can't invert because
 		// it always maps to that slot in both themes. Group.Title is copied from
-		// Focused.Title inside ThemeBase16, so clear both.
+		// Focused.Title inside ThemeBase16, and ThemeBase16 copies Focused into
+		// Blurred wholesale, so clear the blurred variants too — otherwise
+		// inactive fields in multi-field forms keep the pinned base16 color.
 		t.Focused.Title = t.Focused.Title.UnsetForeground()
 		t.Group.Title = t.Group.Title.UnsetForeground()
 		t.Focused.UnselectedOption = t.Focused.UnselectedOption.UnsetForeground()
+		t.Blurred.Title = t.Blurred.Title.UnsetForeground()
+		t.Blurred.UnselectedOption = t.Blurred.UnselectedOption.UnsetForeground()
 
 		// Magenta selection: the pointer (single + multi select) and the
 		// chosen option(s), replacing ThemeBase16's yellow/green.
