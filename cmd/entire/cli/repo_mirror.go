@@ -77,7 +77,7 @@ var clusterHostLabelRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-
 // validateClusterHost rejects a cluster host that is anything other than a
 // bare DNS name or IP with an optional :port. The host is concatenated as
 // "https://"+host into the clone URL and the STS audience
-// (auth.RepoScopedToken), so a value carrying URL metacharacters can redirect
+// (entireclient/repocreds), so a value carrying URL metacharacters can redirect
 // the request — and the repo-scoped basic-auth token it carries — somewhere
 // other than the intended cluster. Classic case:
 // `aws-us-east-2.entire.io@evil.com`, which Go's URL parser reads as
