@@ -120,9 +120,11 @@ func terminalWidth(w io.Writer) int {
 //   - Code-block chroma: hex palette (see chromaForBackground — glamour's
 //     chroma parser requires hex, so this is the one non-base16 exception)
 //
-// The only dark/light difference is the body text foreground (so text stays
-// readable on either background); accent colors are ANSI slots that the
-// terminal already remaps per theme.
+// Body/heading text is left unset so it uses the terminal's default
+// foreground, which inverts with the background (dark text on light, light on
+// dark). Accent colors are ANSI slots the terminal already remaps per theme,
+// so the StyleConfig itself no longer needs a dark/light branch — only the
+// chroma block does.
 func stylesForBackground(darkBackground bool) ansi.StyleConfig {
 	var styles ansi.StyleConfig
 	if darkBackground {
@@ -131,15 +133,12 @@ func stylesForBackground(darkBackground bool) ansi.StyleConfig {
 		styles = glamourstyles.LightStyleConfig
 	}
 
-	// Body text: bright foreground on dark, plain black on light.
-	textFg := palette.Primary
-	if !darkBackground {
-		textFg = palette.Black
-	}
-	styles.Document.Color = strPtr(textFg)
-	styles.Heading.Color = strPtr(textFg)
+	// Body text: leave colors unset so glamour uses the terminal's default
+	// foreground (which inverts with the background) instead of a pinned slot.
+	styles.Document.Color = nil
+	styles.Heading.Color = nil
 	styles.Code.BackgroundColor = nil // use terminal default background
-	styles.CodeBlock.Color = strPtr(textFg)
+	styles.CodeBlock.Color = nil
 	styles.Heading.Bold = boolPtrV(true)
 
 	styles.H1.Prefix = "# "
@@ -152,7 +151,7 @@ func stylesForBackground(darkBackground bool) ansi.StyleConfig {
 	styles.H2.Bold = boolPtrV(true)
 	styles.H3.Color = strPtr(palette.Blue)
 	styles.H3.Bold = boolPtrV(true)
-	styles.H4.Color = strPtr(textFg)
+	styles.H4.Color = nil // default fg (inverts with terminal theme)
 	styles.H4.Bold = boolPtrV(true)
 	styles.H5.Color = strPtr(palette.Muted)
 	styles.H5.Bold = boolPtrV(true)

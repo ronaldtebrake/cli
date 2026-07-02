@@ -2839,7 +2839,7 @@ func groupByCheckpointID(points []strategy.RewindPoint) []checkpointGroup {
 }
 
 // formatCheckpointGroup formats a single checkpoint group for display.
-// The list view headline puts the checkpoint ID first (in bold orange),
+// The list view headline puts the checkpoint ID first (in bold accent/magenta),
 // followed by indicators and the prompt — which cascades from
 // SessionPrompt → latest commit message → dimmed `(no prompt recorded)`.
 func formatCheckpointGroup(sb *strings.Builder, group checkpointGroup, styles statusStyles) {

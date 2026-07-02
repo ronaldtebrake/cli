@@ -27,7 +27,7 @@ type statusStyles struct {
 	gray   lipgloss.Style
 	bold   lipgloss.Style
 	dim    lipgloss.Style
-	agent  lipgloss.Style // amber/orange for agent names
+	agent  lipgloss.Style // accent (magenta) for agent names
 	cyan   lipgloss.Style
 	yellow lipgloss.Style // yellow for stale warnings
 }
@@ -123,8 +123,9 @@ type explainRow struct {
 	Value string
 }
 
-// identityBullet renders "● <label> <id>\n". Bullet is brand orange when color
-// is enabled; ID is also orange to mirror the existing checkpoint header. When
+// identityBullet renders "● <label> <id>\n". Bullet is the brand accent
+// (magenta) when color is enabled; ID is also the accent to mirror the existing
+// checkpoint header. When
 // id is empty (e.g., temporary checkpoints append "[temporary]" to the label
 // instead of using an id slot), the trailing space + id is suppressed.
 func (s statusStyles) identityBullet(label, id string) string {
@@ -143,7 +144,7 @@ func (s statusStyles) identityBullet(label, id string) string {
 	return fmt.Sprintf("%s %s %s\n", bullet, s.render(s.bold, label), idStyled)
 }
 
-// listIdentityBullet renders "● <id>  <suffix>\n" — orange bullet, bold-orange ID,
+// listIdentityBullet renders "● <id>  <suffix>\n" — accent bullet, bold-accent ID,
 // then plain (or dimmed) suffix. Used by the explain list view where the ID is
 // the primary identifier (different ordering from identityBullet, which puts
 // the static label first).

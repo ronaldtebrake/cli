@@ -277,7 +277,7 @@ func newActivityStylesWithWidth(width int, useColor bool) activityStyles {
 		value:        lipgloss.NewStyle().Bold(true),
 		unit:         lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 		desc:         lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
-		repoNm:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Primary)),
+		repoNm:       lipgloss.NewStyle(), // default fg: inverts with terminal theme
 		commitH:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 		commitM:      lipgloss.NewStyle().Bold(true),
 		add:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Success)),

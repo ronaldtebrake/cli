@@ -112,6 +112,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newDispatchCmd())
 	cmd.AddCommand(newActivityCmd())
 	cmd.AddCommand(newRecapCmd())
+	cmd.AddCommand(newAPICmd())          // authenticated passthrough to core/cell APIs
 	cmd.AddCommand(newAgentHelpCmd(cmd)) // visible: agents on transports without context injection discover it via `entire help`
 
 	// Hidden top-level shortcuts. Functional but print a deprecation hint.

@@ -240,7 +240,7 @@ func newTableStyles(w io.Writer) tableStyles {
 	return tableStyles{
 		enabled: true,
 		header:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true),
-		primary: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Primary)),
+		primary: lipgloss.NewStyle(), // default fg: inverts with terminal theme
 		cell:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 	}
 }

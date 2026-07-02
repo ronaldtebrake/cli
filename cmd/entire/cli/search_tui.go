@@ -57,19 +57,19 @@ type searchStyles struct {
 	selected     lipgloss.Style // highlighted selected row
 	helpKey      lipgloss.Style // colored key hints in footer
 	helpSep      lipgloss.Style // dim separator dots in footer
-	detailTitle  lipgloss.Style // colored title and section headers (orange, bold)
+	detailTitle  lipgloss.Style // colored title and section headers (accent, bold)
 	detailBorder lipgloss.Style // border style for detail card
 	tabActive    lipgloss.Style // active type tab
 	tabInactive  lipgloss.Style // inactive type tab
 }
 
-// Search palette draws from the shared base16 palette. The primary accent
-// matches Claude in activity; the detail accent frames the detail card; the
-// link accent is reserved for links inside markdown snippets.
+// Search palette draws from the shared base16 palette: the primary accent
+// styles titles/tabs/selection, the detail accent frames the detail card, and
+// the link accent is reserved for links inside markdown snippets.
 const (
-	searchAccent       = palette.Accent        // matches agentDisplayMap["claude"] in activity_render.go
-	searchDetailAccent = palette.BrightMagenta // matches agentDisplayMap["kiro"] in activity_render.go
-	searchLinkAccent   = palette.Blue          // matches agentDisplayMap["gemini"] in activity_render.go
+	searchAccent       = palette.Accent  // primary accent (titles, tabs, selection)
+	searchDetailAccent = palette.Accent2 // detail card framing
+	searchLinkAccent   = palette.Blue    // links in markdown snippets
 )
 
 func newSearchStyles(ss statusStyles) searchStyles {
@@ -877,7 +877,8 @@ func (m searchModel) viewResultItem(r search.Result, selected bool, contentWidth
 }
 
 // resultNodeStyle returns the accent style for a result's graph node and type
-// tag: orange for checkpoints, purple for sessions, blue for commits. The
+// tag: accent (magenta) for checkpoints, bright magenta for sessions, blue for
+// commits. The
 // selected node is always rendered in the shared selection accent.
 func resultNodeStyle(s searchStyles, resultType string, selected bool) lipgloss.Style {
 	if !s.colorEnabled {

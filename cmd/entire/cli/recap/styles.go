@@ -11,7 +11,7 @@ const (
 	colorMuted  = palette.Muted
 	colorBorder = palette.Muted
 	colorInfo   = palette.Info
-	colorTeam   = palette.BrightMagenta
+	colorTeam   = palette.Accent2
 
 	colorActivityEmpty = palette.Muted
 	colorActivityLow   = palette.Cyan

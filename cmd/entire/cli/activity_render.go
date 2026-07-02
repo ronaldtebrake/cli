@@ -68,7 +68,7 @@ func newActivityStyles(w io.Writer) activityStyles {
 		s.value = lipgloss.NewStyle().Bold(true)
 		s.unit = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 		s.desc = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
-		s.repoNm = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Primary))
+		s.repoNm = lipgloss.NewStyle() // default fg: inverts with terminal theme
 		s.commitH = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 		s.commitM = lipgloss.NewStyle().Bold(true)
 		s.add = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Success))
@@ -96,23 +96,28 @@ func (s activityStyles) renderAgent(agentID, text string) string {
 
 type agentDisplay struct {
 	Label string
-	Color string // base16 ANSI slot (see palette)
+	Color string // agent brand color (hex); lipgloss resolves to the terminal's profile
 	Char  rune   // block character for bar charts
 }
 
-// Agent colors are distinct base16 slots so bar charts stay legible across
-// agents. Claude takes the primary accent; the rest fan out across the palette.
+// Agent colors are the per-agent brand colors from entire.io (dark-mode CSS
+// variables, Tailwind 400-level). This is a deliberate exception to the CLI's
+// base16 palette: there are more agents than base16 has distinct hues, so
+// collapsing them onto ANSI slots makes neighboring agents indistinguishable
+// in bar charts and legends. We keep the hex values so each agent stays
+// recognizable; lipgloss resolves them to the best representation for the
+// terminal's color profile. The non-brand "unknown" fallback uses muted gray.
 var agentDisplayMap = map[string]agentDisplay{
-	"claude":   {Label: "Claude Code", Color: palette.Accent, Char: '▓'},    // magenta
-	"gemini":   {Label: "Gemini", Color: palette.Blue, Char: '▓'},           // blue
-	"amp":      {Label: "Amp", Color: palette.Red, Char: '▓'},               // red
-	"codex":    {Label: "Codex", Color: palette.BrightBlue, Char: '▓'},      // bright blue
-	"opencode": {Label: "OpenCode", Color: palette.Cyan, Char: '▓'},         // cyan
-	"copilot":  {Label: "Copilot", Color: palette.BrightMagenta, Char: '▓'}, // bright magenta
-	"pi":       {Label: "Pi", Color: palette.Yellow, Char: '▓'},             // yellow
-	"cursor":   {Label: "Cursor", Color: palette.BrightCyan, Char: '▓'},     // bright cyan
-	"droid":    {Label: "Droid", Color: palette.BrightRed, Char: '▓'},       // bright red
-	"kiro":     {Label: "Kiro", Color: palette.BrightYellow, Char: '▓'},     // bright yellow
+	"claude":   {Label: "Claude Code", Color: "#fb923c", Char: '▓'}, // orange-400
+	"gemini":   {Label: "Gemini", Color: "#60a5fa", Char: '▓'},      // blue-400
+	"amp":      {Label: "Amp", Color: "#f87171", Char: '▓'},         // red-400
+	"codex":    {Label: "Codex", Color: "#818cf8", Char: '▓'},       // indigo-400
+	"opencode": {Label: "OpenCode", Color: "#22d3ee", Char: '▓'},    // cyan-400
+	"copilot":  {Label: "Copilot", Color: "#a78bfa", Char: '▓'},     // violet-400
+	"pi":       {Label: "Pi", Color: "#fbbf24", Char: '▓'},          // amber-400
+	"cursor":   {Label: "Cursor", Color: "#38bdf8", Char: '▓'},      // sky-400
+	"droid":    {Label: "Droid", Color: "#f472b6", Char: '▓'},       // pink-400
+	"kiro":     {Label: "Kiro", Color: "#c084fc", Char: '▓'},        // purple-400
 	"unknown":  {Label: "Unknown", Color: palette.Muted, Char: '░'},
 }
 

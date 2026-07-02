@@ -122,6 +122,18 @@ func resolveRepoClusterHost(ctx context.Context, c expertsCoreClient, fullName, 
 	return hosts[0], true
 }
 
+// isActiveMirror reports whether a mirror placement can currently serve the
+// repo: not archived, and not in a failed/suspended clone state. An unset status
+// is treated as active (older data). Shared by every caller that must ignore
+// placements a cell can't answer for.
+func isActiveMirror(m coreapi.Mirror) bool {
+	if m.IsArchived.Or(false) {
+		return false
+	}
+	st := m.Status.Or(coreapi.MirrorStatusReady)
+	return st != coreapi.MirrorStatusFailed && st != coreapi.MirrorStatusSuspended
+}
+
 // distinctActiveClusterHosts returns the set of cluster hosts a repo is actively
 // serviced on: excluding archived placements and unhealthy ones (failed /
 // suspended clone status), since those cells can't answer experts for the repo.
@@ -131,12 +143,7 @@ func resolveRepoClusterHost(ctx context.Context, c expertsCoreClient, fullName, 
 func distinctActiveClusterHosts(mirrors []coreapi.Mirror) []string {
 	seen := make(map[string]string, len(mirrors))
 	for _, m := range mirrors {
-		if m.IsArchived.Or(false) {
-			continue
-		}
-		// Treat unset status as active (older data); only failed/suspended
-		// placements can't serve experts for the repo.
-		if st := m.Status.Or(coreapi.MirrorStatusReady); st == coreapi.MirrorStatusFailed || st == coreapi.MirrorStatusSuspended {
+		if !isActiveMirror(m) {
 			continue
 		}
 		host := strings.TrimSpace(m.ClusterHost)
