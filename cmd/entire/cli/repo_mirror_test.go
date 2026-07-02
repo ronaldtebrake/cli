@@ -142,13 +142,13 @@ func serveMirrorCreate(t *testing.T, created *coreapi.CreatedMirror, createErr b
 				return
 			}
 			w.WriteHeader(http.StatusCreated)
-			if err := writeJSON(w, created); err != nil {
+			if err := printJSON(w, created); err != nil {
 				t.Errorf("encode created response: %v", err)
 			}
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/mirrors/"):
 			m := &coreapi.Mirror{}
 			m.Status = coreapi.NewOptMirrorStatus(coreapi.MirrorStatusReady)
-			if err := writeJSON(w, m); err != nil {
+			if err := printJSON(w, m); err != nil {
 				t.Errorf("encode mirror response: %v", err)
 			}
 		default:
@@ -353,11 +353,11 @@ func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/mirrors/available":
-			if err := writeJSON(w, &coreapi.ListAvailableMirrorsOutputBody{Available: available}); err != nil {
+			if err := printJSON(w, &coreapi.ListAvailableMirrorsOutputBody{Available: available}); err != nil {
 				t.Errorf("encode available response: %v", err)
 			}
 		case mirrorsAPIPath:
-			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: mirrors}); err != nil {
+			if err := printJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: mirrors}); err != nil {
 				t.Errorf("encode mirrors response: %v", err)
 			}
 		default:
@@ -612,7 +612,7 @@ func TestResolveMirrorRef(t *testing.T) {
 		c, _ := resolveTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
 			gotCluster, gotProvider, gotOwner = q.Get("cluster"), q.Get("provider"), q.Get("owner")
-			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
+			if err := printJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
 				{MirrorId: otherULID, Owner: "entirehq", Repo: "other", ClusterHost: "aws-eu-central-1.entire.io"},
 				{MirrorId: mirrorULID, Owner: "entirehq", Repo: "entire-api", ClusterHost: "aws-eu-central-1.entire.io"},
 			}}); err != nil {
@@ -636,7 +636,7 @@ func TestResolveMirrorRef(t *testing.T) {
 	t.Run("no matching repo is a friendly error", func(t *testing.T) {
 		t.Parallel()
 		c, _ := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
+			if err := printJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
 				{MirrorId: otherULID, Owner: "entirehq", Repo: "other", ClusterHost: "aws-eu-central-1.entire.io"},
 			}}); err != nil {
 				t.Errorf("encode mirrors: %v", err)

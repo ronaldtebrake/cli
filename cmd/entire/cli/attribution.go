@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -235,7 +234,7 @@ func runAttributionBlame(ctx context.Context, w io.Writer, file string, opts att
 	}
 
 	if opts.JSON {
-		return writeJSON(w, result)
+		return printJSON(w, result)
 	}
 	renderAttributionBlame(w, result, opts.LineFlag, opts.Long)
 	return nil
@@ -266,7 +265,7 @@ func runAttributionWhy(ctx context.Context, w io.Writer, target string, opts att
 
 	if !hasLine {
 		if opts.JSON {
-			return writeJSON(w, result)
+			return printJSON(w, result)
 		}
 		renderAttributionFileWhy(w, result)
 		return nil
@@ -293,7 +292,7 @@ func runAttributionWhy(ctx context.Context, w io.Writer, target string, opts att
 			Line:        *selected,
 			Checkpoints: checkpointContextsForLines([]attributionLine{*selected}, result.Checkpoints),
 		}
-		return writeJSON(w, payload)
+		return printJSON(w, payload)
 	}
 	renderAttributionLineWhy(w, result.File, *selected)
 	return nil
@@ -1425,13 +1424,4 @@ func appendUniqueString(values []string, value string) []string {
 
 func isZeroCommit(sha string) bool {
 	return sha == "" || strings.Trim(sha, "0") == ""
-}
-
-func writeJSON(w io.Writer, value any) error {
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
-		return fmt.Errorf("encode json: %w", err)
-	}
-	return nil
 }

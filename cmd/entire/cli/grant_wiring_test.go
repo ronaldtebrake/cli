@@ -30,7 +30,7 @@ func grantWiringHandler(t *testing.T, record func(method, path string), deleteFn
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/identity/handles/") {
 			w.Header().Set("Content-Type", "application/json")
-			if err := writeJSON(w, &coreapi.ResolvedIdentity{
+			if err := printJSON(w, &coreapi.ResolvedIdentity{
 				AccountId:      wiringGranteeULID,
 				Provider:       providerGitHub,
 				Handle:         "alice",
