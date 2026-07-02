@@ -203,4 +203,3 @@ func (g *GeminiCLIAgent) parseBeforeModel(stdin io.Reader) (*agent.Event, error)
 		Timestamp: time.Now(),
 	}, nil
 }
-
