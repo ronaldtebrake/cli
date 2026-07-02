@@ -214,13 +214,6 @@ func abbreviateCommitHash(repo *git.Repository, hash plumbing.Hash) string {
 	return full
 }
 
-// interaction holds a single prompt and its responses for display.
-type interaction struct {
-	Prompt    string
-	Responses []string // Multiple responses can occur between tool calls
-	Files     []string
-}
-
 // associatedCommit holds information about a git commit associated with a checkpoint.
 type associatedCommit struct {
 	SHA      string
@@ -229,20 +222,6 @@ type associatedCommit struct {
 	Author   string
 	Email    string
 	Date     time.Time
-}
-
-// checkpointDetail holds detailed information about a checkpoint for display.
-type checkpointDetail struct {
-	Index            int
-	ShortID          string
-	Timestamp        time.Time
-	IsTaskCheckpoint bool
-	Message          string
-	// Interactions contains all prompt/response pairs in this checkpoint.
-	// Most strategies have one, but shadow condensations may have multiple.
-	Interactions []interaction
-	// Files is the aggregate list of all files modified (for backwards compat)
-	Files []string
 }
 
 func newExplainCmd() *cobra.Command {

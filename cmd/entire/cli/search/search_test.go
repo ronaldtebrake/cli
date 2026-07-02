@@ -458,11 +458,12 @@ func TestSearch_ResultAccessors(t *testing.T) {
 
 	// AuthorUsername, when set and non-empty, wins over Author; a commit
 	// subject wins over the prompt.
-	username := "alice-gh"
+	const usernameOverride = "alice-gh"
+	username := usernameOverride
 	subject := "fix: the bug"
 	cp.Checkpoint.AuthorUsername = &username
 	cp.Checkpoint.CommitSubject = &subject
-	if cp.ResultAuthor() != "alice-gh" {
+	if cp.ResultAuthor() != usernameOverride {
 		t.Errorf("ResultAuthor with username = %q", cp.ResultAuthor())
 	}
 	if cp.ResultTitle() != "fix: the bug" {
@@ -514,7 +515,7 @@ func TestSearch_ResultAccessors(t *testing.T) {
 		t.Errorf("session ResultAuthor without username = %q", ss.ResultAuthor())
 	}
 	ss.Session.AuthorUsername = &username
-	if ss.ResultAuthor() != "alice-gh" {
+	if ss.ResultAuthor() != usernameOverride {
 		t.Errorf("session ResultAuthor = %q", ss.ResultAuthor())
 	}
 

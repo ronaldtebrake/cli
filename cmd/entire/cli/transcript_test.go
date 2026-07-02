@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -66,16 +65,6 @@ func TestResolveTranscriptPath_AllowsLegitSessionID(t *testing.T) {
 	if got != want {
 		t.Fatalf("resolveTranscriptPath(%q) = %q, want %q", sessionID, got, want)
 	}
-}
-
-func createTempTranscript(t *testing.T, content string) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-	tmpFile := filepath.Join(tmpDir, "transcript.jsonl")
-	if err := os.WriteFile(tmpFile, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to create temp file: %v", err)
-	}
-	return tmpFile
 }
 
 func TestAgentTranscriptPath(t *testing.T) {
