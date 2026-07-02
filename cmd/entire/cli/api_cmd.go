@@ -82,6 +82,9 @@ func runAPI(ctx context.Context, w, errW io.Writer, rawPath string, f *apiFlags)
 	if err != nil {
 		return err
 	}
+	if err := validateAPIPath(path); err != nil {
+		return err
+	}
 
 	fields, err := buildAPIFields(f.rawFields, f.typedFields)
 	if err != nil {
@@ -135,6 +138,22 @@ func resolveAPIClient(ctx context.Context, to string, insecure bool) (*api.Clien
 	default:
 		return nil, fmt.Errorf("unknown --to %q (use core or cell)", to)
 	}
+}
+
+// validateAPIPath rejects anything that isn't origin-relative. The path is
+// resolved against the backend origin via url.ResolveReference, which lets an
+// absolute ("https://evil/…") or scheme-relative ("//evil/…") value replace the
+// host — and the bearer transport would then send the Entire token there. So a
+// path carrying its own scheme or host is refused before any request is made.
+func validateAPIPath(path string) error {
+	u, err := url.Parse(path)
+	if err != nil {
+		return fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	if u.Scheme != "" || u.Host != "" {
+		return fmt.Errorf("path must be origin-relative (e.g. /api/v1/…), not a cross-host or absolute URL: %q", path)
+	}
+	return nil
 }
 
 // expandAPIPlaceholders fills {owner}/{repo}/{repo_id} from the current repo.

@@ -117,6 +117,29 @@ func TestAppendQuery(t *testing.T) {
 	}
 }
 
+func TestValidateAPIPath(t *testing.T) {
+	t.Parallel()
+
+	// Origin-relative paths are allowed.
+	for _, ok := range []string{"/api/v1/clusters", "/api/v1/me/recap?repo=01K", "api/v1/x", "/"} {
+		if err := validateAPIPath(ok); err != nil {
+			t.Errorf("validateAPIPath(%q) = %v, want nil", ok, err)
+		}
+	}
+	// Absolute and scheme-relative URLs must be refused — they'd redirect the
+	// bearer token to another host via url.ResolveReference.
+	for _, bad := range []string{
+		"https://evil.example/api/v1/x",
+		"http://evil.example/x",
+		"//evil.example/x",
+		"https:/evil",
+	} {
+		if err := validateAPIPath(bad); err == nil {
+			t.Errorf("validateAPIPath(%q) = nil, want rejection (token-leak vector)", bad)
+		}
+	}
+}
+
 func TestResolveAPIClient_UnknownTarget(t *testing.T) {
 	t.Parallel()
 	if _, err := resolveAPIClient(context.Background(), "banana", false); err == nil {
