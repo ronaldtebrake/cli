@@ -126,23 +126,28 @@ func newAuthCmd() *cobra.Command {
 
 // --- token ------------------------------------------------------------------
 
-// newAuthTokenCmd prints the active control-plane bearer to stdout so scripts
-// (and ad-hoc curl) can authenticate against the core API without re-deriving
-// the keychain slot — e.g.
-//
-//	curl -H "Authorization: Bearer $(entire auth token)" "$CORE/api/v1/clusters"
-//
-// It emits a live credential, so treat the output as a secret. It resolves the
-// same bearer the API client would — ENTIRE_TOKEN verbatim when set, otherwise
-// the active context's login JWT, refreshed if it's near expiry — and prints
-// nothing but the token (errors and the not-logged-in hint go to stderr) so
-// command substitution stays clean.
+// newAuthTokenCmd prints the active control-plane bearer to stdout for
+// scripting. The user-facing Long and Example carry the detail and the
+// "treat the output as a secret" caveat; the token resolves the same way the
+// API client's does (ENTIRE_TOKEN verbatim when set, otherwise the active
+// context's login JWT, refreshed if it's near expiry), and only the token is
+// printed — errors and the not-logged-in hint go to stderr so command
+// substitution stays clean.
 func newAuthTokenCmd() *cobra.Command {
 	var insecureHTTPAuth bool
 	cmd := &cobra.Command{
 		Use:   "token",
-		Short: "Print the active control-plane bearer token (for scripting)",
-		Args:  cobra.NoArgs,
+		Short: "Print the active control-plane bearer token — a live credential, treat as a secret",
+		Long: "Print the active control-plane bearer token to stdout so scripts and\n" +
+			"ad-hoc curl can authenticate against the core API without re-deriving the\n" +
+			"keychain slot.\n\n" +
+			"The output is a live credential — treat it as a secret. It is the same\n" +
+			"bearer the API client uses: ENTIRE_TOKEN verbatim when set, otherwise the\n" +
+			"active context's login JWT (refreshed if it's near expiry). Only the token\n" +
+			"is printed to stdout; errors and the not-logged-in hint go to stderr so\n" +
+			"command substitution stays clean.",
+		Example: "  curl -H \"Authorization: Bearer $(entire auth token)\" \"$CORE/api/v1/clusters\"",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Refresh may exchange/refresh over the network; honor the
 			// plain-HTTP opt-in before resolving so local dev cores work.
