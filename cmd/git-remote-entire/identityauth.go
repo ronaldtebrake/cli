@@ -30,10 +30,13 @@ import (
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 )
 
-const identityAuthMode = "identity"
-
+// identityAuthEnabled reports whether git auth should use jurisdiction
+// identity tokens. Default on — clusters that don't advertise a
+// jurisdiction_audience fall back to repo-scoped tokens anyway, so the
+// default is safe against not-yet-upgraded clusters. ENTIRE_GIT_AUTH=scoped
+// is the escape hatch back to per-(repo,action) scoped tokens.
 func identityAuthEnabled() bool {
-	return os.Getenv("ENTIRE_GIT_AUTH") == identityAuthMode
+	return os.Getenv("ENTIRE_GIT_AUTH") != "scoped"
 }
 
 // identityKeyringService is the keychain service name for a jurisdiction's

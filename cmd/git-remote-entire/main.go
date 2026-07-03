@@ -273,18 +273,18 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 		return nil, err //nolint:wrapcheck // NewRefreshingLoginProvider already returns a user-facing error
 	}
 
-	// EXPERIMENT: ENTIRE_GIT_AUTH=identity uses one keychain-persisted
-	// jurisdiction identity token for all repos instead of per-(repo,action)
-	// scoped tokens. Requires the cluster to advertise its jurisdiction
-	// audience (or an ENTIRE_IDENTITY_AUDIENCE override); otherwise falls
-	// back to repo-scoped tokens.
+	// Default: one keychain-persisted jurisdiction identity token for all
+	// repos instead of per-(repo,action) scoped tokens. Requires the
+	// cluster to advertise its jurisdiction audience (or an
+	// ENTIRE_IDENTITY_AUDIENCE override); otherwise — and under
+	// ENTIRE_GIT_AUTH=scoped — falls back to repo-scoped tokens.
 	if identityAuthEnabled() {
 		audience := clusterAuth.JurisdictionAudience
 		if audience != "" || os.Getenv("ENTIRE_IDENTITY_AUDIENCE") != "" {
 			debuglog.Printf("auth mode: jurisdiction identity token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
 			return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.CoreURLs, clusterCtx.Handle, loginProvider, httpClient), nil
 		}
-		debuglog.Printf("ENTIRE_GIT_AUTH=identity set but cluster %s advertises no jurisdiction_audience; using repo-scoped tokens", parsedURL.Host)
+		debuglog.Printf("cluster %s advertises no jurisdiction_audience; using repo-scoped tokens", parsedURL.Host)
 	}
 
 	// Mint repo-scoped tokens by exchanging the context's login JWT at its
