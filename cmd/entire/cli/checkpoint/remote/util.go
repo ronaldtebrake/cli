@@ -310,9 +310,10 @@ func deriveCheckpointURLFromInfo(info *Info, config *settings.CheckpointRemoteCo
 }
 
 // originalURLConfigKey is the git config option, under remote.<name>., where
-// entiredb's `entire-repo mirror use` records the URL a remote had before it was
-// switched to entire://. It is the most faithful record of the endpoint and auth
-// method the user had for that remote.
+// the retired entiredb `mirror use` verb recorded the URL a remote had before
+// it was switched to entire://. The verb is gone (no CLI writes the key today)
+// but clones that ran it still carry the value — the most faithful record of
+// the endpoint and auth method the user had for that remote.
 const originalURLConfigKey = "entiredb-original-url"
 
 // resolveProviderCheckpointURL builds the checkpoint URL for the configured
@@ -324,8 +325,9 @@ const originalURLConfigKey = "entiredb-original-url"
 //
 // Transport precedence:
 //  1. The remote's pre-mirror URL (remote.<name>.entiredb-original-url) — the
-//     endpoint and scheme the remote used before `entire-repo mirror use`
-//     switched it to entire://. Reused verbatim (host + scheme + port).
+//     endpoint and scheme the remote used before the retired entiredb
+//     `mirror use` verb switched it to entire://. Reused verbatim (host +
+//     scheme + port).
 //  2. ENTIRE_CHECKPOINT_TOKEN set -> HTTPS on the provider host (the token is
 //     the credential).
 //  3. An existing remote already targets the provider host -> reuse its scheme,
@@ -399,8 +401,8 @@ func openRepoAt(dir string) (*git.Repository, error) {
 	return repo, nil
 }
 
-// originalRemoteURL returns the pre-mirror URL saved by `entire-repo mirror use`
-// in remote.<name>.entiredb-original-url, or "" when absent.
+// originalRemoteURL returns the pre-mirror URL saved by the retired entiredb
+// `mirror use` verb in remote.<name>.entiredb-original-url, or "" when absent.
 func originalRemoteURL(repo *git.Repository, remoteName string) string {
 	cfg, err := repo.Config()
 	if err != nil {

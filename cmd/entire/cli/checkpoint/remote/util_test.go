@@ -401,9 +401,9 @@ func TestPushURL(t *testing.T) {
 // setup: origin migrated to an entire:// URL (forge-prefixed /gh/owner/repo)
 // with a github checkpoint_remote. The checkpoint URL must route to github
 // rather than fall back to the entire:// origin, reusing the auth/scheme the
-// repo had for that endpoint — first from the pre-mirror URL that
-// `entire-repo mirror use` saves (remote.origin.entiredb-original-url), then an
-// existing remote on the provider host, then defaulting to SSH.
+// repo had for that endpoint — first from the pre-mirror URL the retired
+// entiredb `mirror use` verb saved (remote.origin.entiredb-original-url), then
+// an existing remote on the provider host, then defaulting to SSH.
 func TestPushURL_EntireOriginReusesProviderRemoteScheme(t *testing.T) {
 	const entireOrigin = "entire://aws-eu-central-1.entire.io/gh/entireio/cli"
 	tests := []struct {
