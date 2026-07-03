@@ -32,9 +32,11 @@ func staticLogin(jwt string) func(context.Context) (string, error) {
 }
 
 func TestExchangeCore(t *testing.T) {
+	t.Parallel()
 	const auCore = "https://au.auth.example.io"
 
 	t.Run("same jurisdiction uses home core", func(t *testing.T) {
+		t.Parallel()
 		s := newJurisdictionTokenSource(auCore, "https://au.example.io", auCore, "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
 		if err != nil {
@@ -46,6 +48,7 @@ func TestExchangeCore(t *testing.T) {
 	})
 
 	t.Run("home core trailing slash is trimmed", func(t *testing.T) {
+		t.Parallel()
 		s := newJurisdictionTokenSource(auCore+"/", "https://au.example.io", "", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
 		if err != nil {
@@ -57,6 +60,7 @@ func TestExchangeCore(t *testing.T) {
 	})
 
 	t.Run("cross jurisdiction uses advertised jurisdiction core", func(t *testing.T) {
+		t.Parallel()
 		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", auCore+"/", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
 		if err != nil {
@@ -68,6 +72,7 @@ func TestExchangeCore(t *testing.T) {
 	})
 
 	t.Run("cross jurisdiction without advertised core is refused", func(t *testing.T) {
+		t.Parallel()
 		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", "", "h", nil, nil)
 		if _, err := s.exchangeCore(fakeLoginJWT(t, "eu")); err == nil {
 			t.Fatal("expected error when no jurisdiction core is advertised")
@@ -75,6 +80,7 @@ func TestExchangeCore(t *testing.T) {
 	})
 
 	t.Run("non-https advertised core is refused", func(t *testing.T) {
+		t.Parallel()
 		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", "http://au.auth.example.io", "h", nil, nil)
 		if _, err := s.exchangeCore(fakeLoginJWT(t, "eu")); err == nil {
 			t.Fatal("expected error for plaintext advertised core")

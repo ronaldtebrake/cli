@@ -1428,6 +1428,7 @@ func TestColdPathRefusesOutOfClusterLocationSalvage(t *testing.T) {
 // TestUnauthorizedObserver: the 401 hook fires on 401 responses only —
 // 403 (valid credential, authorization denied) must not invalidate.
 func TestUnauthorizedObserver(t *testing.T) {
+	t.Parallel()
 	fired := 0
 	inner := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		status := http.StatusForbidden
