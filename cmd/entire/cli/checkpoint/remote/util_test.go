@@ -401,38 +401,17 @@ func TestPushURL(t *testing.T) {
 // setup: origin migrated to an entire:// URL (forge-prefixed /gh/owner/repo)
 // with a github checkpoint_remote. The checkpoint URL must route to github
 // rather than fall back to the entire:// origin, reusing the auth/scheme the
-// repo had for that endpoint — first from the pre-mirror URL that
-// `entire-repo mirror use` saves (remote.origin.entiredb-original-url), then an
-// existing remote on the provider host, then defaulting to SSH.
+// repo had for that endpoint — a token forces HTTPS, then an existing remote
+// on the provider host, then defaulting to SSH.
 func TestPushURL_EntireOriginReusesProviderRemoteScheme(t *testing.T) {
 	const entireOrigin = "entire://aws-eu-central-1.entire.io/gh/entireio/cli"
 	tests := []struct {
 		name        string
 		githubURL   string
-		savedURL    string
 		token       string
 		wantURL     string
 		wantEnabled bool
 	}{
-		{
-			name:        "pre-mirror ssh url yields ssh checkpoint url",
-			savedURL:    "git@github.com:entireio/cli.git",
-			wantURL:     "git@github.com:entireio/cli-checkpoints.git",
-			wantEnabled: true,
-		},
-		{
-			name:        "pre-mirror https url yields https checkpoint url",
-			savedURL:    "https://github.com/entireio/cli.git",
-			wantURL:     "https://github.com/entireio/cli-checkpoints.git",
-			wantEnabled: true,
-		},
-		{
-			name:        "pre-mirror url wins over token",
-			savedURL:    "git@github.com:entireio/cli.git",
-			token:       "ci-token",
-			wantURL:     "git@github.com:entireio/cli-checkpoints.git",
-			wantEnabled: true,
-		},
 		{
 			name:        "ssh github remote yields ssh checkpoint url",
 			githubURL:   "git@github.com:entireio/cli.git",
@@ -451,7 +430,7 @@ func TestPushURL_EntireOriginReusesProviderRemoteScheme(t *testing.T) {
 			wantEnabled: true,
 		},
 		{
-			name:        "token forces https when no pre-mirror url",
+			name:        "token forces https over existing ssh remote",
 			githubURL:   "git@github.com:entireio/cli.git",
 			token:       "ci-token",
 			wantURL:     "https://github.com/entireio/cli-checkpoints.git",
@@ -466,9 +445,6 @@ func TestPushURL_EntireOriginReusesProviderRemoteScheme(t *testing.T) {
 			runGit(t, repoDir, "remote", "add", "origin", entireOrigin)
 			if tt.githubURL != "" {
 				runGit(t, repoDir, "remote", "add", "github", tt.githubURL)
-			}
-			if tt.savedURL != "" {
-				runGit(t, repoDir, "config", "remote.origin.entiredb-original-url", tt.savedURL)
 			}
 			writeSettings(t, repoDir, `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"entireio/cli-checkpoints"}}}`)
 			t.Chdir(repoDir)
