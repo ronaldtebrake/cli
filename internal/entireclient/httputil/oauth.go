@@ -20,6 +20,28 @@ const (
 	TokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"   //nolint:gosec // G101: an RFC 8693 token-type URN, not a credential
 )
 
+// OAuthClientID is the public OAuth client_id the CLI identifies as on
+// /oauth/token. Lifted into Basic auth by PostOAuthToken.
+const OAuthClientID = "entire-cli"
+
+// TokenExchangeForm builds the RFC 8693 token-exchange form every CLI
+// exchange POSTs to /oauth/token: subjectToken (the login JWT) is traded
+// for an access token pinned to audience with the given scope. The one
+// form shape serves repo-scoped and jurisdiction tokens alike — only
+// audience and scope differ — so keep call sites on this builder rather
+// than open-coding the fields.
+func TokenExchangeForm(subjectToken, audience, scope string) url.Values {
+	form := url.Values{}
+	form.Set("grant_type", GrantTypeTokenExchange)
+	form.Set("subject_token_type", TokenTypeAccessToken)
+	form.Set("subject_token", subjectToken)
+	form.Set("requested_token_type", TokenTypeAccessToken)
+	form.Set("audience", audience)
+	form.Set("scope", scope)
+	form.Set("client_id", OAuthClientID)
+	return form
+}
+
 // BufferRequestBody reads the request body once so a fallback retry
 // can replay it. http.NoBody (and nil) short-circuits — both signal
 // "no body" but only the latter is a runtime nil, so the explicit

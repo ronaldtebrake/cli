@@ -23,7 +23,11 @@ import (
 const (
 	cellDataAPITimeout = 30 * time.Second
 
-	jurisdictionIdentityScope = "openid"
+	// JurisdictionIdentityScope is the scope jurisdiction identity tokens
+	// are minted with (also used by git-remote-entire's jurisdiction git
+	// auth). The receiving surface authorizes live per request, so the
+	// scope carries identity semantics only, not a permission grant.
+	JurisdictionIdentityScope = "openid"
 
 	// clustersAPIPath is entire-core's cluster catalog endpoint.
 	clustersAPIPath = "/api/v1/clusters"
@@ -184,7 +188,7 @@ func targetJurisdiction(target *CellTarget, loginJWT string) (string, error) {
 	}
 	if jurisdiction == "" {
 		var err error
-		jurisdiction, err = homeJurisdictionFromLoginJWT(loginJWT)
+		jurisdiction, err = HomeJurisdictionFromLoginJWT(loginJWT)
 		if err != nil {
 			return "", err
 		}
@@ -339,7 +343,12 @@ func requireSafeExchangeURL(label, raw string) error {
 	return nil
 }
 
-func homeJurisdictionFromLoginJWT(loginJWT string) (string, error) {
+// HomeJurisdictionFromLoginJWT reads the home_jurisdiction claim without
+// verifying the signature — callers only route with it; the server
+// re-verifies. Returns "" (no error) when the claim is absent so each
+// caller can phrase its own missing-claim error. Shared with
+// git-remote-entire's jurisdiction git auth.
+func HomeJurisdictionFromLoginJWT(loginJWT string) (string, error) {
 	parts := strings.Split(loginJWT, ".")
 	if len(parts) < 2 {
 		return "", errors.New("login token is not a JWT")
@@ -427,14 +436,7 @@ func exchangeJurisdictionToken(ctx context.Context, coreURL, loginJWT, audience 
 	if coreURL == "" {
 		return "", errors.New("no entire-core URL configured for jurisdiction token exchange")
 	}
-	form := url.Values{}
-	form.Set("grant_type", httputil.GrantTypeTokenExchange)
-	form.Set("subject_token_type", "urn:ietf:params:oauth:token-type:access_token")
-	form.Set("subject_token", loginJWT)
-	form.Set("requested_token_type", "urn:ietf:params:oauth:token-type:access_token")
-	form.Set("audience", audience)
-	form.Set("scope", jurisdictionIdentityScope)
-	form.Set("client_id", oauthClientID)
+	form := httputil.TokenExchangeForm(loginJWT, audience, JurisdictionIdentityScope)
 
 	token, _, err := httputil.PostOAuthToken(ctx, httpClient, coreURL, form)
 	if err != nil {

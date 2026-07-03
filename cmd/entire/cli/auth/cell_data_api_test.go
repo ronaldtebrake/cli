@@ -20,9 +20,9 @@ import (
 func TestHomeJurisdictionFromLoginJWT(t *testing.T) {
 	t.Parallel()
 	jwt := makeJWT(t, fmt.Sprintf(`{"home_jurisdiction":"us","exp":%d}`, time.Now().Add(time.Hour).Unix()))
-	got, err := homeJurisdictionFromLoginJWT(jwt)
+	got, err := HomeJurisdictionFromLoginJWT(jwt)
 	if err != nil {
-		t.Fatalf("homeJurisdictionFromLoginJWT: %v", err)
+		t.Fatalf("HomeJurisdictionFromLoginJWT: %v", err)
 	}
 	if got != "us" {
 		t.Fatalf("jurisdiction = %q, want us", got)
@@ -192,7 +192,7 @@ func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
 		case oauthTokenPath:
 			_ = r.ParseForm() //nolint:errcheck // test handler
 			gotExchangeAudience = r.FormValue("audience")
-			if r.FormValue("scope") != jurisdictionIdentityScope {
+			if r.FormValue("scope") != JurisdictionIdentityScope {
 				t.Errorf("scope = %q, want openid", r.FormValue("scope"))
 			}
 			w.Header().Set("Content-Type", "application/json")
