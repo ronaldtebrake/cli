@@ -184,7 +184,7 @@ func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) 
 	}
 	home, err := auth.HomeJurisdictionFromLoginJWT(loginJWT)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read home jurisdiction: %w", err)
 	}
 	if home == "" {
 		return "", errors.New("login token has no home_jurisdiction claim")
