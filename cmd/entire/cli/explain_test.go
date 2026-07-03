@@ -994,24 +994,6 @@ func TestGenerateCheckpointAISummary_PreservesClaudeErrorWhenCtxIsDone(t *testin
 	}
 }
 
-func TestLoadCheckpointForExplainRejectsUnsupportedCheckpointVersion(t *testing.T) {
-	repo := setupExportRepo(t)
-
-	cpID := id.MustCheckpointID("bbbbccccdddd")
-	writeCheckpointForExport(t, repo, cpID, checkpoint.WriteOptions{
-		SessionID:  "session-explain-unsupported",
-		Transcript: redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n")),
-	})
-	rewriteExportCheckpointVersionToRefsV2(t, repo, cpID)
-
-	lookup, err := newExplainCheckpointLookup(context.Background())
-	require.NoError(t, err)
-	defer lookup.Close()
-
-	_, _, err = loadCheckpointForExplain(context.Background(), lookup, cpID)
-	require.ErrorContains(t, err, `checkpoint bbbbccccdddd uses unsupported checkpoint_version "refs-v2"`)
-}
-
 // Not parallel: uses t.Chdir() and package-level var stubs.
 type generateSummaryFixture struct {
 	ctx       context.Context

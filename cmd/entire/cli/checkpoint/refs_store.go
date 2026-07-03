@@ -148,7 +148,7 @@ func (s *gitRefsStore) writeSession(ctx context.Context, opts WriteOptions) erro
 		return err
 	}
 
-	checkpointSubtree, taskMetadataPath, err := s.applySessionWrite(ctx, opts, existing, "", CheckpointVersionRefsV1)
+	checkpointSubtree, taskMetadataPath, err := s.applySessionWrite(ctx, opts, existing, "")
 	if err != nil {
 		return err
 	}

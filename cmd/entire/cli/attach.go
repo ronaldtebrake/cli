@@ -255,8 +255,7 @@ func runAttach(ctx context.Context, w, errW io.Writer, sessionID string, agentNa
 		return nil
 	}
 
-	checkpointVersion, err := checkpointVersionForNewCheckpoint(ctx, repo)
-	if err != nil {
+	if err := ensureCheckpointPolicyAllowsCheckpointData(ctx, repo); err != nil {
 		return err
 	}
 
@@ -351,18 +350,17 @@ func runAttach(ctx context.Context, w, errW io.Writer, sessionID string, agentNa
 	}
 
 	writeOpts := cpkg.WriteOptions{
-		CheckpointID:      checkpointID,
-		SessionID:         sessionID,
-		Strategy:          strategy.StrategyNameManualCommit,
-		CheckpointVersion: checkpointVersion,
-		Transcript:        redactedTranscript,
-		Prompts:           attachPrompts(meta),
-		CheckpointsCount:  attachStepCount(meta.TurnCount),
-		AuthorName:        author.Name,
-		AuthorEmail:       author.Email,
-		Agent:             ag.Type(),
-		Model:             meta.Model,
-		TokenUsage:        tokenUsage,
+		CheckpointID:     checkpointID,
+		SessionID:        sessionID,
+		Strategy:         strategy.StrategyNameManualCommit,
+		Transcript:       redactedTranscript,
+		Prompts:          attachPrompts(meta),
+		CheckpointsCount: attachStepCount(meta.TurnCount),
+		AuthorName:       author.Name,
+		AuthorEmail:      author.Email,
+		Agent:            ag.Type(),
+		Model:            meta.Model,
+		TokenUsage:       tokenUsage,
 	}
 	if opts.Review {
 		writeOpts.Kind = string(session.KindAgentReview)

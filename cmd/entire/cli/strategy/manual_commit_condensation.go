@@ -156,7 +156,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
 		return nil, errors.New("checkpoint policy cannot be satisfied by this Entire CLI")
 	}
-	checkpointVersion := checkpointpolicy.Normalize(policy).CheckpointVersion
 
 	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
 	ref, hasShadowBranch := resolveShadowRef(repo, shadowBranchName, o.shadowRef)
@@ -273,7 +272,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		CheckpointID:                checkpointID,
 		SessionID:                   state.SessionID,
 		Strategy:                    StrategyNameManualCommit,
-		CheckpointVersion:           checkpointVersion,
 		Branch:                      branchName,
 		Transcript:                  redactedTranscript,
 		Prompts:                     sessionData.Prompts,

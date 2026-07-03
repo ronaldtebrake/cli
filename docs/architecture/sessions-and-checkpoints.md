@@ -251,7 +251,6 @@ failed or skipped regeneration **drops** the prior `transcript.jsonl` and clears
 ```json
 {
   "cli_version": "0.0.0-dev",
-  "checkpoint_version": "branch-v1",
   "checkpoint_id": "abc123def456",
   "strategy": "manual-commit",
   "branch": "main",
@@ -320,13 +319,13 @@ CLI defaults:
 {}
 ```
 
-`checkpoint_version` selects the checkpoint format for new writes. If no policy
-is configured, a policy omits `checkpoint_version`, or the field was set to an
+`checkpoint_version` is a checkpoint-data write guard. If no policy is
+configured, a policy omits `checkpoint_version`, or the field was set to an
 empty string with `entire checkpoint policy --checkpoint-version ""`, the CLI
-writes its default checkpoint version. The quotes are required so the shell
-passes an empty value instead of omitting the flag value. If another client
-configures a `checkpoint_version` this CLI cannot write, explicit
-checkpoint-data writers fail until the CLI is upgraded.
+uses its default checkpoint version for policy decisions. The quotes are
+required so the shell passes an empty value instead of omitting the flag value.
+If another client configures a `checkpoint_version` this CLI cannot write,
+explicit checkpoint-data writers fail until the CLI is upgraded.
 
 `checkpoint_min_version` is an upgrade nudge and checkpoint-data write guard.
 Clients that cannot read that version warn users to upgrade. Explicit
@@ -361,9 +360,7 @@ policy first, then applies the same skip behavior to checkpoint push work.
 User-driven commands warn when the local policy indicates the CLI should be
 upgraded. Explicit checkpoint-data writers such as `entire session attach`,
 `entire checkpoint explain --generate`, and `entire import <agent>` fail when
-the local policy cannot be satisfied. Commands that need to decode checkpoint
-contents, such as `entire checkpoint explain` and `entire session resume`, fail
-when the target checkpoint uses an unsupported `checkpoint_version`.
+the local policy cannot be satisfied.
 
 ### Checkpoint ID Linking
 
