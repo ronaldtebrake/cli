@@ -1,11 +1,10 @@
 package main
 
-// EXPERIMENT (jwt-latency-experiment branch): mint a jurisdiction identity
-// token (ADR 20260612, scope=openid, aud = the cluster's advertised
-// jurisdiction_audience) instead of a per-(repo,action) repo-scoped token,
-// and send that on git smart-HTTP requests. The data plane authorizes it
-// live against regional SpiceDB, so one token covers every repo the account
-// can reach. Enabled with ENTIRE_GIT_AUTH=identity.
+// Jurisdiction identity tokens (ADR 20260612) are how git-remote-entire
+// authenticates git smart-HTTP: a token minted with scope=openid and
+// aud = the cluster's advertised jurisdiction_audience. The data plane
+// authorizes it live against regional SpiceDB, so one token covers every
+// repo the account can reach.
 //
 // The token is persisted in the OS keychain (like the login JWT) so fresh
 // git-remote-entire processes reuse it instead of paying the exchange per
@@ -29,15 +28,6 @@ import (
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 )
-
-// identityAuthEnabled reports whether git auth should use jurisdiction
-// identity tokens. Default on — clusters that don't advertise a
-// jurisdiction_audience fall back to repo-scoped tokens anyway, so the
-// default is safe against not-yet-upgraded clusters. ENTIRE_GIT_AUTH=scoped
-// is the escape hatch back to per-(repo,action) scoped tokens.
-func identityAuthEnabled() bool {
-	return os.Getenv("ENTIRE_GIT_AUTH") != "scoped"
-}
 
 // identityKeyringService is the keychain service name for a jurisdiction's
 // identity tokens, keyed by audience so tokens for different jurisdictions

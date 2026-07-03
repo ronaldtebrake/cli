@@ -156,12 +156,18 @@ func resolveCachedCores(
 	var stale *discovery.CoresEntry
 	if cache != nil {
 		if entry, fresh, ok := cache.GetEntry(host); ok {
-			if fresh {
+			// A cluster entry without a jurisdiction audience was cached
+			// before the cluster advertised one (git auth requires it) —
+			// treat it as stale so the upgrade is picked up immediately
+			// instead of after the 24h TTL. API entries never carry an
+			// audience; label distinguishes the two cache families.
+			preAudience := label == "cluster" && entry.JurisdictionAudience == ""
+			if fresh && !preAudience {
 				debugf("%s %s cores from cache: %v", label, host, entry.CoreURLs)
 				return entry.CoreURLs, entry.JurisdictionAudience, nil
 			}
 			stale = entry
-			debugf("%s %s cores cache expired; re-fetching /.well-known", label, host)
+			debugf("%s %s cores cache expired or pre-audience; re-fetching /.well-known", label, host)
 		}
 	}
 

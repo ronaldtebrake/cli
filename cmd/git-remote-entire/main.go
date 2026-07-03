@@ -135,7 +135,7 @@ func run(args []string) int {
 		start := time.Now()
 		token, err := creds.Token(req.Context(), repoSlug, action)
 		if err != nil {
-			return fmt.Errorf("repo-scoped token exchange: %w", err)
+			return fmt.Errorf("git credential exchange: %w", err)
 		}
 		debuglog.Printf("timing: token-acquire action=%s dur_ms=%d (keychain + login refresh + exchange; ~0 when memoized)", action, time.Since(start).Milliseconds())
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -228,14 +228,16 @@ type tokenSource interface {
 	Token(ctx context.Context, audienceSuffix, action string) (string, error)
 }
 
-// resolveCreds builds the repo-scoped token cache, choosing the auth source:
+// resolveCreds builds the git-credential source, choosing by auth model:
 //
 //   - ENTIRE_TOKEN set: use the env JWT verbatim as the login token, deriving
 //     the login server URL from its aud claim. Skips contexts.json and the keyring
-//     entirely — the CI / workload-identity path. A non-URL aud is a hard
-//     error, never a silent fallback to context resolution.
+//     entirely — the CI / workload-identity path, still minting per-(repo,action)
+//     scoped tokens. A non-URL aud is a hard error, never a silent fallback
+//     to context resolution.
 //   - otherwise: resolve the login context for this cluster from contexts.json
-//     and exchange its stored login JWT.
+//     and mint a keychain-persisted jurisdiction identity token from its
+//     stored login JWT.
 func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string, skipTLS bool, httpClient *http.Client) (tokenSource, error) {
 	// Presence of ENTIRE_TOKEN is the signal: if it's set at all (LookupEnv,
 	// not Getenv, so we can tell set-empty from unset), we commit to the
@@ -273,23 +275,16 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 		return nil, err //nolint:wrapcheck // NewRefreshingLoginProvider already returns a user-facing error
 	}
 
-	// Default: one keychain-persisted jurisdiction identity token for all
-	// repos instead of per-(repo,action) scoped tokens. Requires the
-	// cluster to advertise its jurisdiction audience (or an
-	// ENTIRE_IDENTITY_AUDIENCE override); otherwise — and under
-	// ENTIRE_GIT_AUTH=scoped — falls back to repo-scoped tokens.
-	if identityAuthEnabled() {
-		audience := clusterAuth.JurisdictionAudience
-		if audience != "" || os.Getenv("ENTIRE_IDENTITY_AUDIENCE") != "" {
-			debuglog.Printf("auth mode: jurisdiction identity token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
-			return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.CoreURLs, clusterCtx.Handle, loginProvider, httpClient), nil
-		}
-		debuglog.Printf("cluster %s advertises no jurisdiction_audience; using repo-scoped tokens", parsedURL.Host)
+	// One keychain-persisted jurisdiction identity token authenticates every
+	// repo (authorized live at the data plane) — there is no repo-scoped
+	// fallback on this path. The cluster must advertise its jurisdiction
+	// audience; ENTIRE_IDENTITY_AUDIENCE overrides for local dev.
+	audience := clusterAuth.JurisdictionAudience
+	if audience == "" && os.Getenv("ENTIRE_IDENTITY_AUDIENCE") == "" {
+		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates identity-token git auth — upgrade the cluster (or set ENTIRE_IDENTITY_AUDIENCE)", parsedURL.Host, clusterdiscovery.Path)
 	}
-
-	// Mint repo-scoped tokens by exchanging the context's login JWT at its
-	// login server's /oauth/token, cached per (repo, action) for this invocation.
-	return repocreds.New(clusterCtx.CoreURL, clusterBaseURL, loginProvider, httpClient), nil
+	debuglog.Printf("auth: jurisdiction identity token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
+	return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.CoreURLs, clusterCtx.Handle, loginProvider, httpClient), nil
 }
 
 // resolveEnvTokenCreds builds the repo-cred cache for the ENTIRE_TOKEN path.
