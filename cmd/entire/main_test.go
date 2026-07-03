@@ -17,16 +17,16 @@ import (
 const dieFromSignalEnvVar = "ENTIRE_TEST_DIE_FROM_SIGNAL"
 
 func TestMain(m *testing.M) {
-	// Child mode: exercise dieFromSignal and let it terminate this process by
-	// the signal. dieFromSignal never returns on success; the os.Exit below is
-	// only reached if the re-raise couldn't be delivered.
-	switch os.Getenv(dieFromSignalEnvVar) {
-	case "INT":
-		dieFromSignal(os.Interrupt)
-		os.Exit(exitCodeForSignal(os.Interrupt))
-	case "TERM":
-		dieFromSignal(syscall.SIGTERM)
-		os.Exit(exitCodeForSignal(syscall.SIGTERM))
+	// Child mode: exercise dieFromSignal for the named signal and let it
+	// terminate this process. dieFromSignal only returns if the re-raise
+	// couldn't be delivered, so the os.Exit fallback mirrors it.
+	if name := os.Getenv(dieFromSignalEnvVar); name != "" {
+		sig := os.Interrupt
+		if name == "TERM" {
+			sig = syscall.SIGTERM
+		}
+		dieFromSignal(sig)
+		os.Exit(exitCodeForSignal(sig))
 	}
 	os.Exit(m.Run())
 }

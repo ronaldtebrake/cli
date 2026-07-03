@@ -15,6 +15,13 @@
 // user abort as a failure (and fail to break an enclosing shell loop).
 // Recording the signal here — on the same goroutine that unwinds to the gate —
 // removes that race.
+//
+// Tech debt: this shared global exists only because auth-go's Store interface
+// (LoadTokens/SaveTokens) carries no context.Context, so the keyring path can't
+// ride the root context and instead detects Ctrl-C via its own signal listener.
+// Once that interface accepts a context, keyring cancellation can flow from the
+// root context like everything else, the tokenstore signal listener can go
+// away, and this package with it.
 package procsignal
 
 import (
