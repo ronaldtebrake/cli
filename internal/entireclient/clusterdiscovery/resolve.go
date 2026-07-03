@@ -63,7 +63,7 @@ func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterH
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
 
-	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, false, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func ResolveClusterAuth(ctx context.Context, configDir, cacheDir, clusterHost st
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
 
-	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, true, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func ResolveClusterCores(ctx context.Context, cacheDir, clusterHost string, http
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
-	entry, err := resolveClusterCores(ctx, cacheDir, normalizeClusterHost(clusterHost), httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, normalizeClusterHost(clusterHost), false, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +146,17 @@ func normalizeClusterHost(clusterHost string) string {
 // already knew. load/modify select the cache file; discover wraps the
 // host-specific /.well-known fetch (and any host-specific error formatting);
 // label names the resource in debug output ("cluster" / "api host").
+//
+// requireAudience marks callers that cannot proceed without the entry's
+// jurisdiction audience (the interactive git path). For them, an entry
+// cached before the cluster advertised an audience is treated as stale so
+// the upgrade is picked up immediately instead of after the 24h TTL — and
+// an audience-less entry is NOT used as the discovery-failure fallback:
+// returning it would make the caller misdiagnose a transient discovery
+// failure as "this cluster doesn't do jurisdiction tokens".
 func resolveCachedCores(
 	cacheDir, host, label string,
+	requireAudience bool,
 	load func(string) (discovery.ClusterCoresCache, error),
 	modify func(string, func(discovery.ClusterCoresCache) error) error,
 	discover func() (discovery.CoresEntry, error),
@@ -163,12 +172,7 @@ func resolveCachedCores(
 	var stale *discovery.CoresEntry
 	if cache != nil {
 		if entry, fresh, ok := cache.GetEntry(host); ok {
-			// A cluster entry without a jurisdiction audience was cached
-			// before the cluster advertised one (git auth requires it) —
-			// treat it as stale so the upgrade is picked up immediately
-			// instead of after the 24h TTL. API entries never carry an
-			// audience; label distinguishes the two cache families.
-			preAudience := label == "cluster" && entry.JurisdictionAudience == ""
+			preAudience := requireAudience && entry.JurisdictionAudience == ""
 			if fresh && !preAudience {
 				debugf("%s %s cores from cache: %v", label, host, entry.CoreURLs)
 				return entry, nil
@@ -180,7 +184,7 @@ func resolveCachedCores(
 
 	fetched, err := discover()
 	if err != nil {
-		if stale != nil {
+		if stale != nil && (!requireAudience || stale.JurisdictionAudience != "") {
 			debugf("%s discovery for %s failed (%v); falling back to stale cached cores %v", label, host, err, stale.CoreURLs)
 			return stale, nil
 		}
@@ -200,9 +204,10 @@ func resolveCachedCores(
 // resolveClusterCores returns the control-plane core URLs that front
 // clusterHost plus its advertised jurisdiction audience/core, from
 // cluster_cores.json when fresh, otherwise via a live /.well-known fetch
-// (cached, with stale fallback on failure).
-func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*discovery.CoresEntry, error) {
-	return resolveCachedCores(cacheDir, clusterHost, "cluster",
+// (cached, with stale fallback on failure). requireAudience: see
+// resolveCachedCores.
+func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, requireAudience bool, httpClient *http.Client, debugf DebugFunc) (*discovery.CoresEntry, error) {
+	return resolveCachedCores(cacheDir, clusterHost, "cluster", requireAudience,
 		discovery.LoadClusterCores, discovery.ModifyClusterCores,
 		func() (discovery.CoresEntry, error) {
 			body, err := Discover(ctx, clusterHost, httpClient, debugf)
