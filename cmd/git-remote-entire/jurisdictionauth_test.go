@@ -32,24 +32,37 @@ func staticLogin(jwt string) func(context.Context) (string, error) {
 }
 
 func TestExchangeCore(t *testing.T) {
+	const auCore = "https://au.auth.example.io"
+
 	t.Run("same jurisdiction uses home core", func(t *testing.T) {
-		s := newJurisdictionTokenSource("https://au.auth.example.io", "https://au.example.io", "https://au.auth.example.io", "h", nil, nil)
+		s := newJurisdictionTokenSource(auCore, "https://au.example.io", auCore, "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if core != "https://au.auth.example.io" {
+		if core != auCore {
 			t.Fatalf("core = %q, want home core", core)
 		}
 	})
 
+	t.Run("home core trailing slash is trimmed", func(t *testing.T) {
+		s := newJurisdictionTokenSource(auCore+"/", "https://au.example.io", "", "h", nil, nil)
+		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if core != auCore {
+			t.Fatalf("core = %q, want trimmed home core", core)
+		}
+	})
+
 	t.Run("cross jurisdiction uses advertised jurisdiction core", func(t *testing.T) {
-		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", "https://au.auth.example.io/", "h", nil, nil)
+		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", auCore+"/", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if core != "https://au.auth.example.io" {
+		if core != auCore {
 			t.Fatalf("core = %q, want advertised au core (trimmed)", core)
 		}
 	})
@@ -131,6 +144,37 @@ func TestJurisdictionToken_MintsPersistsAndReuses(t *testing.T) {
 	}
 	if mints != 2 {
 		t.Fatalf("mints for different handle = %d, want 2", mints)
+	}
+}
+
+func TestJurisdictionToken_EmptyPersistedTokenRemints(t *testing.T) {
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	defer restore()
+
+	// A corrupted entry: valid future timestamp, empty token. Must not be
+	// served as a bare "Bearer " header.
+	service := jurisdictionKeyringService("https://eu.example.io")
+	corrupted := tokenstore.TokenExpirationSeparator +
+		strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	if err := tokenstore.Set(service, "toothbrush", corrupted); err != nil {
+		t.Fatal(err)
+	}
+
+	mints := 0
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mints++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh-jwt","token_type":"Bearer","expires_in":7200}`)) //nolint:errcheck // test
+	}))
+	defer core.Close()
+
+	s := newJurisdictionTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", staticLogin(fakeLoginJWT(t, "eu")), core.Client())
+	token, err := s.Token(context.Background(), "/et/x/y", "pull")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "fresh-jwt" || mints != 1 {
+		t.Fatalf("token = %q mints = %d, want fresh mint over corrupted entry", token, mints)
 	}
 }
 

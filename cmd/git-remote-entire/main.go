@@ -128,9 +128,14 @@ func run(args []string) int {
 	}
 
 	setAuth := func(req *http.Request) error {
+		// Refuse to attach credentials to a request we can't classify as a
+		// known git smart-HTTP endpoint. The jurisdiction token doesn't
+		// need the action, but sending a bearer to an unexpected endpoint
+		// is never right; the ENTIRE_TOKEN scoped path additionally needs
+		// pull/push to mint.
 		action := gitActionFromRequest(req)
 		if action == "" {
-			return fmt.Errorf("cannot classify git op for %s %s; scoped-token exchange requires a recognised smart-HTTP endpoint", req.Method, req.URL.Path)
+			return fmt.Errorf("refusing to attach credentials: %s %s is not a recognised git smart-HTTP endpoint", req.Method, req.URL.Path)
 		}
 		start := time.Now()
 		token, err := creds.Token(req.Context(), repoSlug, action)

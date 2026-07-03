@@ -8,10 +8,10 @@ import (
 )
 
 // TimingRoundTripper logs one ENTIRE_DEBUG-gated line per request with the
-// wall-clock time to response headers (bodies stream afterwards, so transfer
-// time for large packfiles is NOT included — that's deliberate: the auth and
-// discovery calls this instruments are small-bodied, and time-to-headers is
-// the latency signal we want).
+// wall-clock time to response headers. Bodies stream afterwards, so transfer
+// time for large packfiles is NOT included — deliberately: the instrumented
+// auth and discovery calls are small-bodied, and time-to-headers is the
+// latency signal we want.
 type TimingRoundTripper struct {
 	Next http.RoundTripper
 	// Label distinguishes the client the request rode on (e.g. "auth", "git").

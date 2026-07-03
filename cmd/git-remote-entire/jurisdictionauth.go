@@ -62,7 +62,11 @@ type jurisdictionTokenSource struct {
 
 func newJurisdictionTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle string, login func(context.Context) (string, error), client *http.Client) *jurisdictionTokenSource {
 	return &jurisdictionTokenSource{
-		homeCoreURL:         homeCoreURL,
+		// Both core URLs feed httputil.PostOAuthToken, which appends
+		// "/oauth/token" to the base verbatim — trim so a trailing slash
+		// (context core_url comes from the login JWT's iss claim) can't
+		// produce a double-slash endpoint.
+		homeCoreURL:         strings.TrimRight(homeCoreURL, "/"),
 		audience:            audience,
 		jurisdictionCoreURL: strings.TrimRight(jurisdictionCoreURL, "/"),
 		handle:              handle,
@@ -82,8 +86,15 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 
 	service := jurisdictionKeyringService(s.audience)
 	if encoded, err := tokenstore.Get(service, s.handle); err == nil {
-		token, expiresAt := tokenstore.DecodeTokenWithExpiration(encoded)
-		if !tokenstore.IsTokenExpiredOrExpiring(expiresAt) {
+		// The empty-token guard rejects a corrupted keychain entry that
+		// decodes to a valid timestamp but no token — otherwise it would
+		// produce bare "Bearer " headers until the entry expired.
+		//
+		// Freshness margins differ by design: cross-process reuse stops at
+		// the 5m TokenExpirationBuffer (a fresh process should not start on
+		// a nearly-dead token), while this process keeps its token until 1m
+		// before actual expiry — individual git requests are short.
+		if token, expiresAt := tokenstore.DecodeTokenWithExpiration(encoded); token != "" && !tokenstore.IsTokenExpiredOrExpiring(expiresAt) {
 			debuglog.Printf("jurisdiction token from keychain (aud=%s, expires %s)", s.audience, expiresAt.Format(time.RFC3339))
 			s.token = token
 			s.expiresAt = expiresAt.Add(-time.Minute)
@@ -94,6 +105,11 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 	token, ttl, err := s.mint(ctx)
 	if err != nil {
 		return "", err
+	}
+	if ttl <= 0 {
+		// A non-positive expires_in would memoize/persist an already-dead
+		// token; serve this one request and re-mint next time.
+		return token, nil
 	}
 
 	s.token = token

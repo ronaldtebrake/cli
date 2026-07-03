@@ -41,7 +41,8 @@ type CoresEntry struct {
 	// JurisdictionAudience is the cluster's jurisdiction-token audience as
 	// advertised by its /.well-known/entire-cluster.json. Empty when the
 	// cluster does not accept jurisdiction access tokens (or predates
-	// the field) — callers must then fall back to repo-scoped tokens.
+	// the field) — git-remote-entire treats that as an error; other
+	// callers decide their own fallback.
 	JurisdictionAudience string `json:"jurisdiction_audience,omitempty"`
 	// JurisdictionCoreURL is the advertised core that mints for
 	// JurisdictionAudience — the cross-jurisdiction exchange endpoint.
