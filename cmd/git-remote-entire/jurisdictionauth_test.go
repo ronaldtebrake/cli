@@ -147,6 +147,50 @@ func TestJurisdictionToken_MintsPersistsAndReuses(t *testing.T) {
 	}
 }
 
+func TestJurisdictionToken_InvalidateDropsMemoAndKeychain(t *testing.T) {
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	defer restore()
+
+	mints := 0
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mints++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"juri-jwt","token_type":"Bearer","expires_in":7200}`)) //nolint:errcheck // test
+	}))
+	defer core.Close()
+
+	login := staticLogin(fakeLoginJWT(t, "eu"))
+	s := newJurisdictionTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", login, core.Client())
+	if _, err := s.Token(context.Background(), "/et/x/y", "pull"); err != nil {
+		t.Fatal(err)
+	}
+	if mints != 1 {
+		t.Fatalf("mints = %d, want 1", mints)
+	}
+
+	s.Invalidate()
+
+	// Memo gone: this source re-mints.
+	if _, err := s.Token(context.Background(), "/et/x/y", "pull"); err != nil {
+		t.Fatal(err)
+	}
+	if mints != 2 {
+		t.Fatalf("mints after invalidate = %d, want 2", mints)
+	}
+
+	// Keychain entry gone too: a fresh source (next process) also re-mints
+	// rather than reading a stale persisted copy. (The re-mint above stored
+	// a new entry, so invalidate again to observe the delete.)
+	s.Invalidate()
+	s2 := newJurisdictionTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", login, core.Client())
+	if _, err := s2.Token(context.Background(), "/et/x/y", "pull"); err != nil {
+		t.Fatal(err)
+	}
+	if mints != 3 {
+		t.Fatalf("mints for fresh source after invalidate = %d, want 3", mints)
+	}
+}
+
 func TestJurisdictionToken_EmptyPersistedTokenRemints(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	defer restore()

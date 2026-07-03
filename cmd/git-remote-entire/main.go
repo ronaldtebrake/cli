@@ -152,13 +152,24 @@ func run(args []string) int {
 		onNodeFailed = func(string) { replicas.Invalidate(nodeCfg.ClusterHost, nodeCfg.RepoPath) }
 	}
 
+	// A 401 means the data plane rejected the credential itself (e.g.
+	// signing-key rotation invalidated a persisted jurisdiction token) —
+	// drop it so the next invocation re-mints instead of failing until the
+	// token's recorded expiry. The env-token source has nothing persisted
+	// to drop and doesn't implement the seam.
+	var onUnauthorized func()
+	if invalidator, ok := creds.(interface{ Invalidate() }); ok {
+		onUnauthorized = invalidator.Invalidate
+	}
+
 	proxy := transport.New(transport.Config{
-		Nodes:        nodeCfg,
-		Path:         parsedURL.Path,
-		SkipTLS:      skipTLS,
-		SetAuth:      setAuth,
-		OnNodeFailed: onNodeFailed,
-		UserAgent:    httpUserAgent,
+		Nodes:          nodeCfg,
+		Path:           parsedURL.Path,
+		SkipTLS:        skipTLS,
+		SetAuth:        setAuth,
+		OnNodeFailed:   onNodeFailed,
+		OnUnauthorized: onUnauthorized,
+		UserAgent:      httpUserAgent,
 	})
 
 	protocolVersion := resolveProtocolVersion()

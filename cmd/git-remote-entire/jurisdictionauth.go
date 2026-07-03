@@ -123,6 +123,23 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 	return token, nil
 }
 
+// Invalidate drops the memoized token and the persisted keychain entry, so
+// the next acquisition (this process or the next) mints fresh. Wired to the
+// transport's 401 observer: when the data plane rejects the credential
+// itself (signing-key rotation, expiry skew), replaying it until its
+// recorded expiry — up to the full 8h TTL — would keep every git command
+// failing. The in-flight command still fails; the next one self-heals.
+func (s *jurisdictionTokenSource) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = ""
+	s.expiresAt = time.Time{}
+	if err := tokenstore.Delete(jurisdictionKeyringService(s.audience), s.handle); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
+		debuglog.Printf("jurisdiction token keychain delete failed: %v", err)
+	}
+	debuglog.Printf("jurisdiction token invalidated after 401 (aud=%s); next invocation re-mints", s.audience)
+}
+
 // mint exchanges the login JWT for a jurisdiction token at the core owning the
 // target jurisdiction. For a same-jurisdiction login that is the login's own
 // core; for a cross-jurisdiction repo the sibling core accepts our login JWT

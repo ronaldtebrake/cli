@@ -1424,3 +1424,36 @@ func TestColdPathRefusesOutOfClusterLocationSalvage(t *testing.T) {
 	_, err := p.InfoRefs(context.Background(), "git-upload-pack")
 	require.Error(t, err, "must not salvage to an off-cluster Location")
 }
+
+// TestUnauthorizedObserver: the 401 hook fires on 401 responses only —
+// 403 (valid credential, authorization denied) must not invalidate.
+func TestUnauthorizedObserver(t *testing.T) {
+	fired := 0
+	inner := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status := http.StatusForbidden
+		if req.URL.Path == "/unauth" {
+			status = http.StatusUnauthorized
+		}
+		return &http.Response{StatusCode: status, Body: http.NoBody}, nil
+	})
+	rt := &unauthorizedObserver{next: inner, fn: func() { fired++ }}
+
+	for _, path := range []string{"/forbidden", "/unauth", "/unauth"} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://node.example"+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	if fired != 2 {
+		t.Fatalf("hook fired %d times, want 2 (401s only)", fired)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
