@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +19,10 @@ import (
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
+
+// usEntireAudience is the prod "us" jurisdiction audience, reused across the
+// cell/jurisdiction tests.
+const usEntireAudience = "https://us.entire.io"
 
 func TestHomeJurisdictionFromLoginJWT(t *testing.T) {
 	t.Parallel()
@@ -74,7 +81,7 @@ func TestJurisdictionAudienceFollowsLoginFamily(t *testing.T) {
 	// No env override: the audience must follow the environment family so a
 	// staging (partial.to) login mints a partial.to audience, not a prod one.
 	t.Setenv("ENTIRE_API_AUDIENCE_TEMPLATE", "")
-	if got := jurisdictionAudience("us", "https://entire.io", "https://us.auth.entire.io"); got != "https://us.entire.io" {
+	if got := jurisdictionAudience("us", "https://entire.io", "https://us.auth.entire.io"); got != usEntireAudience {
 		t.Errorf("prod audience = %q, want https://us.entire.io", got)
 	}
 	if got := jurisdictionAudience("eu", "https://partial.to", "https://us.auth.partial.to"); got != "https://eu.partial.to" {
@@ -124,7 +131,7 @@ func TestRequireSafeExchangeURL(t *testing.T) {
 		raw     string
 		wantErr bool
 	}{
-		{"https://us.entire.io", false},
+		{usEntireAudience, false},
 		{"https://aws-eu-west-1.api.entire.io", false},
 		{"http://127.0.0.1:9000", false}, // loopback allowed
 		{"http://localhost:8787", false}, // loopback allowed
@@ -175,7 +182,7 @@ func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
-	const wantAudience = "https://us.entire.io"
+	const wantAudience = usEntireAudience
 
 	var gotExchangeAudience, gotReposHost string
 	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -386,5 +393,146 @@ func TestNewEntireAPICellClient_TargetRoutesToRepoCell(t *testing.T) {
 	}
 	if got := resp.Request.Header.Get("Authorization"); !strings.Contains(got, "eu-identity-token") {
 		t.Fatalf("Authorization = %q, want eu identity token", got)
+	}
+}
+
+// TestJurisdictionToken_StoredContext exercises the exported token-only path off
+// a stored login context: it must return the exchanged identity token and mint
+// it with scope=openid, the jurisdiction audience, and the login JWT as
+// subject_token. Not parallel: manipulates env + token store.
+func TestJurisdictionToken_StoredContext(t *testing.T) {
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	t.Setenv("ENTIRE_API_BASE_URL", "https://entire.io")
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	var gotAudience, gotScope, gotSubject, gotGrant string
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != oauthTokenPath {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm() //nolint:errcheck // test handler
+		gotAudience = r.FormValue("audience")
+		gotScope = r.FormValue("scope")
+		gotSubject = r.FormValue("subject_token")
+		gotGrant = r.FormValue("grant_type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"cell-identity-token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer coreSrv.Close()
+
+	svc := tokenstore.CoreKeyringService(coreSrv.URL)
+	loginJWT := makeJWT(t, fmt.Sprintf(`{"iss":%q,"home_jurisdiction":"us","exp":%d}`, coreSrv.URL, time.Now().Add(2*time.Hour).Unix()))
+	if err := tokenstore.Set(svc, "me", tokenstore.EncodeTokenWithExpiration(loginJWT, 7200)); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	ctxObj := &contexts.Context{Name: "me@core", CoreURL: coreSrv.URL, Handle: "me", KeychainService: svc}
+
+	t.Cleanup(SetResolveContextForCellAPIForTest(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+		return ctxObj, nil
+	}))
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
+
+	token, err := JurisdictionToken(context.Background(), false, "us")
+	if err != nil {
+		t.Fatalf("JurisdictionToken: %v", err)
+	}
+	if token != "cell-identity-token" {
+		t.Fatalf("token = %q, want cell-identity-token", token)
+	}
+	if gotAudience != usEntireAudience {
+		t.Errorf("audience = %q, want https://us.entire.io", gotAudience)
+	}
+	if gotScope != JurisdictionIdentityScope {
+		t.Errorf("scope = %q, want %q", gotScope, JurisdictionIdentityScope)
+	}
+	if gotSubject != loginJWT {
+		t.Errorf("subject_token = %q, want the login JWT", gotSubject)
+	}
+	if gotGrant != "urn:ietf:params:oauth:grant-type:token-exchange" {
+		t.Errorf("grant_type = %q, want token-exchange", gotGrant)
+	}
+}
+
+// captureTransport counts exchanges and records the last request's parsed
+// form body, URL, and Authorization header, returning a canned RFC 8693
+// token-exchange success response. The minted access_token is `token`, or
+// "repo-scoped.jwt" when unset.
+type captureTransport struct {
+	calls int
+	form  url.Values
+	url   string
+	auth  string
+	token string
+}
+
+func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, err
+	}
+	c.calls++
+	c.form = form
+	c.url = req.URL.String()
+	c.auth = req.Header.Get("Authorization")
+	accessToken := c.token
+	if accessToken == "" {
+		accessToken = "repo-scoped.jwt"
+	}
+	resp := fmt.Sprintf(`{"access_token":%q,"token_type":"Bearer",`+
+		`"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","expires_in":300}`, accessToken)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewBufferString(resp)),
+		Request:    req,
+	}, nil
+}
+
+// TestJurisdictionToken_EnvToken proves ENTIRE_TOKEN is used as the exchange
+// subject with no stored context or discovery, and that its own aud drives the
+// environment family (no ENTIRE_API_BASE_URL set). Not parallel: sets env.
+func TestJurisdictionToken_EnvToken(t *testing.T) {
+	// Empty config dir: if the env-token path fell through to stored-login
+	// resolution this would fail "not logged in", so success proves the env path.
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	envToken := makeJWT(t, fmt.Sprintf(`{"aud":"https://us.auth.entire.io","home_jurisdiction":"us","exp":%d}`, time.Now().Add(2*time.Hour).Unix()))
+	t.Setenv("ENTIRE_TOKEN", envToken)
+
+	// captureTransport intercepts the /oauth/token POST and records the form, so
+	// the ENTIRE_TOKEN path is tested without a real (https) core server.
+	rt := &captureTransport{token: "env-cell-token"}
+	t.Cleanup(SetCellExchangeTransportForTest(t, rt))
+
+	// Explicit jurisdiction: audience follows the requested region, subject is the
+	// env token verbatim.
+	token, err := JurisdictionToken(context.Background(), false, "eu")
+	if err != nil {
+		t.Fatalf("JurisdictionToken(eu): %v", err)
+	}
+	if token != "env-cell-token" {
+		t.Fatalf("token = %q, want env-cell-token", token)
+	}
+	if got := rt.form.Get("subject_token"); got != envToken {
+		t.Errorf("subject_token = %q, want the ENTIRE_TOKEN value", got)
+	}
+	if got := rt.form.Get("audience"); got != "https://eu.entire.io" {
+		t.Errorf("audience = %q, want https://eu.entire.io", got)
+	}
+	if got := rt.form.Get("scope"); got != JurisdictionIdentityScope {
+		t.Errorf("scope = %q, want %q", got, JurisdictionIdentityScope)
+	}
+
+	// Empty jurisdiction falls back to the env token's home_jurisdiction claim.
+	if _, err := JurisdictionToken(context.Background(), false, ""); err != nil {
+		t.Fatalf("JurisdictionToken(home): %v", err)
+	}
+	if got := rt.form.Get("audience"); got != usEntireAudience {
+		t.Errorf("home-fallback audience = %q, want https://us.entire.io", got)
 	}
 }

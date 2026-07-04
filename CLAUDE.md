@@ -47,7 +47,14 @@ their canonical paths are still runnable.
   options, summary provider). Agent CRUD lives under `entire agent`.
 - `auth`: `login`, `logout`, `status`, `contexts`, `use`, plus
   `token` (prints the active control-plane bearer to stdout for scripting/curl;
-  honors `ENTIRE_TOKEN`, else the refreshed active-context login JWT). `logout`
+  honors `ENTIRE_TOKEN`, else the refreshed active-context login JWT). `token`
+  also takes `--jurisdiction <slug>` (e.g. `us`, `eu`), which instead mints a
+  jurisdictional identity token (RFC 8693 exchange, `scope=openid`,
+  `aud=<jurisdiction host>`) for that jurisdiction's entire-api cells (e.g.
+  `https://aws-us-east-2.api.entire.io/api/v1`), which reject the control-plane
+  bearer; it exchanges `ENTIRE_TOKEN` when set (deriving the environment from the
+  env token's `aud`), else the active login. `auth status` shows the caller's
+  home jurisdiction so the slug is discoverable. `logout`
   takes `--everywhere` (revoke every session on the active core, not just the
   current one) and `--all-contexts` (log out of every saved login)
 - `doctor`: bare runs the scan-and-fix flow, plus `trace`, `logs`, `bundle`
