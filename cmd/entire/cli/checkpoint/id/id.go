@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"time"
 
 	ulid "github.com/oklog/ulid/v2"
 )
@@ -159,8 +158,11 @@ func Generate() (CheckpointID, error) {
 // and lexicographically time-sortable. It is the format the git-refs store uses
 // (chosen by checkpoint.GenerateCheckpointID); the value is canonical and passes
 // KindOf/Validate as KindULID.
+//
+// The timestamp is Unix epoch milliseconds (via ulid.Now), so it is inherently
+// timezone-independent — the machine's local zone does not affect the ID.
 func GenerateULID() (CheckpointID, error) {
-	u, err := ulid.New(ulid.Timestamp(time.Now()), rand.Reader)
+	u, err := ulid.New(ulid.Now(), rand.Reader)
 	if err != nil {
 		return EmptyCheckpointID, fmt.Errorf("failed to generate ULID checkpoint ID: %w", err)
 	}
