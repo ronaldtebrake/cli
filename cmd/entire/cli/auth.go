@@ -204,7 +204,7 @@ func newAuthTokenCmd() *cobra.Command {
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
-	cmd.Flags().StringVar(&jurisdiction, "jurisdiction", "", "mint a jurisdictional identity token for this jurisdiction slug (e.g. us, eu) for use against that jurisdiction's entire-api cells")
+	cmd.Flags().StringVarP(&jurisdiction, "jurisdiction", "j", "", "mint a jurisdictional identity token for this jurisdiction slug (e.g. us, eu) for use against that jurisdiction's entire-api cells")
 	return cmd
 }
 
