@@ -1072,7 +1072,7 @@ func (s *ManualCommitStrategy) CondenseSessionByID(ctx context.Context, sessionI
 	}
 	defer repo.Close()
 
-	checkpointID, err := id.Generate()
+	checkpointID, err := cpkg.GenerateCheckpointID(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to generate checkpoint ID: %w", err)
 	}
@@ -1172,7 +1172,7 @@ func (s *ManualCommitStrategy) CondenseAndMarkFullyCondensed(ctx context.Context
 	}
 	defer repo.Close()
 
-	checkpointID, err := id.Generate()
+	checkpointID, err := cpkg.GenerateCheckpointID(logCtx)
 	if err != nil {
 		logging.Warn(logCtx, "eager condense: failed to generate checkpoint ID",
 			slog.String("error", err.Error()),

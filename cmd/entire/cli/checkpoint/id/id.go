@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"time"
 
 	ulid "github.com/oklog/ulid/v2"
 )
@@ -47,6 +48,11 @@ const CheckpointPattern = `(?:` + Pattern + `|` + ulidPattern + `)`
 // ShortIDLength is the standard length for truncating IDs for display purposes.
 // Used for tool use IDs, session IDs, and commit hashes in logs and messages.
 const ShortIDLength = 12
+
+// MaxIDLength is the longest a valid checkpoint ID can be — a 26-character ULID.
+// Use it (not ShortIDLength) when reasoning about whether a string could be a
+// checkpoint ID or a prefix of one, since IDs are no longer fixed-width.
+const MaxIDLength = 26
 
 // checkpointIDRegex validates the legacy format: exactly 12 lowercase hex characters.
 var checkpointIDRegex = regexp.MustCompile(`^` + Pattern + `$`)
@@ -146,6 +152,19 @@ func Generate() (CheckpointID, error) {
 		return EmptyCheckpointID, fmt.Errorf("failed to generate random checkpoint ID: %w", err)
 	}
 	return CheckpointID(hex.EncodeToString(bytes)), nil
+}
+
+// GenerateULID creates a new 26-character Crockford base32 ULID checkpoint ID:
+// a millisecond timestamp prefix plus crypto-random entropy, so IDs are unique
+// and lexicographically time-sortable. It is the format the git-refs store uses
+// (chosen by checkpoint.GenerateCheckpointID); the value is canonical and passes
+// KindOf/Validate as KindULID.
+func GenerateULID() (CheckpointID, error) {
+	u, err := ulid.New(ulid.Timestamp(time.Now()), rand.Reader)
+	if err != nil {
+		return EmptyCheckpointID, fmt.Errorf("failed to generate ULID checkpoint ID: %w", err)
+	}
+	return CheckpointID(u.String()), nil
 }
 
 // Validate checks if a string is a valid checkpoint ID format: either a legacy

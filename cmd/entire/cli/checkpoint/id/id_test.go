@@ -8,6 +8,30 @@ import (
 // A representative ULID (Crockford base32, 26 chars) used across tests.
 const sampleULID = "01KVBJCWYA4YW6J5M9GP655HZN"
 
+func TestGenerateULID(t *testing.T) {
+	t.Parallel()
+	a, err := GenerateULID()
+	if err != nil {
+		t.Fatalf("GenerateULID() error = %v", err)
+	}
+	if err := Validate(string(a)); err != nil {
+		t.Errorf("generated ULID %q failed Validate: %v", a, err)
+	}
+	if a.Kind() != KindULID {
+		t.Errorf("Kind() = %v, want KindULID for %q", a.Kind(), a)
+	}
+	if len(string(a)) != 26 {
+		t.Errorf("len = %d, want 26 for %q", len(string(a)), a)
+	}
+	b, err := GenerateULID()
+	if err != nil {
+		t.Fatalf("GenerateULID() error = %v", err)
+	}
+	if a == b {
+		t.Errorf("two GenerateULID() calls returned the same id %q", a)
+	}
+}
+
 func TestCheckpointID_Methods(t *testing.T) {
 	t.Run("String", func(t *testing.T) {
 		id := CheckpointID("a1b2c3d4e5f6")

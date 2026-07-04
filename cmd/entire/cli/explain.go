@@ -530,10 +530,9 @@ func runExplainAuto(ctx context.Context, w, errW io.Writer, target string, noPag
 // Best-effort: on repo/list failures we return nil so the main flow
 // surfaces the real error instead of double-reporting.
 func runExplainAutoAmbiguityGuard(ctx context.Context, target string, lookup *explainCheckpointLookup, lookupErr error) error {
-	// Targets longer than a checkpoint ID can't prefix-match one.
-	// This is coupled to checkpoint IDs being fixed-width; longer targets
-	// cannot be prefixes of committed checkpoint IDs.
-	if len(target) > id.ShortIDLength {
+	// Targets longer than the longest possible checkpoint ID (a 26-char ULID)
+	// can't be a prefix of one, so they can't be an ambiguous checkpoint target.
+	if len(target) > id.MaxIDLength {
 		return nil
 	}
 	if lookupErr != nil {

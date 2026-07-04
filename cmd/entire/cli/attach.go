@@ -289,7 +289,7 @@ func runAttach(ctx context.Context, w, errW io.Writer, sessionID string, agentNa
 	warnEmptyTranscriptMetadata(errW, ag.Name(), meta, opts)
 
 	// Determine checkpoint ID: reuse from HEAD if one exists, otherwise generate new.
-	checkpointID, isExistingCheckpoint := resolveCheckpointID(headCommit)
+	checkpointID, isExistingCheckpoint := resolveCheckpointID(ctx, headCommit)
 
 	// If HEAD references an existing checkpoint, make sure we have it locally
 	// before writing — otherwise we'd create a fresh session 0 under the same
@@ -585,13 +585,13 @@ func suggestCheckpointFetchCommand(ctx context.Context) string {
 	return "git fetch origin " + ref
 }
 
-func resolveCheckpointID(headCommit *object.Commit) (id.CheckpointID, bool) {
+func resolveCheckpointID(ctx context.Context, headCommit *object.Commit) (id.CheckpointID, bool) {
 	existing := trailers.ParseAllCheckpoints(headCommit.Message)
 	if len(existing) > 0 {
 		return existing[len(existing)-1], true
 	}
 
-	cpID, err := id.Generate()
+	cpID, err := cpkg.GenerateCheckpointID(ctx)
 	if err != nil {
 		// Generation only fails if crypto/rand fails — extremely unlikely.
 		// Fall back to empty which will cause WriteCommitted to fail with a clear error.
