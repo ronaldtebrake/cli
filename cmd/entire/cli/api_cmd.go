@@ -71,7 +71,7 @@ func newAPICmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&f.to, "to", apiTargetCore, "which backend to call: core or cell")
-	cmd.Flags().StringVar(&f.jurisdiction, "jurisdiction", "", "target a specific jurisdiction's cell (e.g. us, eu) instead of your home cell; implies --to cell")
+	cmd.Flags().StringVarP(&f.jurisdiction, "jurisdiction", "j", "", "target a specific jurisdiction's cell (e.g. us, eu) instead of your home cell; implies --to cell")
 	cmd.Flags().StringVarP(&f.method, "method", "X", "", "HTTP method (default GET, or POST when a field/body is given)")
 	cmd.Flags().StringArrayVarP(&f.rawFields, "raw-field", "f", nil, "add a string parameter in key=value format (repeatable)")
 	cmd.Flags().StringArrayVarP(&f.typedFields, "field", "F", nil, "add a typed parameter in key=value format; true/false/null/numbers are converted (repeatable)")
