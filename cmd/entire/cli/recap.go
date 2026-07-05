@@ -123,7 +123,7 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 	if err != nil {
 		return err
 	}
-	client, repoSlug, err := newRecapClient(ctx, f.insecureHTTP)
+	client, repoScope, err := newRecapClient(ctx, f.insecureHTTP)
 	if err != nil {
 		if errors.Is(err, api.ErrInsecureHTTP) {
 			fmt.Fprintf(errW, "ENTIRE_API_BASE_URL is set to an insecure http:// URL (%s). Use https:// for production, or pass --insecure-http-auth for local dev.\n", api.BaseURL())
@@ -143,7 +143,7 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 	// actually scoped (a repo query was sent), so an unscoped recap isn't
 	// mislabelled as scoped to the current repo.
 	repoName := ""
-	if repoSlug != "" {
+	if repoScope != "" {
 		repoName = currentRepoSlug(ctx)
 	}
 	if f.useTUI(interactive.IsTerminalWriter(w), interactive.CanPromptInteractively(), IsAccessibleMode()) {
@@ -151,13 +151,13 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 			Range:    rangeKey,
 			View:     mode,
 			Agent:    f.agentName(),
-			Repo:     repoSlug,
+			Repo:     repoScope,
 			RepoName: repoName,
 			Color:    color,
 		})
 	}
 	start, end := rangeKey.Bounds(time.Now())
-	resp, err := recap.FetchMeRecap(ctx, client, start, end, repoSlug, 0)
+	resp, err := recap.FetchMeRecap(ctx, client, start, end, repoScope, 0)
 	if err != nil {
 		return handleRecapFetchError(errW, err)
 	}
@@ -194,10 +194,13 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 // the data API (which addresses them by name). Empty when the current repo
 // can't be resolved — recap then shows the personal side only.
 //
-// It prefers the caller's home entire-api cell (the shared client), falling back
-// to the data API when the region has no cell yet (ErrNoCellForJurisdiction) or
-// the caller isn't logged in — recap tolerates the latter, rendering and letting
-// the server answer 401 rather than hard-failing. Every other failure surfaces.
+// It prefers the caller's home entire-api cell (the shared client) and falls
+// back to the data API on ANY cell-client failure — the cell path is a
+// best-effort upgrade, so a cell problem must never break a command that worked
+// before it existed. Expected fallbacks (region has no cell yet, not logged in)
+// are silent; unexpected ones are debug-logged (logCellClientFallback). Only
+// failures of the data-API path itself surface — except ErrNotLoggedIn, which
+// recap tolerates, rendering and letting the server answer 401.
 func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, string, error) {
 	// Best-effort upgrade: on any cell failure fall back to the data API path
 	// below, which tolerates a missing login (renders, lets the server 401) so

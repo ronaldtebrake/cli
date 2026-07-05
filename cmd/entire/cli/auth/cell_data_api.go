@@ -547,7 +547,10 @@ func resolveCellAPIBaseURL(ctx context.Context, coreURL, loginJWT, jurisdiction 
 	var matches []clusterListingRow
 	sawJurisdiction := false
 	for _, row := range listing.Clusters {
-		if row.Jurisdiction != jurisdiction {
+		// jurisdiction is already a folded lowercase label (resolveJurisdiction);
+		// fold the catalog row too so a differently-cased row still matches
+		// instead of misreporting "no cell for jurisdiction".
+		if !strings.EqualFold(strings.TrimSpace(row.Jurisdiction), jurisdiction) {
 			continue
 		}
 		sawJurisdiction = true

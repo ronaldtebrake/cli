@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
@@ -12,6 +13,11 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/internal/coreapi"
 )
+
+// currentRepoIDTimeout bounds currentRepoID's control-plane lookup. The lookup
+// is best-effort decoration (recap degrades to personal-only without it), so a
+// stalled core must not hang the command — mirror expertsCellResolveTimeout.
+const currentRepoIDTimeout = 5 * time.Second
 
 // runAuthenticatedActivityAPI runs fn with an authenticated client for the
 // activity/recap surface. It prefers the caller's home entire-api cell (the same
@@ -64,6 +70,9 @@ func forgeToMirrorProvider(forge string) (string, bool) {
 // no extra resolution is needed. Any failure returns "" — recap then shows the
 // personal side only rather than erroring.
 func currentRepoID(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, currentRepoIDTimeout)
+	defer cancel()
+
 	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
 	if err != nil {
 		return ""
