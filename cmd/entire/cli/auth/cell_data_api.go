@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
@@ -97,21 +98,52 @@ func SetCellExchangeTransportForTest(t interface{ Helper() }, rt http.RoundTripp
 //   - otherwise the data host is a BFF/apex: resolve the caller's home-cell
 //     apiUrl from the cluster catalog (home-jurisdiction fallback).
 func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *CellTarget) (*api.Client, error) {
-	// NewEntireAPICellClient deliberately does NOT consult ENTIRE_TOKEN: it
-	// resolves the active stored login context (like every other cell/data-API
-	// command). Only `entire auth token --jurisdiction` (JurisdictionToken) adds
-	// the env-token path.
+	factory, err := NewEntireAPICellClientFactory(ctx, insecureHTTP)
+	if err != nil {
+		return nil, err
+	}
+	return factory.ClientFor(ctx, target)
+}
+
+// CellClientFactory builds entire-api cell clients from a single resolved
+// exchange subject, minting at most one jurisdictional identity token per
+// jurisdiction. Identity tokens are per-jurisdiction, not per-cell — every cell
+// in a jurisdiction accepts the same token — so a caller dialing several cells
+// in one operation (multi-cell fan-out over the caller's repos) should build
+// one factory and reuse it for every cell, instead of paying discovery + login
+// refresh + RFC 8693 exchange once per cell via NewEntireAPICellClient.
+//
+// A factory is safe for concurrent use, and holds credentials resolved at
+// construction time — build it per operation, don't store it long-term. Like
+// NewEntireAPICellClient it deliberately does NOT consult ENTIRE_TOKEN.
+type CellClientFactory struct {
+	subject cellSubject
+
+	mu     sync.Mutex
+	tokens map[string]string // jurisdiction -> minted identity token
+}
+
+// NewEntireAPICellClientFactory resolves the exchange subject (active stored
+// login context) once, for building clients aimed at several cells. See
+// NewEntireAPICellClient for the single-cell convenience wrapper.
+func NewEntireAPICellClientFactory(ctx context.Context, insecureHTTP bool) (*CellClientFactory, error) {
 	subject, err := resolveStoredCellSubject(ctx, insecureHTTP)
 	if err != nil {
 		return nil, err
 	}
+	return &CellClientFactory{subject: subject, tokens: make(map[string]string)}, nil
+}
 
-	jurisdiction, err := targetJurisdiction(target, subject.loginJWT)
+// ClientFor returns an authenticated client for the given cell target (nil
+// falls back to home-jurisdiction routing), reusing an already-minted identity
+// token when the target's jurisdiction matches an earlier call.
+func (f *CellClientFactory) ClientFor(ctx context.Context, target *CellTarget) (*api.Client, error) {
+	jurisdiction, err := targetJurisdiction(target, f.subject.loginJWT)
 	if err != nil {
 		return nil, err
 	}
 
-	coreURL := jurisdictionCoreURL(jurisdiction, subject.dataOrigin, subject.discoveredCore)
+	coreURL := jurisdictionCoreURL(jurisdiction, f.subject.dataOrigin, f.subject.discoveredCore)
 	if err := requireSafeExchangeURL("entire-core", coreURL); err != nil {
 		return nil, err
 	}
@@ -120,7 +152,7 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 	// which is signed by the discovered login core — so list there, not at the
 	// templated jurisdiction core (coreURL), which in a multi-core setup could
 	// differ and reject the token. coreURL still governs the token exchange below.
-	cellBaseURL, err := resolveTargetCellBaseURL(ctx, target, subject.dataOrigin, jurisdiction, subject.discoveredCore, subject.loginJWT, subject.httpClient)
+	cellBaseURL, err := resolveTargetCellBaseURL(ctx, target, f.subject.dataOrigin, jurisdiction, f.subject.discoveredCore, f.subject.loginJWT, f.subject.httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -128,13 +160,32 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 		return nil, err
 	}
 
-	audience := jurisdictionAudience(jurisdiction, subject.dataOrigin, subject.discoveredCore)
-	token, err := exchangeJurisdictionToken(ctx, coreURL, subject.loginJWT, audience, subject.httpClient)
+	token, err := f.tokenFor(ctx, jurisdiction, coreURL)
 	if err != nil {
-		return nil, fmt.Errorf("exchange jurisdictional identity token: %w", err)
+		return nil, err
 	}
 
 	return api.NewClientWithBaseURL(token, cellBaseURL), nil
+}
+
+// tokenFor returns the cached identity token for jurisdiction, minting it on
+// first use. The mutex is held across the mint: concurrent callers for the
+// same jurisdiction wait for one exchange instead of duplicating it, at the
+// cost of serializing cross-jurisdiction mints (fine for the handful of
+// jurisdictions a fan-out touches).
+func (f *CellClientFactory) tokenFor(ctx context.Context, jurisdiction, coreURL string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if token, ok := f.tokens[jurisdiction]; ok {
+		return token, nil
+	}
+	audience := jurisdictionAudience(jurisdiction, f.subject.dataOrigin, f.subject.discoveredCore)
+	token, err := exchangeJurisdictionToken(ctx, coreURL, f.subject.loginJWT, audience, f.subject.httpClient)
+	if err != nil {
+		return "", fmt.Errorf("exchange jurisdictional identity token: %w", err)
+	}
+	f.tokens[jurisdiction] = token
+	return token, nil
 }
 
 // JurisdictionToken mints and returns a jurisdictional identity token

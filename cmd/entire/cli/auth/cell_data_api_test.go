@@ -542,3 +542,65 @@ func TestJurisdictionToken_EnvToken(t *testing.T) {
 		t.Errorf("home-fallback audience = %q, want https://us.entire.io", got)
 	}
 }
+
+// TestCellClientFactory_ReusesTokenPerJurisdiction pins the factory's core
+// contract: identity tokens are per-jurisdiction, not per-cell, so building
+// clients for several cells must mint one token per distinct jurisdiction and
+// reuse it across cells. Not parallel: manipulates env + token store.
+func TestCellClientFactory_ReusesTokenPerJurisdiction(t *testing.T) {
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	t.Setenv("ENTIRE_API_BASE_URL", "https://entire.io")
+	t.Setenv("ENTIRE_API_AUDIENCE_TEMPLATE", "")
+	t.Setenv("ENTIRE_CORE_BASE_URL_TEMPLATE", "")
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	var exchangeCount int
+	var audiences []string
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != oauthTokenPath {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm() //nolint:errcheck // test handler
+		exchangeCount++
+		audiences = append(audiences, r.FormValue("audience"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"identity-token-%d","token_type":"Bearer","expires_in":3600}`, exchangeCount)
+	}))
+	defer coreSrv.Close()
+
+	svc := tokenstore.CoreKeyringService(coreSrv.URL)
+	loginJWT := makeJWT(t, fmt.Sprintf(`{"iss":%q,"home_jurisdiction":"us","exp":%d}`, coreSrv.URL, time.Now().Add(2*time.Hour).Unix()))
+	if err := tokenstore.Set(svc, "me", tokenstore.EncodeTokenWithExpiration(loginJWT, 7200)); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	ctxObj := &contexts.Context{Name: "me@core", CoreURL: coreSrv.URL, Handle: "me", KeychainService: svc}
+	t.Cleanup(SetResolveContextForCellAPIForTest(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+		return ctxObj, nil
+	}))
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
+
+	factory, err := NewEntireAPICellClientFactory(context.Background(), false)
+	if err != nil {
+		t.Fatalf("NewEntireAPICellClientFactory: %v", err)
+	}
+
+	// Two eu cells then one us cell: two exchanges total, the eu token reused
+	// for the second eu cell.
+	for _, target := range []*CellTarget{
+		{BaseURL: "https://cell-a.api.example", Jurisdiction: "eu"},
+		{BaseURL: "https://cell-b.api.example", Jurisdiction: "eu"},
+		{BaseURL: "https://cell-c.api.example", Jurisdiction: "us"},
+	} {
+		if _, err := factory.ClientFor(context.Background(), target); err != nil {
+			t.Fatalf("ClientFor(%s): %v", target.BaseURL, err)
+		}
+	}
+	if exchangeCount != 2 {
+		t.Fatalf("exchange count = %d, want 2 (one per distinct jurisdiction)", exchangeCount)
+	}
+	if got, want := strings.Join(audiences, ","), "https://eu.entire.io,"+usEntireAudience; got != want {
+		t.Fatalf("exchange audiences = %q, want %q", got, want)
+	}
+}
