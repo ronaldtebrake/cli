@@ -20,7 +20,7 @@ func newCreateOrgServer(t *testing.T) *httptest.Server {
 		assert.Equal(t, http.MethodPost, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		if err := writeJSON(w, &coreapi.Org{ID: testDeleteULID, Name: "acme", Region: "us"}); err != nil {
+		if err := printJSON(w, &coreapi.Org{ID: testDeleteULID, Name: "acme", Region: "us"}); err != nil {
 			t.Errorf("encode org: %v", err)
 		}
 	}))
@@ -71,7 +71,7 @@ func newCreateRepoServer(t *testing.T) *httptest.Server {
 			ClusterHost:     coreapi.NewOptString("c.example.com"),
 			Path:            coreapi.NewOptString("/gh/o/web"),
 		}
-		if err := writeJSON(w, repo); err != nil {
+		if err := printJSON(w, repo); err != nil {
 			t.Errorf("encode repo: %v", err)
 		}
 	}))

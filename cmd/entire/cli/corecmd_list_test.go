@@ -18,7 +18,7 @@ func serveOrgList(t *testing.T, orgs []coreapi.Org) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		if err := writeJSON(w, &coreapi.ListOrgsOutputBody{Orgs: orgs}); err != nil {
+		if err := printJSON(w, &coreapi.ListOrgsOutputBody{Orgs: orgs}); err != nil {
 			t.Errorf("encode orgs: %v", err)
 		}
 	}))
