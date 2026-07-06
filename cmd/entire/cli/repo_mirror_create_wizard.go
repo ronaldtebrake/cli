@@ -263,7 +263,15 @@ func pickOneCluster(ctx context.Context, w io.Writer, regions []regionChoice, ju
 		}
 		return "", NewSilentError(errors.New("mirror create cancelled"))
 	}
-	return selected, nil
+	// Guard the selection against the offered hosts (like repo clone's
+	// picker) so a zero-value fall-through can't reach the caller as a
+	// misleading "invalid [cluster-host]" error.
+	for _, r := range regions {
+		if r.host == selected {
+			return selected, nil
+		}
+	}
+	return "", NewSilentError(errors.New("mirror create cancelled"))
 }
 
 // mirrorTarget is one unit of work: a selected repo to be mirrored into a
