@@ -15,12 +15,14 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/api"
 )
 
-// activityDataMsg is sent when API data has been fetched.
+// activityDataMsg is sent when API data has been fetched. Exactly one of days
+// (commits view) or sessionDays (sessions view) is populated, per showCommits.
 type activityDataMsg struct {
-	stats  contributionStats
-	repos  []repoContribution
-	hourly []hourlyPoint
-	days   []commitDay
+	stats       contributionStats
+	repos       []repoContribution
+	hourly      []hourlyPoint
+	days        []commitDay
+	sessionDays []sessionDay
 }
 
 // activityErrMsg is sent when fetching fails.
@@ -28,10 +30,14 @@ type activityErrMsg struct{ err error }
 
 type activityModel struct {
 	// Data (nil until loaded)
-	stats  *contributionStats
-	repos  []repoContribution
-	hourly []hourlyPoint
-	days   []commitDay
+	stats       *contributionStats
+	repos       []repoContribution
+	hourly      []hourlyPoint
+	days        []commitDay
+	sessionDays []sessionDay
+
+	// showCommits selects the recent-list view: commits when true, else sessions.
+	showCommits bool
 
 	// Loading state
 	loading bool
@@ -51,17 +57,18 @@ type activityModel struct {
 	ready    bool
 }
 
-func runActivityTUI(ctx context.Context, client *api.Client) error {
+func runActivityTUI(ctx context.Context, client *api.Client, showCommits bool) error {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 	m := activityModel{
-		loading:  true,
-		spinner:  sp,
-		ctx:      ctx,
-		client:   client,
-		useColor: shouldUseColor(os.Stdout),
+		loading:     true,
+		spinner:     sp,
+		ctx:         ctx,
+		client:      client,
+		useColor:    shouldUseColor(os.Stdout),
+		showCommits: showCommits,
 	}
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
@@ -71,23 +78,28 @@ func runActivityTUI(ctx context.Context, client *api.Client) error {
 }
 
 func (m activityModel) fetchData() tea.Msg {
-	activity, commits, err := fetchActivityData(m.ctx, m.client)
+	if m.showCommits {
+		activity, commits, err := fetchActivityWith(m.ctx, m.client, fetchCommits)
+		if err != nil {
+			return activityErrMsg{err: err}
+		}
+		return activityDataMsg{
+			stats:  statsFromActivity(activity),
+			repos:  activity.Repos,
+			hourly: activity.HourlyContributions,
+			days:   groupCommitsByDay(commits),
+		}
+	}
+
+	activity, sessions, err := fetchActivityWith(m.ctx, m.client, fetchSessions)
 	if err != nil {
 		return activityErrMsg{err: err}
 	}
-
 	return activityDataMsg{
-		stats: contributionStats{
-			Tasks:         activity.Stats.Tasks,
-			Throughput:    activity.Stats.Throughput,
-			Iteration:     activity.Stats.Iteration,
-			ContinuityH:   activity.Stats.ContinuityHours,
-			Streak:        activity.Stats.LifetimeStreak,
-			CurrentStreak: activity.Stats.LifetimeCurrentStreak,
-		},
-		repos:  activity.Repos,
-		hourly: activity.HourlyContributions,
-		days:   groupCommitsByDay(commits),
+		stats:       statsFromActivity(activity),
+		repos:       activity.Repos,
+		hourly:      activity.HourlyContributions,
+		sessionDays: groupSessionsByDay(sessions),
 	}
 }
 
@@ -103,6 +115,7 @@ func (m activityModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repos = msg.repos
 		m.hourly = msg.hourly
 		m.days = msg.days
+		m.sessionDays = msg.sessionDays
 		if m.width > 0 {
 			m = m.withViewport()
 		}
@@ -170,7 +183,7 @@ func (m activityModel) withViewport() activityModel {
 		m.viewport.SetWidth(m.width)
 		m.viewport.SetHeight(vpHeight)
 	}
-	m.viewport.SetContent(m.renderCommits())
+	m.viewport.SetContent(m.renderList())
 	return m
 }
 
@@ -218,9 +231,15 @@ func (m activityModel) headerLineCount() int {
 	return strings.Count(m.renderHeader(), "\n")
 }
 
-func (m activityModel) renderCommits() string {
+// renderList renders the scrollable recent-list section — sessions by default,
+// commits when --commits is set.
+func (m activityModel) renderList() string {
 	var buf bytes.Buffer
-	renderCommitListN(&buf, m.sty, m.days, -1)
+	if m.showCommits {
+		renderCommitListN(&buf, m.sty, m.days, -1)
+	} else {
+		renderSessionListN(&buf, m.sty, m.sessionDays, -1)
+	}
 	return buf.String()
 }
 
