@@ -56,7 +56,7 @@ func newActivityCmd() *cobra.Command {
 }
 
 func runActivity(ctx context.Context, w, errW io.Writer) error {
-	return runAuthenticatedDataAPI(ctx, errW, false, func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedActivityAPI(ctx, errW, false, func(ctx context.Context, client *api.Client) error {
 		// Non-interactive fallback: piped output or accessibility mode
 		if !interactive.IsTerminalWriter(w) || IsAccessibleMode() {
 			return runActivityStatic(ctx, w, client)

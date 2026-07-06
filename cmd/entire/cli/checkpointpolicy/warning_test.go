@@ -3,7 +3,6 @@ package checkpointpolicy_test
 import (
 	"testing"
 
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/stretchr/testify/require"
 )
@@ -13,11 +12,11 @@ func TestRequiresUpgrade(t *testing.T) {
 
 	require.False(t, checkpointpolicy.RequiresUpgrade(checkpointpolicy.DefaultPolicy()))
 	require.True(t, checkpointpolicy.RequiresUpgrade(checkpointpolicy.Policy{
-		CheckpointVersion:    checkpoint.CheckpointVersionBranchV1,
-		CheckpointMinVersion: "refs-v1",
+		CheckpointVersion:    checkpointpolicy.CheckpointVersionBranchV1,
+		CheckpointMinVersion: "refs-v2",
 	}))
 	require.True(t, checkpointpolicy.RequiresUpgrade(checkpointpolicy.Policy{
-		CheckpointVersion:    checkpoint.CheckpointVersionBranchV1,
+		CheckpointVersion:    checkpointpolicy.CheckpointVersionBranchV1,
 		CheckpointMinVersion: "invalid",
 	}))
 }
@@ -27,12 +26,12 @@ func TestUnsupportedWrite(t *testing.T) {
 
 	require.False(t, checkpointpolicy.UnsupportedWrite(checkpointpolicy.DefaultPolicy()))
 	require.True(t, checkpointpolicy.UnsupportedWrite(checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1,
+		CheckpointVersion:    "refs-v2",
+		CheckpointMinVersion: checkpointpolicy.CheckpointVersionBranchV1,
 	}))
 	require.True(t, checkpointpolicy.UnsupportedWrite(checkpointpolicy.Policy{
 		CheckpointVersion:    "invalid",
-		CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1,
+		CheckpointMinVersion: checkpointpolicy.CheckpointVersionBranchV1,
 	}))
 }
 
@@ -42,12 +41,12 @@ func TestCanSatisfyPolicy(t *testing.T) {
 	require.True(t, checkpointpolicy.CanSatisfyPolicy(checkpointpolicy.DefaultPolicy()))
 	require.True(t, checkpointpolicy.CanSatisfyPolicy(checkpointpolicy.Policy{}))
 	require.False(t, checkpointpolicy.CanSatisfyPolicy(checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: checkpoint.CheckpointVersionBranchV1,
+		CheckpointVersion:    "refs-v2",
+		CheckpointMinVersion: checkpointpolicy.CheckpointVersionBranchV1,
 	}))
 	require.False(t, checkpointpolicy.CanSatisfyPolicy(checkpointpolicy.Policy{
-		CheckpointVersion:    checkpoint.CheckpointVersionBranchV1,
-		CheckpointMinVersion: "refs-v1",
+		CheckpointVersion:    checkpointpolicy.CheckpointVersionBranchV1,
+		CheckpointMinVersion: "refs-v2",
 	}))
 }
 
@@ -55,14 +54,14 @@ func TestUnsupportedPolicyMessageIncludesSettingDetails(t *testing.T) {
 	t.Parallel()
 
 	got := checkpointpolicy.UnsupportedPolicyMessage(checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: "refs-v1",
+		CheckpointVersion:    "refs-v2",
+		CheckpointMinVersion: "refs-v2",
 	}, "brew upgrade entire")
 
 	require.Contains(t, got, "[entire] This repository requires checkpoint support newer than this Entire CLI.")
 	require.Contains(t, got, "[entire]   brew upgrade entire")
-	require.Contains(t, got, `checkpoint_version "refs-v1" is not writable by this Entire CLI`)
-	require.Contains(t, got, `checkpoint_min_version "refs-v1" is not readable by this Entire CLI`)
+	require.Contains(t, got, `checkpoint_version "refs-v2" is not writable by this Entire CLI`)
+	require.Contains(t, got, `checkpoint_min_version "refs-v2" is not readable by this Entire CLI`)
 }
 
 func TestUnsupportedPolicyMessageEmptyForSatisfiedPolicy(t *testing.T) {

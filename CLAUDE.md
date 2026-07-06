@@ -45,9 +45,16 @@ their canonical paths are still runnable.
 - `configure`: bare prints help and a hint pointing at `entire agent`; flags
   manage non-agent settings (telemetry, git-hook installation mode, strategy
   options, summary provider). Agent CRUD lives under `entire agent`.
-- `auth`: `login`, `logout`, `status`, `contexts`, `use`, plus the hidden
+- `auth`: `login`, `logout`, `status`, `contexts`, `use`, plus
   `token` (prints the active control-plane bearer to stdout for scripting/curl;
-  honors `ENTIRE_TOKEN`, else the refreshed active-context login JWT). `logout`
+  honors `ENTIRE_TOKEN`, else the refreshed active-context login JWT). `token`
+  also takes `--jurisdiction <slug>` (e.g. `us`, `eu`), which instead mints a
+  jurisdictional identity token (RFC 8693 exchange, `scope=openid`,
+  `aud=<jurisdiction host>`) for that jurisdiction's entire-api cells (e.g.
+  `https://aws-us-east-2.api.entire.io/api/v1`), which reject the control-plane
+  bearer; it exchanges `ENTIRE_TOKEN` when set (deriving the environment from the
+  env token's `aud`), else the active login. `auth status` shows the caller's
+  home jurisdiction so the slug is discoverable. `logout`
   takes `--everywhere` (revoke every session on the active core, not just the
   current one) and `--all-contexts` (log out of every saved login)
 - `doctor`: bare runs the scan-and-fix flow, plus `trace`, `logs`, `bundle`
@@ -499,6 +506,35 @@ env-token-first precedence itself — see `resolveAuthStatusTarget` /
 deliberate exception: it manages a *stored* login session, which an ephemeral
 env token has none of, so it stays on the active context.
 
+### Entire-API Cell Routing (which cell does a data-plane request go to?)
+
+The data plane (entire-api) is deployed per jurisdiction; a repo placement
+lives in exactly one cell, user `/me/*` activity is consolidated in the
+caller's home cell, and no server-side cross-cell aggregator exists. The CLI
+therefore has exactly three routing shapes, mirroring the entire.io BFF:
+
+- **Repo-scoped → one cell**: `resolveRepoCellTarget` (`cell_target.go`) maps
+  a repo (ULID or owner/repo) to the cell hosting it via mirrors + the cluster
+  catalog. Best-effort: any failure returns nil and the auth layer falls back
+  to home-jurisdiction routing. Used by experts
+  (`NewAuthenticatedEntireAPICellClient` in `api_client.go`).
+- **User-scoped `/me` → home cell, never fan out**:
+  `auth.NewEntireAPICellClient(ctx, insecure, nil)` routes by the
+  `home_jurisdiction` JWT claim; activity/recap use it with a data-API
+  fallback (`runAuthenticatedActivityAPI` in `entireapi_client.go`).
+- **Repo-set queries → fan out and merge client-side**: `cell_fanout.go` —
+  `groupReposByCell` (repo index → per-cell groups; the catalog join key is
+  `ClusterSlug`↔`Cluster.Slug`, NOT the cell name, which the catalog does not
+  expose), `resolveCellBaseURLs`, and `fanOutCells` (parallel per-cell calls,
+  per-cell timeout, partial failures isolated per slot). Merge semantics stay
+  with the command.
+
+Token rule: identity tokens are **per-jurisdiction, not per-cell**. Multi-cell
+callers must build one `auth.CellClientFactory`
+(`NewEntireAPICellClientFactory`) per operation — it resolves the login
+subject once and mints at most one token per jurisdiction. `fanOutCells` does
+this automatically; do not call `NewEntireAPICellClient` in a loop.
+
 ### Session Strategy (`cmd/entire/cli/strategy/`)
 
 The CLI uses a manual-commit strategy for managing session data and checkpoints. The strategy implements the `Strategy` interface defined in `strategy.go`.
@@ -563,6 +599,56 @@ The phase state machine, metadata directory layout, sharded checkpoint format, m
 `entire review` runs a configured review profile. Keep documentation brief and user-facing.
 
 See [Review Command](docs/architecture/review-command.md) for usage, minimal profile config, and key files.
+
+### Agent-Safe CLI Fallbacks
+
+When building CLI features, do not make useful output available only through a
+TUI, picker, wizard, terminal selection menu, confirmation dialog, or stdin
+question. Agents must be able to complete the same read-only workflow from a
+non-interactive terminal.
+
+Plain text output is acceptable when it contains the full information needed for
+the workflow. JSON is preferred for structured data, following existing patterns
+such as `--json` on `status`, `agent-help`, `sessions`, `search`, and trail
+finding commands. Long human-readable output may use a pager in TTY mode, but
+must provide a bypass like the existing `--no-pager` pattern on `explain`.
+
+For interactive browsing flows, provide one of these non-interactive shapes:
+
+- a list command that prints stable identifiers, plus a show/detail command that
+  accepts an identifier
+- a flag or positional argument that selects the item directly
+- a complete text or JSON fallback when stdout is not a terminal, like existing
+  static/text fallbacks for TUI-backed commands
+
+When reviewing CLI changes, inspect terminal-gated paths such as
+`IsTerminalWriter`, `CanPromptInteractively`, Bubble Tea, `huh`, direct stdin
+reads, terminal selection menus, confirmation dialogs, and wizard flows. Flag
+the change if a non-interactive agent can only see a menu, preview, truncated
+summary, or cannot select the item whose details matter.
+
+Tests for interactive CLI features should cover the non-interactive path. See
+the "Spawning subprocesses in tests (TTY detection)" section above for the
+`execx.NonInteractive` pattern when testing a real `entire` command.
+
+Existing good patterns:
+
+- `entire investigate --findings` prints a complete plain-text list and includes
+  `view: entire investigate show <run-id>` hints.
+- `entire investigate show <run-id>` prints the saved investigation summary and
+  findings without needing a TUI.
+- `entire repo clone /gh/...` prompts only when several clusters are possible;
+  without a TTY it asks for `--cluster`.
+- `entire experts --tui` is safe because the TUI is opt-in and non-TTY output
+  falls back to deterministic plain text.
+- `entire explain --no-pager` is the local pattern for avoiding pager-only long
+  text output.
+- `entire status --json`, `entire agent-help --json`, `entire sessions list --json`,
+  and trail finding commands show the local `--json` convention.
+
+Do not require JSON everywhere. Human-readable text is fine if it contains the
+complete information an agent needs. The failure mode is requiring an
+interactive terminal to select something or reveal details.
 
 # Important Notes
 

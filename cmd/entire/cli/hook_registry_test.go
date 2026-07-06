@@ -243,7 +243,7 @@ func TestShouldSkipAgentHookForPolicy(t *testing.T) {
 
 	require.False(t, shouldSkipAgentHookForPolicy(checkpointpolicy.DefaultPolicy()))
 	require.True(t, shouldSkipAgentHookForPolicy(checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
+		CheckpointVersion:    "refs-v2",
 		CheckpointMinVersion: "branch-v1",
 	}))
 }

@@ -38,6 +38,10 @@ const (
 	trailFindMaxPages       = 10
 )
 
+func trailContextBlurb() string {
+	return "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it; use `entire trail finding` to manage agent findings."
+}
+
 func newTrailCmd() *cobra.Command {
 	var insecureHTTPAuth bool
 	var repoOverride string
@@ -54,7 +58,7 @@ func newTrailCmd() *cobra.Command {
 			agentHelpRequiresTrailsAnnotation: agentHelpAnnotationEnabled,
 		},
 		Args: cobra.NoArgs,
-		Long: "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it.",
+		Long: trailContextBlurb(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -139,14 +143,6 @@ type trailListOptions struct {
 	// Repo is an optional --repo override (forge/owner/repo or a clone URL);
 	// empty means derive the repo from the origin remote.
 	Repo string
-}
-
-func defaultTrailListOptions(insecureHTTP bool) trailListOptions {
-	return trailListOptions{
-		Status:       defaultTrailListStatus,
-		Limit:        defaultTrailListLimit,
-		InsecureHTTP: insecureHTTP,
-	}
 }
 
 func newTrailShowCmd() *cobra.Command {
@@ -404,14 +400,6 @@ func validateTrailListOptions(opts trailListOptions) ([]trail.Status, error) {
 		return nil, errors.New("limit must be greater than 0")
 	}
 	return parseTrailStatusFilter(opts.Status)
-}
-
-func runTrailListAllValidatedWithClient(ctx context.Context, w io.Writer, client *api.Client, opts trailListOptions) error {
-	statusFilters, err := validateTrailListOptions(opts)
-	if err != nil {
-		return err
-	}
-	return runTrailListAllWithClient(ctx, w, client, opts, statusFilters)
 }
 
 func runTrailListAllWithClient(ctx context.Context, w io.Writer, client *api.Client, opts trailListOptions, statusFilters []trail.Status) error {

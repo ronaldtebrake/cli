@@ -413,6 +413,32 @@ func selectAllAgents(available []string) ([]string, error) {
 	return available, nil
 }
 
+// hookAgentOptions builds selector options for every registered agent that
+// supports hooks and isn't test-only (e.g. the Vogon canary), preselecting
+// the names in selected.
+func hookAgentOptions(selected map[types.AgentName]struct{}) []huh.Option[string] {
+	agentNames := agent.List()
+	options := make([]huh.Option[string], 0, len(agentNames))
+	for _, name := range agentNames {
+		ag, err := agent.Get(name)
+		if err != nil {
+			continue
+		}
+		if _, ok := agent.AsHookSupport(ag); !ok {
+			continue
+		}
+		if to, ok := ag.(agent.TestOnly); ok && to.IsTestOnly() {
+			continue
+		}
+		opt := huh.NewOption(string(ag.Type()), string(name))
+		if _, ok := selected[name]; ok {
+			opt = opt.Selected(true)
+		}
+		options = append(options, opt)
+	}
+	return options
+}
+
 // runManageAgents shows which agents are currently enabled and lets the user
 // add or remove agents. Deselecting an installed agent removes its hooks.
 func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selectFn func(available []string) ([]string, error)) error {
@@ -420,13 +446,7 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 
 	// Show currently installed agents
 	if len(installedNames) > 0 {
-		displayNames := make([]string, 0, len(installedNames))
-		for _, name := range installedNames {
-			if ag, err := agent.Get(name); err == nil {
-				displayNames = append(displayNames, string(ag.Type()))
-			}
-		}
-		fmt.Fprintf(w, "Enabled agents: %s\n\n", strings.Join(displayNames, ", "))
+		fmt.Fprintf(w, "Enabled agents: %s\n\n", strings.Join(agentDisplayNames(installedNames), ", "))
 	}
 
 	// Build pre-selection set from installed agents
@@ -465,27 +485,7 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 	// during setup the setting doesn't exist yet.
 	external.DiscoverAndRegisterAlways(ctx)
 
-	// Build options from registered agents
-	agentNames := agent.List()
-	options := make([]huh.Option[string], 0, len(agentNames))
-	for _, name := range agentNames {
-		ag, err := agent.Get(name)
-		if err != nil {
-			continue
-		}
-		if _, ok := agent.AsHookSupport(ag); !ok {
-			continue
-		}
-		if to, ok := ag.(agent.TestOnly); ok && to.IsTestOnly() {
-			continue
-		}
-		opt := huh.NewOption(string(ag.Type()), string(name))
-		if _, installed := installedSet[name]; installed {
-			opt = opt.Selected(true)
-		}
-		options = append(options, opt)
-	}
-
+	options := hookAgentOptions(installedSet)
 	if len(options) == 0 {
 		return errors.New("no agents with hook support available")
 	}
@@ -769,7 +769,7 @@ Examples:
 	cmd.Flags().BoolVarP(&opts.ForceHooks, flagForce, "f", false, "Reinstall the Entire git hook")
 	cmd.Flags().BoolVar(&opts.SkipPushSessions, flagSkipPushSessions, false, "Disable automatic pushing of session logs on git push")
 	cmd.Flags().StringVar(&opts.CheckpointRemote, flagCheckpointRemote, "", "Checkpoint remote in provider:owner/repo format (e.g., github:org/checkpoints-repo)")
-	cmd.Flags().StringVar(&summarizeProvider, flagSummarizeAgent, "", "Set the provider used by explain --generate (e.g., claude-code, codex, gemini, cursor, copilot-cli)")
+	cmd.Flags().StringVar(&summarizeProvider, flagSummarizeAgent, "", "Set the provider used by explain --generate (e.g., claude-code, codex, gemini, pi, cursor, copilot-cli)")
 	cmd.Flags().StringVar(&summarizeModel, flagSummarizeModel, "", "Set the model hint used by explain --generate")
 	cmd.Flags().IntVar(&summarizeTimeoutSeconds, flagSummarizeTimeout, 0, "Set the hard deadline (seconds) for explain --generate summary generation. 0 clears (falls back to 5m default).")
 	cmd.Flags().BoolVar(&opts.Telemetry, flagTelemetry, true, "Enable anonymous usage analytics")
@@ -1491,29 +1491,7 @@ func detectOrSelectAgent(ctx context.Context, w io.Writer, selectFn func(availab
 		}
 	}
 
-	// Build options from registered agents
-	agentNames := agent.List()
-	options := make([]huh.Option[string], 0, len(agentNames))
-	for _, name := range agentNames {
-		ag, err := agent.Get(name)
-		if err != nil {
-			continue
-		}
-		// Only show agents that support hooks
-		if _, ok := agent.AsHookSupport(ag); !ok {
-			continue
-		}
-		// Skip test-only agents (e.g., Vogon canary)
-		if to, ok := ag.(agent.TestOnly); ok && to.IsTestOnly() {
-			continue
-		}
-		opt := huh.NewOption(string(ag.Type()), string(name))
-		if _, isPreSelected := preSelectedSet[name]; isPreSelected {
-			opt = opt.Selected(true)
-		}
-		options = append(options, opt)
-	}
-
+	options := hookAgentOptions(preSelectedSet)
 	if len(options) == 0 {
 		return nil, errors.New("no agents with hook support available")
 	}
@@ -2103,13 +2081,7 @@ func runUninstall(ctx context.Context, w, errW io.Writer, force bool) error {
 			fmt.Fprintf(w, "  - Shadow branches (%d)\n", shadowBranchCount)
 		}
 		if len(agentsWithInstalledHooks) > 0 {
-			displayNames := make([]string, 0, len(agentsWithInstalledHooks))
-			for _, name := range agentsWithInstalledHooks {
-				if ag, err := agent.Get(name); err == nil {
-					displayNames = append(displayNames, string(ag.Type()))
-				}
-			}
-			fmt.Fprintf(w, "  - Agent hooks (%s)\n", strings.Join(displayNames, ", "))
+			fmt.Fprintf(w, "  - Agent hooks (%s)\n", strings.Join(agentDisplayNames(agentsWithInstalledHooks), ", "))
 		}
 		fmt.Fprintln(w)
 
