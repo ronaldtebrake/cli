@@ -39,9 +39,12 @@ var (
 // lookback, matching `entire import`). It is best-effort — discovery or import
 // failures are logged and reported to the user but never fail enable.
 //
-// Interactive runs present a multi-select with nothing pre-checked, so import
-// only happens when the user actively selects agents. Non-interactive runs
-// (`--yes` or no TTY) auto-import all eligible agents.
+// Import only happens on an explicit choice: an interactive run presents a
+// multi-select (nothing pre-checked) and imports what the user selects; `--yes`
+// ("accept all defaults") auto-imports all eligible agents. A non-interactive
+// run without `--yes` (a script, a piped shell, or an agent with no TTY) makes
+// no choice, so it imports nothing and just points at `entire import` — silently
+// importing history there would be surprising.
 func maybeOfferSessionImport(ctx context.Context, w io.Writer, agents []agent.Agent, opts EnableOptions, firstRun bool) {
 	if !firstRun {
 		return
@@ -60,7 +63,14 @@ func maybeOfferSessionImport(ctx context.Context, w io.Writer, agents []agent.Ag
 	}
 
 	selected := eligible
-	if !opts.Yes && interactive.CanPromptInteractively() {
+	if !opts.Yes {
+		if !interactive.CanPromptInteractively() {
+			// Non-interactive without --yes: don't silently import. Leave a
+			// pointer so scripted/agent enables can still import on demand.
+			logging.Info(ctx, "session import offer skipped: non-interactive without --yes", "eligible", len(eligible))
+			fmt.Fprintf(w, "Found importable history for %s. Run 'entire import <agent>' to import it.\n", pluralAgents(len(eligible)))
+			return
+		}
 		selected, err = sessionImportPrompt(ctx, w, eligible)
 		if err != nil {
 			// Best-effort: a prompt/UI failure must never fail enable. Log,
@@ -197,6 +207,16 @@ func runSelectedImports(ctx context.Context, w io.Writer, repoRoot string, selec
 	}
 	defer repo.Close()
 
+	// Gate on the checkpoint policy before writing any checkpoint data, matching
+	// the standalone `entire import` command. Best-effort: an unsupported or
+	// unreadable policy skips the import (logged and noted) instead of failing
+	// enable, since the offer must never break enable.
+	if err := ensureCheckpointPolicyAllowsCheckpointData(ctx, repo); err != nil {
+		logging.Warn(ctx, "session import skipped: checkpoint policy not satisfied", "error", err)
+		fmt.Fprintf(w, "Note: skipping agent history import: %v\n", err)
+		return
+	}
+
 	// Load repo/user-configured redaction before any checkpoint write, matching
 	// import_cmd.go; without it only always-on secret scanning would run.
 	strategy.EnsureRedactionConfigured()
@@ -222,4 +242,12 @@ func pluralSessions(n int) string {
 		return "1 session"
 	}
 	return fmt.Sprintf("%d sessions", n)
+}
+
+// pluralAgents renders an agent count with correct pluralization.
+func pluralAgents(n int) string {
+	if n == 1 {
+		return "1 agent"
+	}
+	return fmt.Sprintf("%d agents", n)
 }
