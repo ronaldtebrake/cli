@@ -116,10 +116,16 @@ func importerForAgent(ag agent.Agent) agentimport.Importer {
 	return nil
 }
 
-// promptImportSelection shows the agent multi-select (all unchecked) and
-// returns the chosen subset. An empty selection (or user abort) returns an
-// empty slice, which the caller treats as "skip import".
+// promptImportSelection asks the user which discovered agents to import. With a
+// single eligible agent a multi-select's "space to select / select none to
+// skip" wording is confusing (there is nothing to choose between), so that case
+// uses a plain Import/Skip confirmation instead. An empty selection (or user
+// abort) returns an empty slice, which the caller treats as "skip import".
 func promptImportSelection(ctx context.Context, w io.Writer, eligible []eligibleImport) ([]eligibleImport, error) {
+	if len(eligible) == 1 {
+		return promptImportConfirmSingle(ctx, w, eligible[0])
+	}
+
 	byName := make(map[string]eligibleImport, len(eligible))
 	options := make([]huh.Option[string], 0, len(eligible))
 	for _, e := range eligible {
@@ -151,6 +157,32 @@ func promptImportSelection(ctx context.Context, w io.Writer, eligible []eligible
 		}
 	}
 	return out, nil
+}
+
+// promptImportConfirmSingle offers a single discovered agent's history with a
+// plain Import/Skip confirmation. Declining (or aborting) returns an empty
+// slice so the caller skips the import.
+func promptImportConfirmSingle(ctx context.Context, w io.Writer, e eligibleImport) ([]eligibleImport, error) {
+	var confirmed bool
+	form := NewAccessibleForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Import existing %s sessions into Entire? (optional)", e.displayName)).
+				Description(fmt.Sprintf("%s from the last %d days. Enter to confirm.", pluralSessions(e.sessionCount), agentimport.LookbackDays)).
+				Affirmative("Import").
+				Negative("Skip").
+				Value(&confirmed),
+		),
+	)
+	if err := form.RunWithContext(ctx); err != nil {
+		// Cancellation (including a cancelled ctx) returns nil here => skip
+		// import; other errors are surfaced for the caller to downgrade.
+		return nil, handleFormCancellation(w, "Import", err)
+	}
+	if !confirmed {
+		return nil, nil
+	}
+	return []eligibleImport{e}, nil
 }
 
 // runSelectedImports imports each chosen agent's history, mirroring the
