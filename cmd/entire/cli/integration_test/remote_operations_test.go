@@ -178,8 +178,9 @@ func TestPrePush_PushDisabledSkipsCheckpoints(t *testing.T) {
 // Why not test through PrePush directly: resolvePushSettings derives the checkpoint
 // URL from origin's protocol (SSH/HTTPS). Since integration tests use local file
 // paths as remotes, remote.ParseURL fails and resolvePushSettings falls back to
-// origin. The URL derivation logic is unit-tested in checkpoint_remote_test.go
-// (TestDeriveCheckpointURL, TestResolvePushSettings_WithCheckpointRemote_*).
+// origin. The URL derivation logic is unit-tested in checkpoint/remote/util_test.go
+// (TestDeriveCheckpointURLFromInfo) and checkpoint_remote_test.go
+// (TestResolvePushSettings_WithCheckpointRemote_*).
 //
 // The pushRefIfNeeded function (which PrePush calls with the resolved target)
 // is exercised in push_common_test.go:TestPushRefIfNeeded_LocalBareRepo_PushesSuccessfully,

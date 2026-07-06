@@ -7,6 +7,25 @@ import (
 	"time"
 )
 
+func TestRenderStaticRecap_RepoNameOverridesEchoedID(t *testing.T) {
+	t.Parallel()
+	// /me/recap echoes the queried repo_id ULID in Repo; the caller-supplied
+	// human name must be shown instead.
+	resp := &MeRecapResponse{
+		Repo:    ptr("01KSFAN13YPQ0EWBV5KRE7F5HV"),
+		Since:   "2026-05-02T04:00:00Z",
+		Until:   "2026-05-09T04:00:00Z",
+		Summary: Summary{Me: SummaryTotals{Checkpoints: 1}, RepoCount: 1, ActiveDays: 1},
+	}
+	out := RenderStaticRecap(resp, RenderOptions{Range: RangeDay, View: ViewYou, Width: 80, RepoName: "entireio/cli"})
+	if !strings.Contains(out, "repo entireio/cli") {
+		t.Errorf("expected human repo name in output, got:\n%s", out)
+	}
+	if strings.Contains(out, "01KSFAN13YPQ0EWBV5KRE7F5HV") {
+		t.Errorf("expected the repo_id ULID to be hidden, got:\n%s", out)
+	}
+}
+
 func TestRenderStaticRecap_ServerBackedBoth90(t *testing.T) {
 	t.Parallel()
 	resp := &MeRecapResponse{

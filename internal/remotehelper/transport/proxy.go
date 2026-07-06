@@ -41,6 +41,15 @@ type Config struct {
 	SkipTLS      bool
 	SetAuth      SetAuthFunc
 	OnNodeFailed func(failedNode string)
+	// OnUnauthorized fires once per response with HTTP 401 — the data
+	// plane rejected the credential itself (bad signature, e.g. after a
+	// signing-key rotation; expired). Callers use it to invalidate a
+	// persisted token so the next invocation re-mints instead of replaying
+	// the dead credential until its recorded expiry. Deliberately NOT
+	// fired on 403: a 403 means the credential verified fine and
+	// authorization was denied — invalidating would churn valid tokens.
+	// Nil disables the hook.
+	OnUnauthorized func()
 	// UserAgent is stamped on every outbound HTTP request so the
 	// server can attribute git smart-HTTP traffic to the remote
 	// helper. Empty disables the wrapper, in which case the request
@@ -122,6 +131,10 @@ func New(cfg Config) *Proxy {
 	// underlying transport's dial budget differs.
 	wrap := func(base http.RoundTripper) http.RoundTripper {
 		var rt http.RoundTripper = &httpdebug.RoundTripper{Next: base}
+		rt = &httpdebug.TimingRoundTripper{Next: rt, Label: "git"}
+		if cfg.OnUnauthorized != nil {
+			rt = &unauthorizedObserver{next: rt, fn: cfg.OnUnauthorized}
+		}
 		if cfg.UserAgent != "" {
 			rt = &httpclient.UserAgentTransport{Next: rt, UA: cfg.UserAgent}
 		}
@@ -133,6 +146,23 @@ func New(cfg Config) *Proxy {
 	}
 	p.discoveryTransport = wrap(httpclient.NewDiscoveryTransport(cfg.SkipTLS))
 	return p
+}
+
+// unauthorizedObserver invokes fn on every HTTP 401 response, passing the
+// response through untouched. See Config.OnUnauthorized for the contract.
+type unauthorizedObserver struct {
+	next http.RoundTripper
+	fn   func()
+}
+
+// RoundTrip implements http.RoundTripper.
+func (o *unauthorizedObserver) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := o.next.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		o.fn()
+	}
+	//nolint:wrapcheck // passthrough - wrapping would change error semantics
+	return resp, err
 }
 
 // ErrorBaseURL returns a URL string suitable for embedding in error
