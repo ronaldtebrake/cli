@@ -93,6 +93,24 @@ func lookupBackend(typ string) (registeredBackend, error) {
 	return b, nil
 }
 
+// ValidatePrimaryBackend reports an error unless typ names a registered backend
+// that may serve as the primary. Only git-backed backends qualify: a
+// non-git-backed or unknown type is rejected with a descriptive message that
+// names the valid types. This is the single source of the "primary must be
+// git-backed" rule — buildPrimary delegates here, and selection surfaces (entire
+// enable / configure --checkpoint-backend) call it to reject a bad backend
+// before writing it to settings, rather than failing later in Open.
+func ValidatePrimaryBackend(typ string) error {
+	b, err := lookupBackend(typ)
+	if err != nil {
+		return err
+	}
+	if !b.gitBacked {
+		return fmt.Errorf("checkpoint backend %q cannot be the primary: only git-backed backends (e.g. %q, %q) may be the primary", typ, BackendTypeGitBranch, BackendTypeGitRefs)
+	}
+	return nil
+}
+
 // build constructs the store for the named backend type.
 func build(ctx context.Context, env OpenEnv, typ string, cfg json.RawMessage) (PersistentStore, error) {
 	b, err := lookupBackend(typ)
