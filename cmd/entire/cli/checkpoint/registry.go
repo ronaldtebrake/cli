@@ -94,12 +94,13 @@ func lookupBackend(typ string) (registeredBackend, error) {
 }
 
 // ValidatePrimaryBackend reports an error unless typ names a registered backend
-// that may serve as the primary. Only git-backed backends qualify: a
-// non-git-backed or unknown type is rejected with a descriptive message that
-// names the valid types. This is the single source of the "primary must be
-// git-backed" rule — buildPrimary delegates here, and selection surfaces (entire
-// enable / configure --checkpoint-backend) call it to reject a bad backend
-// before writing it to settings, rather than failing later in Open.
+// that may serve as the primary. An unknown type is rejected with an error
+// listing the registered backend types; a registered but non-git-backed type is
+// rejected separately, since only git-backed backends may be the primary. This
+// is the single source of the "primary must be git-backed" rule — buildPrimary
+// delegates here, and selection surfaces (entire enable / configure
+// --checkpoint-backend) call it to reject a bad backend before writing it to
+// settings, rather than failing later in Open.
 func ValidatePrimaryBackend(typ string) error {
 	b, err := lookupBackend(typ)
 	if err != nil {

@@ -110,10 +110,14 @@ func updateCheckpointBackend(ctx context.Context, w io.Writer, opts EnableOption
 // promptCheckpointBackend asks the user to choose a checkpoint storage backend
 // during first-time interactive setup. The default is the git-branch backend;
 // the git-refs backend is offered as the selectable alternative. It returns the
-// canonical backend type, or "" when the user kept the default so the caller can
-// skip writing a redundant config block. Callers must gate this on an
-// interactive terminal.
-func promptCheckpointBackend() (string, error) {
+// canonical backend type, or "" when the user kept the default (or cancelled) so
+// the caller can skip writing a redundant config block. Callers must gate this
+// on an interactive terminal.
+//
+// Cancellation (Ctrl+C or a cancelled ctx) is treated like keeping the default:
+// it prints a "cancelled" line and returns ("", nil) so enable continues with
+// the default backend, matching the optional-prompt behavior elsewhere in setup.
+func promptCheckpointBackend(ctx context.Context, w io.Writer) (string, error) {
 	choice := checkpoint.BackendTypeGitBranch
 	form := NewAccessibleForm(
 		huh.NewGroup(
@@ -127,8 +131,8 @@ func promptCheckpointBackend() (string, error) {
 				Value(&choice),
 		),
 	)
-	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("checkpoint backend selection: %w", err)
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", handleFormCancellation(w, "Checkpoint backend selection", err)
 	}
 	if choice == checkpoint.BackendTypeGitBranch {
 		return "", nil

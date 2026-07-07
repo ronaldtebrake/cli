@@ -1179,11 +1179,11 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 	// Otherwise, on the first interactive setup, offer a choice (default: branch).
 	// Non-interactive or --yes first runs keep the default git-branch backend.
 	if opts.CheckpointBackend == "" && firstRun && !opts.Yes && interactive.CanPromptInteractively() {
-		chosen, err := promptCheckpointBackend()
+		chosen, err := promptCheckpointBackend(ctx, w)
 		if err != nil {
 			return err
 		}
-		opts.CheckpointBackend = chosen // "" keeps the default backend
+		opts.CheckpointBackend = chosen // "" keeps the default (or cancelled) backend
 	}
 	if err := applyCheckpointBackendFlag(settings, opts.CheckpointBackend); err != nil {
 		return err
